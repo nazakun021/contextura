@@ -1,14 +1,14 @@
 # SPEC.md — Real-Time Screen Translation Overlay
 
-**Version:** 1.0.0  
-**Target Platform:** macOS 13+ (Apple Silicon, M-series)  
+**Version:** 1.2.0
+**Target Platform:** macOS 13+ (Apple Silicon, M-series)
 **Last Updated:** 2026-04-18
 
 ---
 
 ## 1. Project Overview
 
-A high-performance desktop overlay application that detects Japanese text on-screen, translates it to English in real-time using local AI models, and renders translated text as a transparent, click-through overlay precisely positioned over the original text. The application runs entirely offline after initial model download.
+A high-performance desktop overlay application that detects Japanese text on-screen, translates it to English in real-time using local AI models, and renders translated text as a transparent, click-through overlay precisely positioned over the original text. The application runs entirely offline after initial model download and is designed to be installable by non-technical users.
 
 ---
 
@@ -16,16 +16,17 @@ A high-performance desktop overlay application that detects Japanese text on-scr
 
 ### Goals
 
-- Translate Japanese text visible in any macOS application (browsers, PDFs, video players, etc.)
+- Translate Japanese text visible in any macOS application (browsers, PDFs, video players, manga readers, etc.)
 - Maintain real-time responsiveness with sub-2-second end-to-end latency after the debounce trigger
-- Keep total RAM footprint under 4GB to prevent SSD swapping on 16GB unified memory systems
+- Keep total RAM footprint under 4GB (standard mode) / 8GB (quality mode) to prevent SSD swapping
 - Operate without any internet connection after setup
 - Be thermally responsible — no continuous GPU/ANE hammering
+- Provide a polished first-run onboarding experience for non-technical users
 
 ### Non-Goals
 
 - Translating audio or video subtitles in real-time (frame-by-frame)
-- Supporting languages other than Japanese → English in v1.0
+- Supporting languages other than Japanese to English in v1.0
 - Providing a history, clipboard, or dictionary lookup feature in v1.0
 - Running on Intel Macs or non-Apple hardware
 
@@ -34,49 +35,58 @@ A high-performance desktop overlay application that detects Japanese text on-scr
 ## 3. System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    TAURI APPLICATION                     │
-│                                                          │
-│  ┌─────────────────────┐    ┌────────────────────────┐  │
-│  │   Rust Backend       │    │   WebView Frontend     │  │
-│  │                      │    │   (HTML/CSS/JS)        │  │
-│  │  ┌────────────────┐  │    │                        │  │
-│  │  │ScreenCaptureKit│  │    │  Transparent Overlay   │  │
-│  │  └───────┬────────┘  │    │  Absolutely-positioned │  │
-│  │          │            │    │  <div> translation     │  │
-│  │  ┌───────▼────────┐  │    │  boxes                 │  │
-│  │  │  Motion Delta  │  │    │                        │  │
-│  │  │  Detector      │  │    └────────────────────────┘  │
-│  │  └───────┬────────┘  │              ▲                  │
-│  │          │            │              │ Tauri IPC        │
-│  │  ┌───────▼────────┐  │              │ (JSON payload)   │
-│  │  │  Vision OCR    │  │──────────────┘                  │
-│  │  │  (Apple ANE)   │  │                                  │
-│  │  └───────┬────────┘  │                                  │
-│  │          │            │                                  │
-│  │  ┌───────▼────────┐  │                                  │
-│  │  │  llama.cpp     │  │                                  │
-│  │  │  NLLB Model    │  │                                  │
-│  │  │  (Metal GPU)   │  │                                  │
-│  │  └────────────────┘  │                                  │
-│  └─────────────────────┘                                  │
-└─────────────────────────────────────────────────────────┘
++----------------------------------------------------------------+
+|                      TAURI APPLICATION                         |
+|                                                                |
+|  +-------------------------+   +----------------------------+  |
+|  |      Rust Backend        |   |     WebView Frontend       |  |
+|  |                          |   |     (HTML/CSS/JS)          |  |
+|  |  +------------------+   |   |                            |  |
+|  |  | ScreenCaptureKit  |   |   |  Multiple Transparent      |  |
+|  |  |  (per-display)    |   |   |  Overlay Windows           |  |
+|  |  +--------+---------+   |   |  (one per display)         |  |
+|  |           |              |   |  Absolutely-positioned     |  |
+|  |  +--------v---------+   |   |  <div> translation boxes   |  |
+|  |  |  Motion Delta     |   |   |  (horizontal & vertical)   |  |
+|  |  |  Detector         |   |   +----------------------------+  |
+|  |  +--------+---------+   |              ^                    |
+|  |           |              |              | Tauri IPC          |
+|  |  +--------v---------+   |              | (JSON payload)     |
+|  |  |  Vision OCR       +---+--------------+                   |
+|  |  |  (Apple ANE)      |   |                                   |
+|  |  +--------+---------+   |                                   |
+|  |           |              |                                   |
+|  |  +--------v---------+   |                                   |
+|  |  |  llama.cpp        |   |                                   |
+|  |  |  NLLB / Gemma 4   |   |                                   |
+|  |  |  (Metal GPU)      |   |                                   |
+|  |  +--------+---------+   |                                   |
+|  |           |              |                                   |
+|  |  +--------v---------+   |                                   |
+|  |  |  Thermal/Battery  |   |                                   |
+|  |  |  Monitor (IOKit)  |   |                                   |
+|  |  +------------------+   |                                   |
+|  +-------------------------+                                   |
++----------------------------------------------------------------+
 ```
 
 ---
 
 ## 4. Technology Stack
 
-| Layer             | Technology                       | Version Target       | Justification                                                |
-| ----------------- | -------------------------------- | -------------------- | ------------------------------------------------------------ |
-| App Framework     | Tauri                            | v2.x                 | Lightweight, native OS integration, IPC, transparent windows |
-| Backend Language  | Rust                             | 1.78+ (stable)       | Memory safety, zero-cost abstractions, macOS FFI             |
-| Screen Capture    | ScreenCaptureKit                 | macOS 13+            | Native, hardware-accelerated, low CPU overhead               |
-| OCR               | Apple Vision Framework           | via `objc2` bindings | ANE-accelerated, outputs bounding boxes, no RAM overhead     |
-| Translation       | llama.cpp                        | latest release       | Metal backend, GGUF model support, M-series optimized        |
-| Translation Model | NLLB-200-distilled-600M (Q4_K_M) | —                    | ~1.2GB footprint, production Japanese→English quality        |
-| Parallelism       | Rayon                            | latest               | Data-parallel OCR batch translation                          |
-| Frontend          | HTML5 / CSS3 / Vanilla JS        | —                    | Minimal, no framework overhead for overlay rendering         |
+| Layer                       | Technology                       | Version Target     | Justification                                                |
+| --------------------------- | -------------------------------- | ------------------ | ------------------------------------------------------------ |
+| App Framework               | Tauri                            | v2.x               | Lightweight, native OS integration, IPC, transparent windows |
+| Backend Language            | Rust                             | 1.78+ (stable)     | Memory safety, zero-cost abstractions, macOS FFI             |
+| Screen Capture              | ScreenCaptureKit                 | macOS 13+          | Native, hardware-accelerated, low CPU overhead               |
+| OCR                         | Apple Vision Framework           | via `objc2-vision` | ANE-accelerated, outputs bounding boxes + text angle         |
+| Translation                 | llama.cpp                        | latest release     | Metal backend, GGUF model support, M-series optimized        |
+| Translation Model (Default) | NLLB-200-distilled-600M (Q4_K_M) | —                  | ~1.2GB footprint, purpose-built for translation              |
+| Translation Model (Quality) | Gemma 4 E4B IT (Q4_K_M)          | —                  | ~5GB, superior reasoning, 128K context window                |
+| Parallelism                 | Rayon                            | latest             | CPU-bound tasks only (styling, serialization)                |
+| Frontend                    | HTML5 / CSS3 / Vanilla JS        | —                  | Minimal, no framework overhead for overlay rendering         |
+| Crash Reporting             | sentry-rust (opt-in)             | latest             | Anonymous crash telemetry, explicit user consent             |
+| HTTP Client                 | reqwest                          | latest             | In-app model downloader with progress streaming              |
 
 ---
 
@@ -84,14 +94,15 @@ A high-performance desktop overlay application that detects Japanese text on-scr
 
 ### 5.1 Screen Capture — ScreenCaptureKit
 
-**Purpose:** Continuously capture the display contents into pixel buffers.
+**Purpose:** Continuously capture the contents of each display into pixel buffers.
 
 **Implementation Details:**
 
-- Use `SCStreamConfiguration` to request 30 FPS capture (configurable)
-- Request pixel format: `BGRA8Unorm` for direct buffer math
-- Capture scope: Full display (configurable to window-only in future)
-- Deliver frames to a Rust callback via `SCStreamOutput` delegate
+- On startup, enumerate all `NSScreen.screens()`
+- For every active display, create one `SCStream` with its own `SCContentFilter`
+- Use `SCStreamConfiguration`: `BGRA8Unorm` pixel format, 30 FPS (configurable via `settings.json`)
+- Exclude each display's corresponding overlay window via `excludedWindows` (prevents capture loop)
+- Deliver frames via a bounded `crossbeam` channel (capacity: 2, drop on full) per display
 
 **Entitlements Required:**
 
@@ -100,13 +111,22 @@ A high-performance desktop overlay application that detects Japanese text on-scr
 <true/>
 ```
 
-The app must also be added to System Preferences → Privacy & Security → Screen Recording on first launch.
+**Multi-Monitor Behavior:**
+
+- One Tauri overlay window per display, sized to that display's logical frame
+- Each overlay is click-through (`set_ignore_cursor_events(true)`)
+- Translation payloads carry a `display_id` so each event routes to the correct window
+
+**Display Hot-Plug Handling:**
+
+- Subscribe to `CGDisplayRegisterReconfigurationCallback`
+- On display removed: stop its `SCStream`, drop its channel, close its Tauri window
+- On display added: create new overlay window and capture stream, insert into manager
 
 **Threading Model:**
 
-- Frame callbacks arrive on a dedicated ScreenCaptureKit dispatch queue
-- Frames are passed via a bounded `crossbeam` channel (capacity: 2) to the motion detector thread
-- Frames that arrive while the channel is full are **dropped** (backpressure)
+- One frame-processing thread per display
+- Threads share a single `TranslationEngine` instance behind `Arc<Mutex<>>`
 
 ---
 
@@ -117,23 +137,21 @@ The app must also be added to System Preferences → Privacy & Security → Scre
 **Algorithm:**
 
 ```
-1. Receive frame (CMSampleBuffer → CVPixelBuffer)
-2. Downscale to 160×90 grayscale thumbnail (bilinear interpolation)
+1. Receive frame (CMSampleBuffer -> CVPixelBuffer)
+2. Downscale to 160x90 grayscale thumbnail (bilinear interpolation)
 3. Exclude a 5% inset margin from all four edges before comparison
-   - Effective comparison area: ~152×81 pixels
+   - Effective comparison area: ~152x81 pixels
    - Reason: Excludes dock animations, menu bar clock, scrollbar fades
 4. Compute per-pixel absolute differences vs. previous thumbnail
 5. Build a binary "changed pixel" mask: changed if diff > PIXEL_DIFF_THRESHOLD (default: 15)
-6. Run a lightweight connected-components pass on the mask (4-connectivity flood fill)
+6. Run a lightweight connected-components pass on the mask (4-connectivity union-find)
 7. Find the largest single connected region of changed pixels
-8. Compute that region's area as a fraction of total comparison area → motion_ratio
-9. Apply threshold: motion_ratio > 0.05 → "motion detected"
+8. Compute that region's area as a fraction of total comparison area -> motion_ratio
+9. Apply threshold: motion_ratio > 0.05 -> "motion detected"
 ```
 
-**Why connected-components instead of raw pixel count:**
-Raw pixel-diffing is susceptible to localized noise sources — spinning loading spinners, blinking cursors, looping ad animations, and video thumbnails. These produce scattered, isolated changed pixels that sum to a high `motion_ratio` even though no meaningful scroll has occurred. By requiring the changed pixels to form a _single large contiguous block_, the algorithm correctly distinguishes scroll (large cohesive region moving uniformly) from noise (dozens of tiny isolated regions).
-
-**Performance note:** The connected-components pass operates on a 152×81 image (~12,000 pixels). A single-pass union-find implementation completes in microseconds and does not materially affect the 30 FPS pipeline.
+**Why connected-components instead of raw pixel sum:**
+Spinning loaders, blinking cursors, and looping ads produce scattered isolated changed pixels that sum to a high ratio but never form a large contiguous block. Scrolling always produces one large cohesive region. This distinction makes the debounce dramatically more reliable against UI noise.
 
 **Debounce State Machine:**
 
@@ -141,65 +159,80 @@ Raw pixel-diffing is susceptible to localized noise sources — spinning loading
 States: SCROLLING | SETTLING | IDLE
 
 SCROLLING:
-  - motion > 5%  → stay SCROLLING, reset timer to 300ms, hide overlay
-  - motion < 5%  → transition to SETTLING, start 300ms countdown
+  - motion > threshold  -> stay SCROLLING, reset timer to 300ms, hide overlay
+  - motion <= threshold -> transition to SETTLING, start 300ms countdown
 
 SETTLING:
-  - motion > 5%  → transition back to SCROLLING
-  - timer hits 0 → transition to IDLE, snap frame, trigger OCR pipeline
+  - motion > threshold  -> back to SCROLLING
+  - timer hits 0        -> transition to IDLE, snap frame, trigger OCR pipeline
 
 IDLE:
-  - new frame with motion > 5% → transition to SCROLLING, hide overlay
-  - no new motion → stay IDLE (overlay remains visible)
+  - motion > threshold  -> back to SCROLLING, hide overlay
+  - no new motion       -> stay IDLE (overlay remains visible)
 ```
 
-**Constants (configurable via settings):**
-| Constant | Default | Description |
-|---|---|---|
-| `MOTION_THRESHOLD` | 0.05 | Fraction of the largest contiguous changed-pixel region to count as motion |
-| `PIXEL_DIFF_THRESHOLD` | 15 | Per-pixel absolute grayscale difference to count a pixel as "changed" |
-| `DEBOUNCE_MS` | 300 | Milliseconds of stillness before triggering OCR |
-| `EDGE_INSET_PERCENT` | 5 | % of screen edge to ignore in delta check |
-| `CAPTURE_FPS` | 30 | Target frame capture rate |
+**Constants (all configurable via `settings.json`):**
+
+| Constant               | Default | Description                                           |
+| ---------------------- | ------- | ----------------------------------------------------- |
+| `MOTION_THRESHOLD`     | 0.05    | Fraction of largest contiguous changed-pixel region   |
+| `PIXEL_DIFF_THRESHOLD` | 15      | Per-pixel absolute grayscale diff to count as changed |
+| `DEBOUNCE_MS`          | 300     | Milliseconds of stillness before triggering OCR       |
+| `EDGE_INSET_PERCENT`   | 5       | % of screen edge excluded from delta check            |
+| `CAPTURE_FPS`          | 30      | Target frame capture rate                             |
 
 ---
 
 ### 5.3 OCR — Apple Vision Framework
 
-**Purpose:** Extract Japanese text strings and their on-screen bounding boxes.
+**Purpose:** Extract Japanese text strings, bounding boxes, and text orientation from a static frame.
 
-**Implementation Details:**
+**Implementation:**
 
-- Use `VNRecognizeTextRequest` with `recognitionLevel = .accurate`
-- Set `recognitionLanguages = ["ja-JP"]`
-- Access via `objc2` unsafe bindings (see Risk Register)
-- Input: `CVPixelBuffer` from the static snapshot frame
-- Output per recognized region:
-  ```rust
-  struct OcrResult {
-      text: String,           // Recognized Japanese string
-      confidence: f32,        // 0.0 – 1.0
-      bounding_box: Rect,     // In normalized coordinates (0.0–1.0)
-  }
-  ```
+- Use `objc2-vision` crate with `VNRecognizeTextRequest`
+- `recognitionLevel = .accurate`, `recognitionLanguages = ["ja-JP"]`, `usesLanguageCorrection = true`
+- Extract `textAngle` (radians) per observation to detect vertical text
 
-**Coordinate System Note:**
+**Output per recognized region:**
 
-- Vision returns normalized coordinates in a **bottom-left origin** system
-- Must be converted to top-left origin before sending to Tauri
-- Formula: `screen_y = (1.0 - vision_y - vision_height) * screen_height`
+```rust
+struct OcrResult {
+    text: String,
+    confidence: f32,
+    bounding_box: CGRect,  // normalized, bottom-left origin
+    text_angle: f32,       // radians; |angle| > pi/4 -> vertical
+    is_vertical: bool,
+}
+```
 
-**HiDPI / Retina Scaling:**
+**Vertical Text Handling:**
+When `is_vertical == true`:
 
-- Vision bounding boxes are in _logical points_, not physical pixels
-- The screen's `scale_factor` (typically `2.0` on Retina) must be tracked
-- All coordinate math operates in logical points; `scale_factor` is passed to the frontend for CSS rendering
+- Swap `width` and `height` during coordinate conversion
+- Pass `is_vertical: true` in the IPC payload
+- Frontend applies `writing-mode: vertical-rl; text-orientation: mixed` to the overlay div
+
+**Furigana Suppression:**
+After OCR, post-process results:
+
+1. Group bounding boxes by horizontal overlap (> 70%) with a larger box directly above/below
+2. If a box's height is < 40% of the overlapping box's height, classify as furigana
+3. Exclude from translation pipeline
+4. Store as `furigana` field on parent box for future tooltip display (v1.1)
+5. Configurable via `settings.json: furigana_suppression`
+
+**Coordinate Conversion:**
+
+- Vision uses bottom-left origin (normalized 0.0 to 1.0)
+- Convert: `screen_y = (1.0 - vision_y - vision_height) * screen_height`
+- Divide by `scale_factor` (per display) to get logical CSS points
+- For vertical text: swap width/height after conversion
 
 **Filtering:**
 
 - Drop results with `confidence < 0.4`
-- Drop results where `text` contains no CJK characters (Unicode range `\u{3000}–\u{9FFF}`)
-- Merge overlapping bounding boxes (IoU > 0.3) into single regions
+- Drop results with no CJK characters (Unicode `\u{3040}` to `\u{9FFF}`)
+- Merge overlapping boxes (IoU > 0.3)
 
 ---
 
@@ -209,74 +242,120 @@ IDLE:
 
 #### Model Tiers
 
-| Tier             | Model                   | Size (Q4_K_M) | RAM    | Use Case                                        |
-| ---------------- | ----------------------- | ------------- | ------ | ----------------------------------------------- |
-| **Default**      | NLLB-200-distilled-600M | ~1.2 GB       | Low    | Fast, reliable, purpose-built for translation   |
-| **Quality Mode** | Gemma 4 E4B (IT)        | ~5 GB         | Higher | Nuanced Japanese, slang, long narrative context |
+| Tier             | Model                   | Size (Q4_K_M) | RAM    | Use Case                                   |
+| ---------------- | ----------------------- | ------------- | ------ | ------------------------------------------ |
+| **Default**      | NLLB-200-distilled-600M | ~1.2 GB       | Low    | Fast, purpose-built for translation        |
+| **Quality Mode** | Gemma 4 E4B IT          | ~5 GB         | Higher | Nuanced Japanese, slang, narrative context |
 
-**NLLB** is the default because it's a specialized machine translation model — fast, memory-efficient, and accurate for straightforward course material Japanese. **Gemma 4 E4B** is the Quality Mode replacement for ALMA (previously planned). It fits the 16GB unified memory budget, has dramatically better Japanese reasoning, and its 128K context window makes the rolling translation memory essentially free to use. ALMA has been removed from the plan entirely.
+**NLLB** is the default — a specialized machine translation model, fast and memory-efficient. **Gemma 4 E4B** is the Quality Mode tier (replaces previously planned ALMA). It has a 128K context window, superior Japanese reasoning, and fits the 16GB M2 memory budget. ALMA is removed from the plan entirely.
 
-The active model is user-switchable via the menu bar icon or `Cmd+Shift+G` hotkey, with a brief reload indicator (~3–5s) shown during model swap.
+The active model is user-switchable via tray menu or `Cmd+Shift+G`, with a reload indicator shown during model swap.
+
+**RAM Gate:** At startup, read total system RAM via `sysctl hw.memsize`. If total RAM < 12GB, disable Quality Mode entirely — grey out in tray with tooltip: "Gemma 4 requires at least 12GB of RAM."
+
+**Integration:**
+
+- Use `llama_cpp_rs` crate with Metal backend (`n_gpu_layers = 99`)
+- Context size: 1024 tokens (accommodates context memory + full batch prompt)
+- Load model once at startup; keep resident for the entire session
+
+#### Translation Request Format — Batched Single-Pass with Rolling Context
+
+```
+[If context memory is non-empty:]
+Previous context (do not retranslate, use for reference only):
+- {memory[0].japanese} -> "{memory[0].english}"
+- {memory[1].japanese} -> "{memory[1].english}"
+...up to 6 entries
+
+Translate each numbered Japanese string to English.
+Output only the translations, one per line, in the same numbered format.
+
+1: {ocr_result[0].text}
+2: {ocr_result[1].text}
+...N: {ocr_result[N].text}
+```
+
+**Output parsing:**
+
+- Split response by newlines; match `^(\d+): (.+)$` per line
+- Map back to original `OcrResult` by index
+- Missing or malformed lines produce `""` (overlay shows original Japanese as fallback)
+- If OCR returns > 15 strings: split into sequential sub-batches of 15
+
+**Critical:** Do NOT use `rayon::par_iter()` for inference. Metal does not safely support concurrent KV cache allocation on the same model instance. Concurrent inference calls will cause memory contention and Metal driver crashes. Rayon is used only for CPU-bound work: color sampling, coordinate math, payload serialization.
+
+#### Performance Targets
+
+| Metric                                         | NLLB (Default) | Gemma 4 E4B (Quality) |
+| ---------------------------------------------- | -------------- | --------------------- |
+| Translation latency (single string, <50 chars) | < 800ms        | < 1.5s                |
+| Translation latency (full screen, ~10 strings) | < 3s           | < 5s                  |
+| Model load time at startup                     | < 5s           | < 8s                  |
+| Peak RAM usage (model + app)                   | < 2GB          | < 6.5GB               |
+
+#### Crash Recovery Watchdog
+
+The translation engine runs in a supervised thread. A watchdog counts consecutive failures (timeout, Metal error, OOM). After 3 consecutive failures:
+
+1. Restart the thread and reload the model
+2. Emit `"translation-error"` to the frontend — non-blocking banner: "Translation engine restarted." (4s auto-dismiss)
+3. Clear the overlay until the next successful translation
+
+#### Thermal / Battery Awareness
+
+Subscribe to IOKit power source and thermal notifications. When on battery AND thermal state is `serious` or `critical`:
+
+- Force model to NLLB if Gemma 4 is active; send `ModelSwitch` invalidation
+- Increase `DEBOUNCE_MS` to 600 in runtime state
+- Show a thermal badge on the tray icon
+- Restore normal behavior when plugged in or thermal state improves
 
 ---
 
-#### Rolling Translation Memory (Context Window)
+### 5.5 Rolling Translation Memory
 
-**Purpose:** Fix context blindness — the model's inability to resolve pronouns, dropped subjects, and running narrative threads across sequential screens.
+**Purpose:** Fix context blindness — the model's inability to resolve pronouns, dropped subjects, and narrative threads across sequential screens.
 
-**How it works:**
-The app maintains an in-memory `Vec<(String, String)>` of `(japanese_original, english_translation)` pairs from previous screens. This is prepended to every batch prompt as read-only context:
+**State:**
 
-```
-Previous context (do not retranslate):
-- 先生は田中さんに言いました → "The teacher said to Tanaka-san:"
-- 明日までに終わらせてください → "Please finish this by tomorrow."
-
-Now translate these new strings:
-1: わかりました
-2: 頑張ります
+```rust
+struct TranslationMemory {
+    entries: VecDeque<(String, String)>,  // (japanese_original, english_translation)
+    max_size: usize,                       // default: 6, from settings.json
+}
 ```
 
 **State rules:**
 
-- Window size: last **6 translation pairs** (configurable; ~150 tokens overhead)
-- On `translation-clear` (scroll detected): **keep memory** — content is still related
-- On **active application change** (see Section 5.5 below): **auto-clear memory** — new app = new topic
-- On `Cmd+Shift+M` hotkey: **manual clear** — user explicitly signals a context break
+- On `translation-clear` (scroll detected): keep memory — content is still related
+- On active app change (Section 5.6): auto-clear — new app means new topic
+- On `Cmd+Shift+M`: manual clear — user signals a topic break
+- On model switch (`Cmd+Shift+G`): auto-clear — context from different model is unreliable
 - On app restart: memory does not persist (session-scoped only)
 
-**Tradeoffs to be aware of:**
+**Tradeoffs:**
 
-| Risk              | Description                                              | Mitigation                                    |
-| ----------------- | -------------------------------------------------------- | --------------------------------------------- |
-| Context poisoning | A wrong translation feeds errors into subsequent ones    | Auto-clear on app switch; manual clear hotkey |
-| Topic bleed       | Switching tabs carries irrelevant context to new content | App-change detection auto-clears              |
-| Stale noise       | Very old entries become irrelevant filler                | 6-entry cap keeps window fresh                |
-| Prompt length     | Slightly longer prompts = minor inference slowdown       | Negligible on Gemma 4; small on NLLB          |
+| Risk              | Description                                          | Mitigation                                    |
+| ----------------- | ---------------------------------------------------- | --------------------------------------------- |
+| Context poisoning | A wrong translation compounds into subsequent ones   | Auto-clear on app switch; manual clear hotkey |
+| Topic bleed       | Tab switch carries irrelevant context to new content | App-change detection auto-clears              |
+| Stale noise       | Old entries become irrelevant filler                 | 6-entry cap keeps window fresh                |
+| Prompt overhead   | Slightly longer prompts = minor inference slowdown   | ~150 tokens; negligible on Gemma 4            |
 
 ---
 
-### 5.5 Context Invalidation Strategy
+### 5.6 Context Invalidation Strategy
 
 **Purpose:** Prevent translation context from bleeding across unrelated content when the user switches applications or manually signals a topic change.
 
-#### Detection Mechanism — `NSWorkspace` App Change Notifications
+**Detection Mechanism:** `NSWorkspaceDidActivateApplicationNotification`
 
-> **Important correction from earlier spec drafts:** ScreenCaptureKit captures the full display as a pixel stream and does **not** reliably expose per-frame frontmost-app metadata. The correct and idiomatic macOS mechanism for detecting the active application is `NSWorkspaceDidActivateApplicationNotification`.
-
-**Implementation:**
+Note: ScreenCaptureKit captures the full display as a pixel stream and does NOT reliably expose per-frame frontmost-app metadata. The correct macOS mechanism for detecting the active application is `NSWorkspaceDidActivateApplicationNotification`.
 
 ```rust
-// In Rust via objc2-app-kit / objc2-foundation:
-// Subscribe to NSWorkspaceDidActivateApplicationNotification on startup.
-// The notification delivers an NSRunningApplication object with:
-//   - .bundleIdentifier  → e.g. "com.apple.Safari"
-//   - .localizedName     → e.g. "Safari"
-//   - .processIdentifier → PID
-
 struct AppWindowTracker {
     current_bundle_id: Option<String>,
-    // Sender half of a channel to the TranslationMemory owner
     invalidation_tx: Sender<InvalidationReason>,
 }
 
@@ -291,131 +370,38 @@ enum InvalidationReason {
 
 ```
 NSWorkspaceDidActivateApplicationNotification fires
-  → callback reads new app's bundleIdentifier
-  → compare to stored current_bundle_id
-  → if different:
+  -> read new app's bundleIdentifier
+  -> compare to stored current_bundle_id
+  -> if different:
       - update current_bundle_id
       - send InvalidationReason::AppSwitch on channel
-      - TranslationMemory receives message → calls clear()
-      - Emit "translation-clear" to Tauri frontend (hide overlay boxes)
-      - Log: "[ContextInvalidation] App switched from Safari to iTerm2 — memory cleared"
+      - TranslationMemory::clear()
+      - emit "translation-clear" to Tauri frontend
+      - log: "[ContextInvalidation] AppSwitch: Safari -> iTerm2 - memory cleared"
 ```
 
-#### Invalidation Trigger Matrix
+**Invalidation Trigger Matrix:**
 
-| Trigger       | Source                                          | Clears Memory     | Clears Overlay | Log Message                   |
-| ------------- | ----------------------------------------------- | ----------------- | -------------- | ----------------------------- |
-| App switch    | `NSWorkspaceDidActivateApplicationNotification` | ✅                | ✅             | `AppSwitch: {from} → {to}`    |
-| Manual reset  | `Cmd+Shift+M` hotkey                            | ✅                | ❌             | `ManualReset: user-initiated` |
-| Model switch  | `Cmd+Shift+G` hotkey                            | ✅                | ✅             | `ModelSwitch: {old} → {new}`  |
-| App restart   | Process init                                    | ✅ (never loaded) | N/A            | N/A                           |
-| Scroll/motion | Debounce state machine                          | ❌                | ✅             | N/A                           |
+| Trigger       | Source                                          | Clears Memory      | Clears Overlay |
+| ------------- | ----------------------------------------------- | ------------------ | -------------- |
+| App switch    | `NSWorkspaceDidActivateApplicationNotification` | Yes                | Yes            |
+| Manual reset  | `Cmd+Shift+M` hotkey                            | Yes                | No             |
+| Model switch  | `Cmd+Shift+G` hotkey                            | Yes                | Yes            |
+| App restart   | Process init                                    | Yes (never loaded) | N/A            |
+| Scroll/motion | Debounce state machine                          | No                 | Yes            |
 
-**Note on overlay vs. memory:** Clearing the overlay (hiding translation boxes) and clearing the memory (wiping context history) are independent operations. A manual memory reset does **not** hide current translation boxes — the user may still be reading them. An app switch clears both because the screen content has fundamentally changed.
+**Note on overlay vs. memory:** These are independent operations. A manual reset keeps the overlay visible (user may still be reading). An app switch clears both because the screen content has fundamentally changed.
 
-#### What Does NOT Trigger Invalidation
+**What does NOT trigger invalidation:**
 
-- Switching browser **tabs within the same app** — Safari stays Safari; context is intentionally preserved so multi-tab Japanese reading sessions stay coherent
-- Scrolling within a page — the debounce handles the overlay; memory persists
-- The overlay window itself gaining/losing focus (it's click-through, so this shouldn't occur)
+- Browser tab switches within the same app (Safari stays Safari — multi-tab reading context is intentionally preserved)
+- Scrolling within a page
 
-#### Graceful Degradation
-
-If `NSWorkspaceDidActivateApplicationNotification` cannot be subscribed (e.g., sandbox restriction), fall back to polling `NSWorkspace.shared.frontmostApplication` every 2 seconds in a background thread. Log a warning at startup: `"[AppTracker] Notification subscription failed, using 2s polling fallback"`.
+**Fallback:** If notification subscription fails, poll `NSWorkspace.shared.frontmostApplication` every 2 seconds in a background thread. Log: "[AppTracker] Notification subscription failed, using 2s polling fallback".
 
 ---
 
-### 3.1 Model Download & Storage
-
-**Storage path:** `~/Library/Application Support/jp-translate/models/`
-
-**Model manifest file:** `models/manifest.json` — tracks each downloaded model's filename, size, hash, download date, and last-used date.
-
-```json
-{
-  "models": [
-    {
-      "id": "nllb-600m-q4",
-      "filename": "nllb-200-distilled-600M.Q4_K_M.gguf",
-      "size_bytes": 1288490188,
-      "sha256": "...",
-      "downloaded_at": "2026-04-18T00:00:00Z",
-      "last_used_at": "2026-04-18T00:00:00Z",
-      "active": true
-    },
-    {
-      "id": "gemma4-e4b-q4",
-      "filename": "gemma-4-e4b-it.Q4_K_M.gguf",
-      "size_bytes": 5368709120,
-      "sha256": "...",
-      "downloaded_at": "2026-04-18T00:00:00Z",
-      "last_used_at": "2026-04-18T00:00:00Z",
-      "active": false
-    }
-  ]
-}
-```
-
-**Model Management Rules:**
-
-- On startup, scan `models/` for `.gguf` files not referenced in `manifest.json` (orphans) and offer to delete them
-- On startup, if a model's `last_used_at` is more than 30 days ago and it is not the active model, prompt the user to delete it
-- Never silently delete model files — always require explicit user confirmation (dialog or CLI `--prune-models` flag)
-- Enforce a hard storage warning at 4GB total in the models directory; block new downloads and show a cleanup prompt
-- Expose a `--list-models` CLI flag that prints the manifest table to stdout
-
-**Rationale:** Between NLLB (~1.2GB), Gemma 4 E4B (~5GB), Xcode toolchain, and Rust crate cache, a 256GB drive fills up faster than expected. Proactive model management prevents silent disk exhaustion.
-
-**Translation Request Format — Batched Single-Pass with Rolling Context:**
-
-All OCR results from a single frame are batched into one structured prompt with optional preceding context from recent screens:
-
-```
-[If context memory is non-empty]
-Previous context (do not retranslate, use for reference only):
-- {memory[0].japanese} → "{memory[0].english}"
-- {memory[1].japanese} → "{memory[1].english}"
-...up to 6 entries
-
-Translate each numbered Japanese string to English.
-Output only the translations, one per line, in the same numbered format.
-
-1: {ocr_result[0].text}
-2: {ocr_result[1].text}
-...N: {ocr_result[N].text}
-```
-
-**Expected model output:**
-
-```
-1: {english_translation_0}
-2: {english_translation_1}
-...
-```
-
-**Output parsing:**
-
-- Split response by newlines
-- Match `^(\d+): (.+)$` per line
-- Map index back to original `OcrResult` by position
-- If a line is missing or malformed, mark that box's translation as `""` (overlay shows original Japanese as fallback)
-
-**Why not `rayon::par_iter()` for inference:**
-Metal's memory model does not safely support concurrent inference contexts on the same model instance. Two threads simultaneously allocating KV cache on the same GPU backend is undefined behavior in llama.cpp's Metal path. Rayon parallelism is still used for CPU-bound work (color sampling, coordinate math, payload serialization) — just not for inference itself.
-
-**Batch size cap:** If OCR returns more than 15 strings, split into sequential sub-batches of 15 to stay within the model's context window.
-
-**Performance Targets:**
-| Metric | NLLB (Default) | Gemma 4 E4B (Quality) |
-|---|---|---|
-| Translation latency (single string, <50 chars) | < 800ms | < 1.5s |
-| Translation latency (full screen, ~10 strings) | < 3s | < 5s |
-| Model load time at startup | < 5s | < 8s |
-| Peak RAM usage (model + app) | < 2GB | < 6.5GB |
-
----
-
-### 5.5 Dynamic Styling
+### 5.7 Dynamic Styling
 
 **Purpose:** Ensure translated text is always readable against any background color.
 
@@ -423,56 +409,59 @@ Metal's memory model does not safely support concurrent inference contexts on th
 
 ```
 1. Sample the outer 2px border of the bounding box from the pixel buffer
-2. Average the RGBA values → bg_color: (r, g, b)
+2. Average the RGBA values -> bg_color: (r, g, b)
 3. Calculate relative luminance (WCAG 2.1 formula):
    L = 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
-   where linearize(c) = c/12.92 if c<=0.04045 else ((c+0.055)/1.055)^2.4
-4. If L > 0.179 → fg_color = "#000000" (dark text on light bg)
-   If L ≤ 0.179 → fg_color = "#FFFFFF" (light text on dark bg)
-5. Derive overlay_bg: bg_color with 85% opacity for readability
+   where linearize(c) = c/12.92 if c <= 0.04045 else ((c+0.055)/1.055)^2.4
+4. L > 0.179 -> fg_color = "#000000" (dark text on light bg)
+   L <= 0.179 -> fg_color = "#FFFFFF" (light text on dark bg)
+5. overlay_bg = bg_color at 85% opacity -> "rgba(r, g, b, 0.85)"
 ```
 
 ---
 
-### 5.6 IPC Payload — Rust → Tauri Frontend
-
-**Format:** JSON array emitted via Tauri `emit()` event on channel `"translation-update"`.
-
-**Schema:**
+### 5.8 IPC Payload — Rust to Tauri Frontend
 
 ```typescript
 interface TranslationBox {
-  id: string; // Unique ID (e.g., UUID or frame_id + index)
-  translated: string; // English translation
-  original: string; // Original Japanese text (for tooltip/debug)
-  x: number; // Left edge in logical CSS pixels
-  y: number; // Top edge in logical CSS pixels
-  width: number; // Box width in logical CSS pixels
-  height: number; // Box height in logical CSS pixels
-  bg_color: string; // CSS rgba string, e.g. "rgba(30, 30, 30, 0.85)"
+  id: string;
+  translated: string;
+  original: string; // Japanese original (tooltip, fallback display)
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  is_vertical: boolean; // drives CSS writing-mode
+  bg_color: string; // e.g. "rgba(30, 30, 30, 0.85)"
   fg_color: string; // "#000000" or "#FFFFFF"
-  confidence: number; // OCR confidence 0.0 – 1.0
+  confidence: number;
 }
 
 type TranslationPayload = {
   boxes: TranslationBox[];
-  scale_factor: number; // Retina scale (1.0 or 2.0)
-  frame_id: number; // Monotonically increasing frame counter
+  scale_factor: number;
+  display_id: number; // routes payload to correct overlay window
+  frame_id: number;
 };
 ```
 
-**Clear Event:** Emit `"translation-clear"` with no payload when SCROLLING state is entered.
+**Events emitted by Rust backend:**
+
+| Event                   | Payload              | Trigger                         |
+| ----------------------- | -------------------- | ------------------------------- |
+| `"translation-update"`  | `TranslationPayload` | New translation batch ready     |
+| `"translation-clear"`   | none                 | Motion detected or app switched |
+| `"translation-started"` | `{ display_id }`     | Inference batch has begun       |
+| `"translation-error"`   | `{ message }`        | Watchdog restarted engine       |
 
 ---
 
-### 5.7 Tauri Overlay Window
+### 5.9 Tauri Overlay Window
 
-**Window Configuration (tauri.conf.json):**
+**Per-display window configuration:**
 
 ```json
 {
-  "width": "<full_display_width>",
-  "height": "<full_display_height>",
   "transparent": true,
   "decorations": false,
   "alwaysOnTop": true,
@@ -482,56 +471,129 @@ type TranslationPayload = {
 }
 ```
 
-**macOS-Specific Rust Setup:**
+**Rust setup per window:**
 
 ```rust
-window.set_ignore_cursor_events(true)?;  // Click-through
-window.set_content_protection(false)?;   // Allow ScreenCaptureKit to see it (avoid capture loop)
+window.set_ignore_cursor_events(true)?;   // click-through
+window.set_content_protection(false)?;    // allow SCKit capture (no feedback loop)
 ```
 
-**Capture Loop Prevention:**
-The overlay window itself must be **excluded** from the ScreenCaptureKit capture stream using `SCStreamConfiguration.excludedWindows`, otherwise the overlay will be captured, OCR'd, and translated in an infinite loop.
+**Frontend Rendering:**
 
-**Frontend Rendering (JavaScript):**
-
-- Listen for `translation-update` event
-- Clear all existing `.translation-box` elements
-- For each box in payload, create an absolutely-positioned `<div>`:
-  ```html
-  <div
-    class="translation-box"
-    style="
-    position: absolute;
-    left: {x}px; top: {y}px;
-    width: {width}px; height: {height}px;
-    background: {bg_color};
-    color: {fg_color};
-    font-size: clamp(10px, {height * 0.7}px, 24px);
-    border-radius: 3px;
-    padding: 2px 4px;
-    pointer-events: none;
-  "
-  >
-    {translated}
-  </div>
-  ```
-- Listen for `translation-clear` event → remove all boxes immediately
+- `"translation-update"` — clear existing `.translation-box` elements; render new absolutely-positioned divs
+- `"translation-clear"` — remove all boxes immediately
+- `"translation-started"` — show subtle bottom-right spinner: "Translating..." (opacity 0.6, pointer-events none)
+- `"translation-error"` — show non-blocking top banner, auto-dismiss after 4s
+- Vertical boxes: apply `writing-mode: vertical-rl; text-orientation: mixed`
+- All boxes: CSS transition `opacity 0.15s ease-in` on appearance
 
 ---
 
-## 6. Debug CLI Mode (`--debug-cli`)
+## 6. Model Download & First-Run Onboarding
 
-**Purpose:** Allow the full Rust engine (capture → motion → OCR → translation → styling) to be tested entirely from the terminal, bypassing Tauri and the WebView completely. Essential for performance profiling and debugging without fighting a transparent overlay.
+### 6.1 Onboarding Wizard (4 Screens)
+
+**Screen 1 — Screen Recording Permission:**
+
+- Explains why screen recording is needed in plain language
+- Button opens System Settings -> Privacy -> Screen Recording
+- Polls for permission grant before allowing progress to Screen 2
+
+**Screen 2 — Model Selection:**
+
+- Standard (NLLB ~1.2GB): "Fast, great for course materials and everyday reading"
+- Quality (Gemma 4 ~5GB): "Handles nuanced Japanese better. Requires 12GB+ RAM."
+- Quality option is greyed out with explanation if system RAM < 12GB
+
+**Screen 3 — Download & Verification:**
+
+- Progress bar showing percentage and MB/s transfer speed
+- Uses HTTP Range requests + `.part` sidecar file for resumable downloads
+- Renames `.part` to `.gguf` only after successful SHA256 verification
+- On SHA256 mismatch: delete corrupt file, show dialog: "Verification failed. Retry download?"
+- If wizard is closed mid-download: download continues in background; tray shows "Downloading model (45%)" with cancel option
+- Post-download: 30-second interactive demo on a bundled sample Japanese image
+
+**Screen 4 — Privacy:**
+
+- Lists all three categories of network requests this app ever makes:
+  1. Model download from Hugging Face (setup only)
+  2. Optional anonymous crash reports via Sentry (opt-in, off by default)
+  3. Silent update version checks (version number only, on startup)
+- Opt-in Sentry checkbox with link to privacy policy (hosted on project GitHub)
+- "The app never sends screen contents anywhere."
+
+### 6.2 Model Management
+
+**Storage path:** `~/Library/Application Support/jp-translate/models/`
+
+**Manifest file:** `models/manifest.json`
+
+```json
+{
+  "models": [
+    {
+      "id": "nllb-600m-q4",
+      "filename": "nllb-200-distilled-600M.Q4_K_M.gguf",
+      "size_bytes": 1288490188,
+      "sha256": "<hash>",
+      "downloaded_at": "2026-04-18T00:00:00Z",
+      "last_used_at": "2026-04-18T00:00:00Z",
+      "active": true
+    },
+    {
+      "id": "gemma4-e4b-q4",
+      "filename": "gemma-4-e4b-it.Q4_K_M.gguf",
+      "size_bytes": 5368709120,
+      "sha256": "<hash>",
+      "downloaded_at": "2026-04-18T00:00:00Z",
+      "last_used_at": "2026-04-18T00:00:00Z",
+      "active": false
+    }
+  ]
+}
+```
+
+**Management Rules:**
+
+- On startup: scan for orphan `.gguf` files not in manifest — offer deletion
+- On startup: non-active model with `last_used_at` > 30 days — prompt to prune
+- Never silently delete — always require explicit user confirmation
+- Hard warning at 4GB total model directory size; block new downloads until cleaned up
+- `--list-models` flag: print manifest table to stdout
+- `--prune-models` flag: interactive model cleanup wizard
+
+---
+
+## 7. Settings File
+
+**Path:** `~/Library/Application Support/jp-translate/settings.json`
+
+Created with defaults on first launch if missing. Changes take effect on app restart. Full settings UI is deferred to v1.1. Users access via tray menu -> "Open Settings File" which reveals it in Finder.
+
+```json
+{
+  "debounce_ms": 300,
+  "motion_threshold": 0.05,
+  "pixel_diff_threshold": 15,
+  "capture_fps": 30,
+  "edge_inset_percent": 5,
+  "furigana_suppression": true,
+  "show_original_text": false,
+  "context_memory_size": 6,
+  "active_model": "nllb-600m-q4"
+}
+```
+
+---
+
+## 8. Debug CLI Mode
 
 **Activation:** `cargo run -- --debug-cli`
 
-**Behavior in this mode:**
+Bypasses Tauri window creation entirely. Runs the full Rust engine (capture -> motion -> OCR -> translation -> styling) and prints JSON to stdout on each debounce trigger.
 
-- Tauri window is **not created**
-- ScreenCaptureKit capture loop starts normally
-- Motion detection and debounce run normally
-- On trigger: OCR + translation + styling run normally
-- Output is printed as pretty-printed JSON to `stdout`:
+**Example output:**
 
 ```json
 {
@@ -548,6 +610,7 @@ The overlay window itself must be **excluded** from the ScreenCaptureKit capture
       "y": 180.0,
       "width": 200.0,
       "height": 24.0,
+      "is_vertical": false,
       "bg_color": "rgba(255,255,255,0.85)",
       "fg_color": "#000000",
       "confidence": 0.97
@@ -556,76 +619,146 @@ The overlay window itself must be **excluded** from the ScreenCaptureKit capture
 }
 ```
 
-**Additional CLI flags:**
-| Flag | Description |
-|---|---|
-| `--debug-cli` | Headless mode, JSON to stdout |
-| `--debug-cli --pretty` | Pretty-print JSON output |
-| `--debug-cli --once` | Trigger exactly one OCR cycle then exit (useful for scripting) |
-| `--list-models` | Print model manifest table and exit |
-| `--prune-models` | Interactive CLI model cleanup wizard |
+**All CLI flags:**
 
-**Why this matters:** Debugging a transparent click-through window with browser DevTools requires the app to be in focus — which is awkward when the whole point is that it's click-through. The CLI mode lets you run the engine, pipe output to `jq`, and inspect results without any UI friction.
+| Flag                             | Description                                                  |
+| -------------------------------- | ------------------------------------------------------------ |
+| `--debug-cli`                    | Headless mode, JSON to stdout                                |
+| `--debug-cli --pretty`           | Pretty-printed JSON output                                   |
+| `--debug-cli --once`             | Trigger exactly one OCR cycle then exit                      |
+| `--debug-cli --test-suite <dir>` | Run E2E test suite against directory of PNGs + expected JSON |
+| `--list-models`                  | Print manifest table and exit                                |
+| `--prune-models`                 | Interactive model cleanup wizard                             |
 
----
+**`--test-suite <dir>` mode:**
 
-## 7. Hotkey & Controls
-
-| Hotkey            | Action                                                   |
-| ----------------- | -------------------------------------------------------- |
-| `Cmd + Shift + T` | Toggle overlay visibility on/off                         |
-| `Cmd + Shift + Q` | Quit application                                         |
-| `Cmd + Shift + R` | Force re-trigger OCR on current screen (bypass debounce) |
-
-Hotkeys must be registered as global shortcuts (work even when app is not focused) via Tauri's `globalShortcut` plugin.
-
----
-
-## 7. Memory Budget
-
-| Component                       | Default (NLLB) | Quality Mode (Gemma 4 E4B) |
-| ------------------------------- | -------------- | -------------------------- |
-| Translation model               | ~1.2 GB        | ~5.0 GB                    |
-| Tauri WebView (frontend)        | ~80 MB         | ~80 MB                     |
-| Rust backend (buffers, state)   | ~50 MB         | ~50 MB                     |
-| Apple Vision (ANE, no RAM pool) | ~0 MB          | ~0 MB                      |
-| Frame buffer (2× 4K BGRA)       | ~96 MB         | ~96 MB                     |
-| **Total Estimated**             | **~1.5 GB**    | **~5.3 GB**                |
-| **Hard Ceiling**                | **3.0 GB**     | **8.0 GB**                 |
-
-> Quality Mode requires closing memory-heavy apps (browsers with many tabs, etc.) on a 16GB system to avoid swapping.
+- Directory contains pre-captured Japanese PNG screenshots
+- Each PNG has a companion `.expected.json`:
+  ```json
+  {
+    "ocr_must_contain": ["日本語", "テキスト"],
+    "translation_must_contain": ["Japanese", "text"]
+  }
+  ```
+- Runs full pipeline (OCR + translation) per image
+- Asserts OCR substrings present; translation matches within similarity threshold
+- Prints pass/fail per image; exits `0` (all pass) or `1` (any fail)
+- Designed to run in GitHub Actions CI on every commit
 
 ---
 
-## 8. Security & Privacy
+## 9. Hotkey & Controls
 
-- All processing is **fully local** — no data leaves the device
-- The app captures screen contents; this is disclosed in onboarding
-- No telemetry, no analytics, no network requests after model download
-- The model file should be stored in `~/Library/Application Support/jp-translate/models/`
+| Hotkey            | Action                                            |
+| ----------------- | ------------------------------------------------- |
+| `Cmd + Shift + T` | Toggle overlay visibility on/off                  |
+| `Cmd + Shift + Q` | Quit application                                  |
+| `Cmd + Shift + R` | Force OCR on current screen (bypass debounce)     |
+| `Cmd + Shift + M` | Manually clear translation memory (context reset) |
+| `Cmd + Shift + G` | Toggle between NLLB and Gemma 4 E4B quality mode  |
 
----
-
-## 9. Error Handling & Edge Cases
-
-| Scenario                         | Behavior                                                                              |
-| -------------------------------- | ------------------------------------------------------------------------------------- |
-| No Japanese text on screen       | OCR returns empty array; overlay clears                                               |
-| Screen permission denied         | App shows permission request UI and blocks startup                                    |
-| Model file not found             | Startup fails with a clear error dialog and download link                             |
-| Translation takes > 5s           | Show "Translating…" placeholder; timeout and show original Japanese                   |
-| App is capturing itself          | Excluded window prevents feedback loop                                                |
-| User switches display resolution | Re-query display scale_factor on `NSApplicationDidChangeScreenParametersNotification` |
+All registered as global shortcuts via Tauri's `globalShortcut` plugin — functional even when the overlay is not focused.
 
 ---
 
-## 10. Risk Register
+## 10. In-App Help
 
-| Risk                                             | Severity | Mitigation                                                                                                                      |
-| ------------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `objc2-vision` bindings are incomplete or broken | High     | Prepare fallback: call Vision via a Swift helper binary via `std::process::Command`, or use `tesseract-rs` as degraded fallback |
-| NLLB via llama.cpp produces poor quality         | Medium   | Validate translation quality during Phase 3 before full integration; switch to Gemma 4 E4B Quality Mode for better results      |
-| Gemma 4 E4B causes RAM pressure in Quality Mode  | Medium   | Warn user before switching; show current RAM usage in menu bar during Quality Mode                                              |
-| Overlay capture loop                             | High     | Explicitly exclude overlay window from SCStream at initialization                                                               |
-| Retina coordinate mismatch                       | Medium   | Implement `scale_factor` normalization from day one; test on Retina display in Phase 1                                          |
-| macOS notarization requirements                  | Low      | Use Tauri's built-in signing/notarization toolchain; plan for Apple Developer account                                           |
+Accessible via tray menu -> "Help". Opens `help.html`, a page bundled inside the `.app`:
+
+- How to grant screen recording permission
+- All 5 hotkeys with descriptions
+- How to switch between NLLB and Gemma 4; what Quality Mode requires
+- What context memory is, when it clears, how to manually reset it
+- FAQ:
+  - "Why isn't the overlay appearing?" — Check the app is running, screen permission is granted, and you've fully stopped scrolling for 300ms
+  - "Translations look wrong or incomplete" — Try Quality Mode (`Cmd+Shift+G`)
+  - "App feels slow or the Mac is getting warm" — Check the thermal badge in the menu bar; close other apps if using Quality Mode
+  - "How do I delete a model to free up space?" — Tray -> Manage Models
+
+---
+
+## 11. Crash Reporting (Opt-in)
+
+- Integrated via `sentry-rust`
+- Opt-in prompt on Screen 4 of onboarding wizard; off by default
+- Only anonymous stack traces and app version transmitted — no screen contents, no file paths
+- User can change preference via tray -> "Settings -> Privacy"
+
+---
+
+## 12. Silent Auto-Update
+
+- Integrated via `tauri-plugin-updater`
+- Checks a public GitHub Releases JSON feed silently on startup
+- If a new version is found: non-intrusive tray notification: "A new version is available. Restart to update."
+- Never forces updates; user always opts in
+
+---
+
+## 13. Memory Budget
+
+| Component                  | Default (NLLB) | Quality Mode (Gemma 4) |
+| -------------------------- | -------------- | ---------------------- |
+| Translation model          | ~1.2 GB        | ~5.0 GB                |
+| Tauri WebView              | ~80 MB         | ~80 MB                 |
+| Rust backend + buffers     | ~50 MB         | ~50 MB                 |
+| Apple Vision (ANE)         | ~0 MB          | ~0 MB                  |
+| Frame buffers (2x 4K BGRA) | ~96 MB         | ~96 MB                 |
+| **Total Estimated**        | **~1.5 GB**    | **~5.3 GB**            |
+| **Hard Ceiling**           | **3.0 GB**     | **8.0 GB**             |
+
+Quality Mode on a 16GB system: close memory-heavy apps before switching. Quality Mode is fully disabled if system RAM < 12GB total.
+
+---
+
+## 14. Security & Privacy
+
+- All processing is fully local — screen contents never leave the device
+- Network requests limited to three categories: model download (Hugging Face), optional crash reports (Sentry, opt-in), silent update version checks
+- Screen capture usage disclosed on Screen 1 of onboarding wizard
+- Privacy policy hosted on project GitHub, linked from Screen 4 of onboarding wizard
+- All network requests use HTTPS
+
+---
+
+## 15. Error Handling & Edge Cases
+
+| Scenario                      | Behavior                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| No Japanese text on screen    | OCR returns empty array; overlay clears                                  |
+| Screen permission denied      | Onboarding wizard blocks progress; shows system settings link            |
+| Model file not found          | First-run wizard triggered; blocks app until model is present            |
+| Download interrupted          | Resumes from last byte via `.part` file on next launch                   |
+| SHA256 mismatch               | Delete corrupt file; show retry dialog                                   |
+| Translation takes > 5s        | Show "Translating..." spinner; timeout after 10s, show original Japanese |
+| Translation engine crash      | Watchdog restarts after 3 failures; non-blocking banner shown            |
+| Thermal throttling            | Auto-degrades to NLLB + 600ms debounce; tray badge shown                 |
+| Display unplugged             | Stop SCStream, close overlay window, clean up manager state              |
+| Display added                 | Create new SCStream and overlay window                                   |
+| App is capturing itself       | `excludedWindows` prevents feedback loop at init                         |
+| User switches application     | Context memory cleared; overlay cleared                                  |
+| Browser tab switch            | Context memory NOT cleared (same bundle ID — intentional)                |
+| Resolution change mid-session | Re-query `scale_factor` per display; update stream config                |
+| Vertical Japanese text        | `textAngle` detected; overlay div uses `writing-mode: vertical-rl`       |
+| Furigana cluttering overlay   | Suppressed by proximity post-processing; configurable in settings        |
+| System RAM < 12GB             | Quality Mode disabled at startup; user notified via greyed tray item     |
+
+---
+
+## 16. Risk Register
+
+| Risk                                           | Severity | Mitigation                                                                      |
+| ---------------------------------------------- | -------- | ------------------------------------------------------------------------------- |
+| `objc2-vision` bindings incomplete or broken   | Low      | Crate is production-ready as of v0.2+; Swift subprocess bridge as fallback      |
+| Vertical text rendering fails                  | Medium   | Use `textAngle` from Vision; CSS `writing-mode`; test against manga screenshots |
+| Furigana suppression over-eager                | Medium   | Conservative thresholds (< 40% height, > 70% overlap); toggle in settings.json  |
+| Translation engine crash                       | High     | Supervised thread watchdog; auto-restart after 3 consecutive failures           |
+| Multi-monitor overlay misalignment             | Medium   | Per-display overlay windows with independent coordinate mapping                 |
+| Thermal throttling degrades UX silently        | Medium   | IOKit monitoring auto-degrades to NLLB; user-visible tray badge                 |
+| Non-technical user cannot install              | High     | In-app onboarding wizard with guided download eliminates manual file copy       |
+| No crash visibility post-release               | Medium   | Opt-in Sentry with explicit consent; anonymous stack traces only                |
+| Download interrupted during setup              | Medium   | Resumable downloads with `.part` sidecar file                                   |
+| Quality Mode causes RAM pressure               | Medium   | 12GB RAM gate at startup; warn before switching if free RAM < 8GB               |
+| Retina coordinate mismatch                     | Medium   | Per-display `scale_factor` normalization from Phase 1                           |
+| macOS notarization requirements                | Low      | Tauri built-in signing toolchain; Apple Developer account required              |
+| Context memory poisons subsequent translations | Medium   | Auto-clear on app switch; `Cmd+Shift+M` manual clear; 6-entry cap               |
