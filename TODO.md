@@ -59,7 +59,22 @@ _Goal: Have a running Tauri app that opens a transparent window._
 - [ ] Confirm window is transparent and borderless
 - [ ] Confirm window sits on top of other windows
 
-**✅ Phase 0 Milestone:** A fullscreen transparent Tauri window opens on launch with no errors.
+### 0.5 Debug CLI Mode (Add Early — Save Yourself Pain)
+
+- [ ] Add a top-level CLI argument parser using `clap` crate
+- [ ] Implement `--debug-cli` flag that:
+  - [ ] Skips Tauri window creation entirely
+  - [ ] Runs the full Rust engine (capture → motion → OCR → translation → styling)
+  - [ ] Prints each trigger's output as pretty-printed JSON to `stdout`
+  - [ ] Includes timing fields: `trigger_latency_ms`, `ocr_duration_ms`, `translation_duration_ms`
+- [ ] Implement `--debug-cli --once` sub-flag: trigger exactly one OCR cycle then exit
+- [ ] Implement `--list-models` flag: print model manifest and exit
+- [ ] Implement `--prune-models` flag: interactive cleanup wizard (no GUI needed)
+- [ ] Test: `cargo run -- --debug-cli` captures screen, prints JSON on scroll-stop
+
+> **Why now, not later:** You cannot easily open browser DevTools on a transparent click-through window while another app is in focus. Without this mode, debugging Phase 2–4 means guessing from indirect evidence. Build it in Phase 0 and use it throughout every subsequent phase.
+
+**✅ Phase 0 Milestone:** A fullscreen transparent Tauri window opens on launch with no errors. `cargo run -- --debug-cli` also runs without panicking (even if it prints nothing yet).
 
 ---
 
@@ -94,14 +109,19 @@ _Goal: Capture screen frames and correctly detect when the user stops scrolling.
 - [ ] Write a `MotionDetector` struct with:
   - [ ] `fn downscale_to_thumbnail(buffer: &PixelBuffer) -> GrayImage` (160×90)
   - [ ] Edge inset: crop 5% margin from all sides before comparison
-  - [ ] `fn compute_motion_ratio(prev: &GrayImage, curr: &GrayImage) -> f32`
-    - [ ] Sum of absolute differences, normalized by pixel count
+  - [ ] `fn compute_diff_mask(prev: &GrayImage, curr: &GrayImage) -> BinaryMask`
+    - [ ] Per-pixel absolute difference; mark as "changed" if diff > `PIXEL_DIFF_THRESHOLD` (default: 15)
+  - [ ] `fn largest_contiguous_region(mask: &BinaryMask) -> f32`
+    - [ ] Run a union-find (or simple flood fill) connected-components pass on the mask
+    - [ ] Return the area of the **largest single connected region** as a fraction of total pixels
+    - [ ] This is your `motion_ratio` — replaces the raw sum-of-diffs approach
   - [ ] Store previous thumbnail for comparison
 - [ ] Write a `DebounceStateMachine` enum: `Scrolling | Settling(Instant) | Idle`
   - [ ] `fn update(&mut self, motion_ratio: f32) -> DebounceEvent`
   - [ ] Returns `DebounceEvent::Triggered` when timer hits 0 in Settling state
   - [ ] Returns `DebounceEvent::MotionDetected` when motion resets the timer
-- [ ] Test: Print state machine transitions to console while scrolling a browser page
+- [ ] **Why connected-components:** Raw pixel sum counts blinking cursors, spinning loaders, and looping ads as "motion" — these produce scattered isolated pixels that sum to a large ratio but never form a large contiguous block. Scrolling always produces one large cohesive moving region. This single change makes the debounce dramatically more reliable.
+- [ ] Test: Console shows correct transitions while scrolling. A blinking cursor or spinner does NOT reset the timer.
 
 ### 1.4 Static Frame Snapshot
 
@@ -118,13 +138,18 @@ _Goal: Extract Japanese text and bounding boxes from a static frame._
 
 ### 2.1 Vision Framework Bindings
 
-- [ ] Research `objc2-vision` crate — determine if `VNRecognizeTextRequest` is available
-- [ ] If `objc2-vision` is incomplete, write manual bindings for:
-  - [ ] `VNImageRequestHandler`
-  - [ ] `VNRecognizeTextRequest`
-  - [ ] `VNRecognizedTextObservation`
-  - [ ] `VNRectangleObservation.boundingBox` (returns `CGRect` in normalized coords)
-- [ ] Fallback plan documented: call a Swift helper subprocess if bindings fail
+- [ ] Research `objc2-vision` crate — determine if `VNRecognizeTextRequest` is available and complete
+- [ ] **Time-box this research to 2 hours.** If the structs you need are missing or segfault, do NOT spend days writing unsafe FFI by hand.
+- [ ] **Primary path:** Use `objc2-vision` if `VNRecognizeTextRequest`, `VNRecognizedTextObservation`, and `boundingBox` are all accessible
+- [ ] **Fallback path (implement in parallel, takes ~1 hour):** Write a Swift CLI helper:
+  - [ ] `vision-helper` — a ~50-line Swift command-line tool
+  - [ ] Accepts an image file path as argument
+  - [ ] Runs `VNRecognizeTextRequest` with `recognitionLanguages: ["ja-JP"]`
+  - [ ] Prints a JSON array of `{ text, confidence, x, y, width, height }` to stdout
+  - [ ] Call from Rust via `std::process::Command::new("vision-helper").arg(image_path)`
+  - [ ] Parse stdout as JSON in Rust
+  - [ ] **This bridge is fully production-viable** — Vision runs in a separate process, latency cost is negligible (~5ms process spawn), and you're not blocked by crate maturity
+- [ ] Decide which path to use based on your 2-hour research; document the decision in a `DECISIONS.md`
 
 ### 2.2 OCR Request Handler
 
@@ -171,34 +196,126 @@ _Goal: Translate extracted Japanese strings to English using a local model._
 - [ ] Download `nllb-200-distilled-600M.Q4_K_M.gguf` from Hugging Face
 - [ ] Verify model file size is ~1.2GB
 - [ ] Write a first-launch check: if model missing, show download prompt UI
+- [ ] Create `models/manifest.json` to track downloaded models:
+  - [ ] Fields per entry: `id`, `filename`, `size_bytes`, `sha256`, `downloaded_at`, `last_used_at`, `active`
+- [ ] Write `fn update_last_used(model_id: &str)` — called every time the model is loaded
+- [ ] Write `fn scan_for_orphans() -> Vec<PathBuf>` — finds `.gguf` files not in manifest
+- [ ] On startup: run orphan scan; if orphans found, offer to delete them (never silently)
+- [ ] On startup: if any non-active model's `last_used_at` > 30 days ago, prompt user to prune
+- [ ] Enforce a 4GB hard warning ceiling for total models directory size; block new downloads and show cleanup prompt if exceeded
+- [ ] Implement `--prune-models` CLI wizard (list models with sizes, confirm deletion interactively)
 
 ### 3.2 llama.cpp Integration
 
 - [ ] Add `llama_cpp` crate to `Cargo.toml` (or use `llama-cpp-rs`)
 - [ ] Write a `TranslationEngine` struct with:
-  - [ ] `fn load(model_path: &Path) -> Result<Self>`
+  - [ ] `fn load(model_path: &Path, model_id: &str) -> Result<Self>`
     - [ ] Load model with `n_gpu_layers = 99` (full Metal offload)
-    - [ ] Set context size to 512 (sufficient for translation tasks)
-  - [ ] `fn translate(&self, japanese: &str) -> Result<String>`
-    - [ ] Format prompt: `"Translate to English. Japanese: {text}\nEnglish:"`
-    - [ ] Run inference; extract text after `"English:"` marker
-    - [ ] Strip whitespace and trailing newlines
+    - [ ] Set context size to `1024` (larger than 512 — needed to fit context memory + batch prompt)
+  - [ ] `fn translate_batch(&self, strings: &[String], context: &[(String, String)]) -> Result<Vec<String>>`
+    - [ ] If `context` is non-empty, prepend context block to prompt:
+
+      ```
+      Previous context (do not retranslate, use for reference only):
+      - {context[0].0} → "{context[0].1}"
+      ...up to 6 entries
+
+      Translate each numbered Japanese string to English.
+      Output only the translations, one per line, same numbered format.
+      1: {strings[0]}
+      2: {strings[1]}
+      ```
+
+    - [ ] Run **one sequential inference pass** — do NOT submit concurrent inference calls
+    - [ ] Parse response: split by newlines, match `^(\d+): (.+)$` per line
+    - [ ] Map results back to original indices; use `""` for missing/malformed lines
+    - [ ] If `strings.len() > 15`, split into sequential sub-batches of 15
+
 - [ ] Keep model loaded for the entire app session (no reload per request)
 
-### 3.3 Parallel Translation
+> **Critical — do NOT use `rayon::par_iter()` for inference:** Metal's memory model does not safely support concurrent inference contexts on the same model instance. Two threads simultaneously allocating KV cache on the same GPU backend causes memory contention and potential Metal driver crashes. Rayon is still appropriate for CPU-bound work (color sampling, coordinate math, serialization) — just never for `llama.cpp` inference calls.
 
-- [ ] Wrap `TranslationEngine` in `Arc<Mutex<TranslationEngine>>`
-- [ ] Use `rayon::par_iter()` on the `Vec<OcrResult>` to translate concurrently
-- [ ] Cap parallel workers: set Rayon thread pool size to 2
-  - `rayon::ThreadPoolBuilder::new().num_threads(2).build_global()`
+### 3.3 Rolling Translation Memory
 
-### 3.4 Translation Quality Validation
+- [ ] Add a `TranslationMemory` struct to app state:
+  ```rust
+  struct TranslationMemory {
+      entries: VecDeque<(String, String)>,  // (japanese, english)
+      max_size: usize,                       // default: 6
+  }
+  ```
+- [ ] `fn push(&mut self, japanese: String, english: String)` — adds entry, evicts oldest if over `max_size`
+- [ ] `fn clear(&mut self)` — wipes all entries
+- [ ] `fn as_context_slice(&self) -> &[(String, String)]` — returns entries for prompt injection
+- [ ] After each successful translation batch: push all `(original, translated)` pairs to memory
+- [ ] Test: Translate two sequential screens; verify second screen resolves dropped subject from first screen's context
+
+### 3.4 Context Invalidation Strategy
+
+> **Correction from earlier drafts:** The auto-clear mechanism is NOT based on ScreenCaptureKit frame metadata. It uses `NSWorkspaceDidActivateApplicationNotification`, which is the correct and reliable macOS API for detecting the frontmost app changing.
+
+- [ ] Add `InvalidationReason` enum:
+  ```rust
+  enum InvalidationReason {
+      AppSwitch { from: String, to: String },
+      ManualReset,
+      ModelSwitch,
+  }
+  ```
+- [ ] Create a `crossbeam` channel: `invalidation_tx / invalidation_rx`; pass `invalidation_rx` to the component that owns `TranslationMemory`
+- [ ] Write an `AppWindowTracker` struct:
+  - [ ] `current_bundle_id: Option<String>` — tracks the last known frontmost app
+  - [ ] On init: query `NSWorkspace.shared.frontmostApplication` to populate initial value
+  - [ ] Subscribe to `NSWorkspaceDidActivateApplicationNotification` via `objc2-app-kit`:
+    - [ ] In the notification callback: read the new app's `bundleIdentifier`
+    - [ ] Compare to `current_bundle_id`
+    - [ ] If different: update `current_bundle_id`, send `InvalidationReason::AppSwitch` on channel
+  - [ ] **Fallback:** If notification subscription fails (sandbox restriction), poll `NSWorkspace.shared.frontmostApplication` every 2 seconds in a background thread; log a warning at startup
+- [ ] In the translation pipeline's main loop: drain `invalidation_rx` before each translation cycle:
+  - [ ] `AppSwitch` received → call `translation_memory.clear()` + emit `"translation-clear"` to frontend + log
+  - [ ] `ManualReset` received → call `translation_memory.clear()` only (do NOT clear overlay — user may be reading)
+  - [ ] `ModelSwitch` received → call `translation_memory.clear()` + emit `"translation-clear"` to frontend
+- [ ] Wire `Cmd+Shift+M` hotkey → send `InvalidationReason::ManualReset` on `invalidation_tx`
+- [ ] Wire model switch logic (Phase 3.5) → send `InvalidationReason::ModelSwitch` on `invalidation_tx`
+
+**Testing checklist:**
+
+- [ ] Open Safari with Japanese content → trigger translation → switch to Terminal → switch back to Safari → verify memory was cleared on both switches
+- [ ] Open two Safari tabs with Japanese content → switch between tabs → verify memory is **not** cleared (same app, same bundle ID)
+- [ ] Press `Cmd+Shift+M` mid-session → verify memory clears but overlay boxes remain visible
+- [ ] Switch models with `Cmd+Shift+G` → verify memory clears and overlay clears
+- [ ] Log output during app switch shows: `[ContextInvalidation] AppSwitch: com.apple.Safari → com.apple.dt.Xcode — memory cleared`
+
+### 3.4 Gemma 4 E4B Quality Mode
+
+- [ ] Download `gemma-4-e4b-it.Q4_K_M.gguf` from Hugging Face (~5GB)
+- [ ] Add to `manifest.json` with `"active": false` by default
+- [ ] Write `fn switch_model(new_model_id: &str) -> Result<()>`:
+  - [ ] Unload current model (drop + deallocate GPU buffers)
+  - [ ] Show "Loading model…" indicator in overlay/tray
+  - [ ] Load new model
+  - [ ] Clear translation memory on switch (context from different model is not reliable)
+- [ ] Register `Cmd+Shift+G` hotkey to toggle between NLLB and Gemma 4 E4B
+- [ ] Before switching to Gemma 4: check available RAM; if system RAM < 8GB free, warn user
+- [ ] Update tray menu to show active model name and a toggle option
+- [ ] Test: Switch models mid-session; verify overlay continues working with new model
+
+### 3.5 Parallel Styling (CPU Tasks Only)
+
+- [ ] Use `rayon::par_iter()` for CPU-bound work that IS safe to parallelize:
+  - [ ] Background color sampling (one thread per bounding box)
+  - [ ] Contrast luminance calculation
+  - [ ] IPC payload serialization
+- [ ] Do **not** parallelize inference
+
+### 3.6 Translation Quality Validation
 
 - [ ] Create a test set of 20 Japanese sentences with known English translations
-- [ ] Run batch translation; manually review output quality
-- [ ] If quality is insufficient, try: longer prompt, different temperature, beam search settings
+- [ ] Test 5 sentences that require prior context to translate correctly (dropped subjects, pronouns)
+- [ ] Run tests on both NLLB and Gemma 4 E4B; compare output quality
+- [ ] If NLLB quality is insufficient even with context, document this in `DECISIONS.md`
 
-**✅ Phase 3 Milestone:** Given a list of 5 Japanese strings, the engine returns reasonable English translations in under 3 seconds total.
+**✅ Phase 3 Milestone:** Given a list of 5 Japanese strings, NLLB returns translations in under 3 seconds. Rolling memory correctly carries context across two sequential screen triggers. Model switch between NLLB and Gemma 4 works without crash.
 
 ---
 
@@ -297,6 +414,8 @@ _Goal: Full UX control — toggle, quit, force-retranslate._
 - [ ] Register `Cmd+Shift+T` → toggle overlay visibility
 - [ ] Register `Cmd+Shift+Q` → quit application
 - [ ] Register `Cmd+Shift+R` → bypass debounce, force OCR + translation immediately
+- [ ] Register `Cmd+Shift+M` → manually clear translation memory (context reset)
+- [ ] Register `Cmd+Shift+G` → toggle between NLLB and Gemma 4 E4B quality mode
 - [ ] Test: Shortcuts work when Tauri window is not focused (browser is in front)
 
 ### 6.2 System Tray / Menu Bar Icon
@@ -402,9 +521,9 @@ _Goal: A distributable .app bundle that installs and runs cleanly._
 
 ## Backlog / Future Versions (v1.1+)
 
-- [ ] Settings UI: adjust debounce timing, motion threshold, font size
+- [ ] Settings UI: adjust debounce timing, motion threshold, font size, memory window size
 - [ ] Support for window-specific capture (translate only one app)
-- [ ] ALMA quality mode toggle (higher quality, more RAM)
+- [ ] Persist translation memory across sessions (opt-in, per-app)
 - [ ] Vocabulary lookup on hover (tap a translation box to see dictionary entry)
 - [ ] Export translations to clipboard or text file
 - [ ] Support Chinese (Traditional/Simplified) and Korean
