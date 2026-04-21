@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -46,25 +47,24 @@ pub struct TranslationClient {
 }
 
 impl TranslationClient {
-    pub fn new(max_memory_size: usize, model_id: String, port: u16) -> anyhow::Result<Self> {
-        Ok(Self {
+    pub fn new(max_memory_size: usize, model_id: String, port: u16) -> Self {
+        Self {
             memory: TranslationMemory::new(max_memory_size),
             model_id,
             port,
             client: Client::new(),
-        })
+        }
     }
 
     pub async fn wait_for_ready(&self) -> anyhow::Result<()> {
         let url = format!("http://127.0.0.1:{}/health", self.port);
         let mut attempts = 0;
         loop {
-            if let Ok(res) = self.client.get(&url).send().await {
-                if let Ok(json) = res.json::<Value>().await {
-                    if json.get("status").and_then(|s| s.as_str()) == Some("ok") {
-                        return Ok(());
-                    }
-                }
+            if let Ok(res) = self.client.get(&url).send().await
+                && let Ok(json) = res.json::<Value>().await
+                && json.get("status").and_then(|s| s.as_str()) == Some("ok")
+            {
+                return Ok(());
             }
             attempts += 1;
             if attempts > 30 {
@@ -84,16 +84,16 @@ impl TranslationClient {
         if !context.is_empty() {
             prompt.push_str("Previous context (do not retranslate, for reference only):\n");
             for (ja, en) in context {
-                prompt.push_str(&format!("- {} -> \"{}\"\n", ja, en));
+                let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
             }
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
 
         prompt.push_str("Translate each numbered Japanese string to English.\n");
         prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
 
         for (i, s) in strings.iter().enumerate() {
-            prompt.push_str(&format!("{}: {}\n", i + 1, s));
+            let _ = writeln!(prompt, "{}: {}", i + 1, s);
         }
 
         let payload = json!({
@@ -116,18 +116,18 @@ impl TranslationClient {
             .json()
             .await?;
 
-        let content = res["choices"][0]["message"]["content"]
+        let response_content = res["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("");
 
         let mut results = vec![String::new(); strings.len()];
-        for line in content.lines() {
-            if let Some((num, text)) = line.split_once(':') {
-                if let Ok(idx) = num.trim().parse::<usize>() {
-                    if idx > 0 && idx <= strings.len() {
-                        results[idx - 1] = text.trim().to_string();
-                    }
-                }
+        for line in response_content.lines() {
+            if let Some((num, text)) = line.split_once(':')
+                && let Ok(idx) = num.trim().parse::<usize>()
+                && idx > 0
+                && idx <= strings.len()
+            {
+                results[idx - 1] = text.trim().to_string();
             }
         }
 

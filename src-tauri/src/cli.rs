@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct CliArgs {
     /// Headless mode, JSON to stdout
     #[arg(long)]

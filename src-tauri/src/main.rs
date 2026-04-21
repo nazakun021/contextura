@@ -76,18 +76,16 @@ fn run_cli(args: CliArgs) {
     }
 
     if let Some(dir) = args.test_suite {
-        println!("Running test suite in {:?}", dir);
+        println!("Running test suite in {}", dir.display());
         let all_passed = true;
 
         let entries = std::fs::read_dir(&dir).expect("Failed to read test corpus directory");
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    println!("Testing {:?}...", path);
-                    // TODO(#1): Replace with real OCR + translation assertion logic
-                    println!("  OK");
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                println!("Testing {}...", path.display());
+                // TODO(#1): Replace with real OCR + translation assertion logic
+                println!("  OK");
             }
         }
 

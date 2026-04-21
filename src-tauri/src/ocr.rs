@@ -136,15 +136,14 @@ impl OcrEngine {
                     }
 
                     // Box height < 40% of overlapping box height -> furigana
-                    if candidate.bounding_box.height < (parent.bounding_box.height * 0.4) {
-                        if candidate
+                    if candidate.bounding_box.height < (parent.bounding_box.height * 0.4)
+                        && candidate
                             .bounding_box
                             .overlaps_horizontally(&parent.bounding_box, 0.70)
                         {
                             to_mark_furigana.push(i);
                             break;
                         }
-                    }
                 }
             }
 

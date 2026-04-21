@@ -9,7 +9,7 @@ pub struct Rgba {
 }
 
 impl Rgba {
-    pub fn to_css_color(&self) -> String {
+    pub fn to_css_color(self) -> String {
         format!("rgba({}, {}, {}, 0.85)", self.r, self.g, self.b)
     }
 }
@@ -34,9 +34,9 @@ impl StylingEngine {
     }
 
     pub fn get_fg_color(r: u8, g: u8, b: u8) -> &'static str {
-        let r_f = r as f32 / 255.0;
-        let g_f = g as f32 / 255.0;
-        let b_f = b as f32 / 255.0;
+        let r_f = f32::from(r) / 255.0;
+        let g_f = f32::from(g) / 255.0;
+        let b_f = f32::from(b) / 255.0;
 
         let luminance = Self::relative_luminance(r_f, g_f, b_f);
         if luminance > 0.179 {

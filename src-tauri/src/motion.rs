@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +126,7 @@ impl MotionDetector {
         for y in min_y..max_y {
             for x in min_x..max_x {
                 let idx = y * self.width + x;
-                let diff = (prev[idx] as i32 - curr[idx] as i32).abs() as u8;
+                let diff = (i32::from(prev[idx]) - i32::from(curr[idx])).unsigned_abs() as u8;
                 mask[idx] = diff > self.pixel_diff_threshold;
             }
         }
@@ -156,6 +161,7 @@ impl MotionDetector {
         max_region_size as f32 / total_area
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn flood_fill(
         &self,
         start_x: usize,

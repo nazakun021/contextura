@@ -1,5 +1,5 @@
 //! IPC payload types for `translation-update`, `translation-error`, and
-//! `translation-started` events emitted from Rust to the WebView frontend.
+//! `translation-started` events emitted from Rust to the `WebView` frontend.
 //!
 //! These structs are serialised via `serde` across the IPC boundary and are
 //! consumed by `overlay.js`. They will be constructed by the engine emitter
