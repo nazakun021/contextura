@@ -59,6 +59,8 @@ impl Settings {
     ///
     /// # Errors
     /// Returns an error if the serialization fails or if the file cannot be written.
+    // Used when wizard completion is persisted; called from wizard close handler (not yet wired).
+    #[expect(dead_code, reason = "Will be called from the wizard completion handler in the next integration step")]
     pub fn save(&self) -> anyhow::Result<()> {
         let app_dir = Self::dir()?;
         let settings_path = app_dir.join("settings.json");

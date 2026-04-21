@@ -2,14 +2,27 @@
 
 mod cli;
 mod settings;
+
+// Pipeline modules — scaffolded for the main event loop, not yet integrated.
+// The #[expect] attribute (rust-best-practices Ch.2) is preferred over #[allow]
+// because it will fire a *new* warning if the dead_code is ever resolved,
+// reminding us to clean up the suppression.
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod capture;
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod motion;
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod ocr;
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod translation;
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod context;
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod thermal;
+#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
 mod styling;
 mod ipc;
+
 mod tray;
 mod hotkeys;
 
@@ -17,6 +30,9 @@ use clap::Parser;
 use cli::CliArgs;
 
 fn main() {
+    // Initialize logging so log::info!/error! actually emit output.
+    env_logger::init();
+
     let args = CliArgs::parse();
 
     if args.is_cli_mode() {
@@ -32,7 +48,7 @@ fn run_cli(args: CliArgs) {
         println!("Manifest table: (not implemented)");
         return;
     }
-    
+
     if args.prune_models {
         println!("Interactive model cleanup: (not implemented)");
         return;
@@ -40,20 +56,20 @@ fn run_cli(args: CliArgs) {
 
     if let Some(dir) = args.test_suite {
         println!("Running test suite in {:?}", dir);
-        let mut all_passed = true;
-        
+        let all_passed = true;
+
         let entries = std::fs::read_dir(&dir).expect("Failed to read test corpus directory");
         for entry in entries {
             if let Ok(entry) = entry {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("json") {
                     println!("Testing {:?}...", path);
-                    // Mock: assuming test always passes for scaffold
+                    // TODO(#1): Replace with real OCR + translation assertion logic
                     println!("  OK");
                 }
             }
         }
-        
+
         if all_passed {
             println!("All tests passed.");
             std::process::exit(0);
@@ -70,49 +86,73 @@ fn run_cli(args: CliArgs) {
             return;
         }
         loop {
-            std::thread::park(); // Keep main thread alive for now
+            std::thread::park();
         }
     }
 }
 
 fn run_tauri() {
-    // Sentry rust initialization
-    let _sentry_guard = sentry::init(("https://example@sentry.io/1234567", sentry::ClientOptions {
-        release: sentry::release_name!(),
-        // Only enabled if opt-in via settings (currently false as default)
-        ..Default::default()
-    }));
-
     tauri::Builder::default()
         .setup(|app| {
+            use tauri::Manager;
+
             let settings = settings::Settings::load()
                 .expect("Failed to load settings at startup");
 
-            // Build Tray Menu
+            // Make the overlay window background truly transparent on macOS.
+            // Tauri sets NSWindow.isOpaque = false, but WKWebView still draws a
+            // white/black layer by default. We must clear it via KVC.
+            // This requires macOSPrivateApi = true in tauri.conf.json.
+            if let Some(overlay) = app.get_webview_window("overlay-main") {
+                let _ = overlay.with_webview(|wv| {
+                    #[cfg(target_os = "macos")]
+                    {
+                        use objc2::msg_send;
+                        use objc2::runtime::AnyObject;
+                        use objc2_foundation::{NSNumber, NSString};
+
+                        // SAFETY: wv.inner() is a WKWebView*, which is an NSObject
+                        // subclass. Casting *mut c_void → *mut AnyObject is sound
+                        // because AnyObject represents any Objective-C id.
+                        // setValue:forKey: with "drawsBackground" is a semi-private
+                        // KVC key stable since macOS 10.10 (widely relied upon).
+                        unsafe {
+                            let webview_obj: *mut AnyObject = wv.inner().cast();
+                            let value = NSNumber::new_bool(false);
+                            let key = NSString::from_str("drawsBackground");
+                            let _: () = msg_send![webview_obj, setValue: &*value, forKey: &*key];
+                        }
+                    }
+                });
+                // Window starts hidden (visible: false in tauri.conf.json).
+                // Show it now that we've set it up correctly.
+                let _ = overlay.show();
+            }
+
+            // Build system tray menu.
             if let Err(e) = tray::setup_tray(app) {
-                log::error!("Failed to setup tray: {}", e);
+                log::error!("Failed to setup tray: {e}");
             }
 
-            // Register Hotkeys
+            // Register global hotkeys.
             if let Err(e) = hotkeys::register_shortcuts(app) {
-                log::error!("Failed to register hotkeys: {}", e);
+                log::error!("Failed to register hotkeys: {e}");
             }
 
-            // First-Run Wizard
+            // First-run wizard — shown in a normal (non-transparent) window.
             if !settings.wizard_completed {
-                log::info!("Showing first-run wizard...");
+                log::info!("First launch: showing setup wizard");
                 let _ = tauri::WebviewWindowBuilder::new(
                     app,
                     "wizard",
-                    tauri::WebviewUrl::App("wizard.html".into())
+                    tauri::WebviewUrl::App("wizard.html".into()),
                 )
                 .title("Contextura Setup")
                 .inner_size(600.0, 450.0)
+                .resizable(false)
+                .always_on_top(true)
                 .build();
             }
-
-            // Apply auto update silently via plugin (Phase 6.5)
-            // (Handled automatically by the configured tauri-plugin-updater if specified in tauri.conf)
 
             Ok(())
         })

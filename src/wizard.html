@@ -2,21 +2,87 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Contextura First Run Setup</title>
+  <title>Contextura Setup</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fafafa; }
-    .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 500px; width: 100%; text-align: center; }
-    h1 { font-size: 24px; margin-bottom: 16px; }
-    p { color: #555; line-height: 1.5; margin-bottom: 24px; }
-    .btn { background: #007aff; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; transition: background 0.2s; }
-    .btn:hover { background: #005bb5; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      background: #f5f5f7;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .card {
+      background: white;
+      padding: 48px 40px;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .icon { font-size: 48px; margin-bottom: 16px; }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #1d1d1f;
+      margin-bottom: 12px;
+    }
+
+    p {
+      font-size: 15px;
+      color: #6e6e73;
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+
+    .btn {
+      display: inline-block;
+      background: #007aff;
+      color: white;
+      border: none;
+      padding: 13px 28px;
+      border-radius: 980px; /* Apple pill-button style */
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+      -webkit-app-region: no-drag;
+    }
+    .btn:hover { background: #0066d6; }
+    .btn:active { transform: scale(0.97); }
   </style>
 </head>
 <body>
   <div class="card">
+    <div class="icon">🔏</div>
     <h1>Welcome to Contextura</h1>
-    <p>Contextura needs Screen Recording permission to translate on-screen text in real time. It runs entirely offline and never sends your screen contents anywhere.</p>
-    <button class="btn" onclick="window.__TAURI__.webviewWindow.getCurrentWebviewWindow().close()">Enter Contextura</button>
+    <p>Contextura needs <strong>Screen Recording permission</strong> to translate text on-screen in real time. It runs entirely offline — your screen contents are never transmitted anywhere.</p>
+    <button class="btn" id="enter-btn">Continue</button>
   </div>
+
+  <script>
+    document.getElementById('enter-btn').addEventListener('click', async () => {
+      try {
+        // Tauri v2 API: close the current webview window
+        const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
+        await getCurrentWebviewWindow().close();
+      } catch (err) {
+        console.error('Failed to close wizard:', err);
+        // Fallback: try the older path
+        try {
+          await window.__TAURI__.window.getCurrent().close();
+        } catch (_) {
+          window.close();
+        }
+      }
+    });
+  </script>
 </body>
 </html>

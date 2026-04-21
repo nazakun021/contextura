@@ -1,5 +1,4 @@
 use std::process;
-use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 /// Registers the 5 global shortcuts defined in Phase 6.1.
