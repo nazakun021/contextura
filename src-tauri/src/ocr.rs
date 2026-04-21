@@ -140,10 +140,10 @@ impl OcrEngine {
                         && candidate
                             .bounding_box
                             .overlaps_horizontally(&parent.bounding_box, 0.70)
-                        {
-                            to_mark_furigana.push(i);
-                            break;
-                        }
+                    {
+                        to_mark_furigana.push(i);
+                        break;
+                    }
                 }
             }
 
