@@ -144,7 +144,8 @@ impl MotionDetector {
                 let idx = y * self.width + x;
                 if mask[idx] && !visited[idx] {
                     // Flood fill to find size of this region
-                    let size = self.flood_fill(x, y, mask, &mut visited, min_x, min_y, max_x, max_y);
+                    let size =
+                        self.flood_fill(x, y, mask, &mut visited, min_x, min_y, max_x, max_y);
                     if size > max_region_size {
                         max_region_size = size;
                     }
@@ -187,7 +188,8 @@ impl MotionDetector {
             if y > min_y && mask[(y - 1) * self.width + x] && !visited[(y - 1) * self.width + x] {
                 stack.push((x, y - 1));
             }
-            if y + 1 < max_y && mask[(y + 1) * self.width + x] && !visited[(y + 1) * self.width + x] {
+            if y + 1 < max_y && mask[(y + 1) * self.width + x] && !visited[(y + 1) * self.width + x]
+            {
                 stack.push((x, y + 1));
             }
         }
@@ -198,14 +200,14 @@ impl MotionDetector {
     pub fn process_thumbnail(&mut self, current: &[u8]) -> f32 {
         // Double-buffering copy
         self.curr_thumbnail.copy_from_slice(current);
-        
+
         // Compute diff
         let mask = self.compute_diff_mask(&self.prev_thumbnail, &self.curr_thumbnail);
         let ratio = self.largest_contiguous_region(&mask);
 
         // Swap buffers for next frame
         std::mem::swap(&mut self.prev_thumbnail, &mut self.curr_thumbnail);
-        
+
         ratio
     }
 }
@@ -218,17 +220,17 @@ mod tests {
     #[test]
     fn debounce_should_trigger_when_motion_stops() {
         let mut state_machine = DebounceStateMachine::new(100, 0.05); // 100ms
-        
+
         // Start scrolling
         assert_eq!(state_machine.update(0.1), DebounceEvent::MotionDetected);
         assert_eq!(state_machine.state, DebounceState::Scrolling);
-        
+
         // Stop scrolling
         assert_eq!(state_machine.update(0.0), DebounceEvent::None);
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
-        
+
         std::thread::sleep(Duration::from_millis(150));
-        
+
         // Should trigger after duration
         assert_eq!(state_machine.update(0.0), DebounceEvent::Triggered);
         assert_eq!(state_machine.state, DebounceState::Idle);

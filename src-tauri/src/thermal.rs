@@ -20,7 +20,11 @@ impl ThermalMonitor {
     }
 
     pub fn should_throttle(&self) -> bool {
-        self.on_battery && matches!(self.current_state, ThermalState::Serious | ThermalState::Critical)
+        self.on_battery
+            && matches!(
+                self.current_state,
+                ThermalState::Serious | ThermalState::Critical
+            )
     }
 }
 

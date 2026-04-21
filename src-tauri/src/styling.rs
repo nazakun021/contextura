@@ -19,11 +19,14 @@ pub struct StylingEngine;
 impl StylingEngine {
     // Relative luminance from WCAG 2.1
     pub fn relative_luminance(r: f32, g: f32, b: f32) -> f32 {
-        0.2126 * Self::linearize_channel(r) + 0.7152 * Self::linearize_channel(g) + 0.0722 * Self::linearize_channel(b)
+        0.2126 * Self::linearize_channel(r)
+            + 0.7152 * Self::linearize_channel(g)
+            + 0.0722 * Self::linearize_channel(b)
     }
 
     pub fn linearize_channel(c: f32) -> f32 {
-        if c <= 0.03928 { // WCAG formally says 0.04045, but often implemented as 0.03928 depending on standard version
+        if c <= 0.03928 {
+            // WCAG formally says 0.04045, but often implemented as 0.03928 depending on standard version
             c / 12.92
         } else {
             ((c + 0.055) / 1.055).powf(2.4)

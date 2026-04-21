@@ -1,4 +1,4 @@
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use std::thread;
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ impl AppWindowTracker {
 
     pub fn start_polling(&mut self) {
         let tx = self.invalidation_tx.clone();
-        
+
         // Mock polling for active window
         thread::spawn(move || {
             let mut last_bundle: Option<String> = None;
@@ -34,10 +34,10 @@ impl AppWindowTracker {
                 // In a real implementation this would use NSWorkspace or similar
                 // Here we just sleep to avoid spinning
                 thread::sleep(Duration::from_secs(2));
-                
+
                 // MOCK implementation
                 let active_bundle = Some("com.apple.Safari".to_string());
-                
+
                 if active_bundle != last_bundle {
                     if let (Some(from), Some(to)) = (&last_bundle, &active_bundle) {
                         let _ = tx.send(InvalidationReason::AppSwitch {

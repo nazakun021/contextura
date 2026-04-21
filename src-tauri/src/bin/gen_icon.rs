@@ -1,4 +1,4 @@
-use image::{RgbaImage, Rgba};
+use image::{Rgba, RgbaImage};
 use std::fs;
 
 fn main() {

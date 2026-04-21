@@ -1,19 +1,26 @@
+use std::process;
 use tauri::{
+    App, Manager,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    App, Manager,
 };
-use std::process;
 
 /// Sets up the system tray menu and event handler.
 ///
 /// # Errors
 /// Returns an error if the tray menu cannot be built or the tray icon cannot be created.
 pub fn setup_tray(app: &App) -> anyhow::Result<()> {
-    let toggle_i = MenuItem::with_id(app, "toggle", "Enable / Disable Overlay", true, None::<&str>)?;
+    let toggle_i = MenuItem::with_id(
+        app,
+        "toggle",
+        "Enable / Disable Overlay",
+        true,
+        None::<&str>,
+    )?;
     let force_i = MenuItem::with_id(app, "force", "Translate Now", true, None::<&str>)?;
     let model_i = MenuItem::with_id(app, "model", "Active Model [Toggle]", true, None::<&str>)?;
-    let clear_ctx_i = MenuItem::with_id(app, "clear_ctx", "Clear Context Memory", true, None::<&str>)?;
+    let clear_ctx_i =
+        MenuItem::with_id(app, "clear_ctx", "Clear Context Memory", true, None::<&str>)?;
     let manage_i = MenuItem::with_id(app, "manage", "Manage Models", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "Open Settings...", true, None::<&str>)?;
     let help_i = MenuItem::with_id(app, "help", "Help", true, None::<&str>)?;
@@ -66,7 +73,7 @@ pub fn setup_tray(app: &App) -> anyhow::Result<()> {
                     let _ = tauri::WebviewWindowBuilder::new(
                         app_handle,
                         "help",
-                        tauri::WebviewUrl::App("help.html".into())
+                        tauri::WebviewUrl::App("help.html".into()),
                     )
                     .title("Contextura Help")
                     .inner_size(800.0, 600.0)

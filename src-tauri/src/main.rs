@@ -7,24 +7,45 @@ mod settings;
 // The #[expect] attribute (rust-best-practices Ch.2) is preferred over #[allow]
 // because it will fire a *new* warning if the dead_code is ever resolved,
 // reminding us to clean up the suppression.
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
 mod capture;
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
-mod motion;
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
-mod ocr;
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
-mod translation;
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
 mod context;
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
-mod thermal;
-#[expect(dead_code, reason = "Scaffolded for pipeline integration, not yet wired")]
-mod styling;
 mod ipc;
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
+mod motion;
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
+mod ocr;
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
+mod styling;
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
+mod thermal;
+#[expect(
+    dead_code,
+    reason = "Scaffolded for pipeline integration, not yet wired"
+)]
+mod translation;
 
-mod tray;
 mod hotkeys;
+mod tray;
 
 use clap::Parser;
 use cli::CliArgs;
@@ -96,8 +117,7 @@ fn run_tauri() {
         .setup(|app| {
             use tauri::Manager;
 
-            let settings = settings::Settings::load()
-                .expect("Failed to load settings at startup");
+            let settings = settings::Settings::load().expect("Failed to load settings at startup");
 
             // Make the overlay window background truly transparent on macOS.
             // Tauri sets NSWindow.isOpaque = false, but WKWebView still draws a

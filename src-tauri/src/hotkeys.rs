@@ -12,36 +12,41 @@ pub fn register_shortcuts(app: &tauri::App) -> anyhow::Result<()> {
     let reset_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyM);
     let model_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyG);
 
-    app.global_shortcut().on_shortcut(toggle_shortcut, |_app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            log::info!("Shortcut: Toggle overlay visibility");
-        }
-    })?;
+    app.global_shortcut()
+        .on_shortcut(toggle_shortcut, |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                log::info!("Shortcut: Toggle overlay visibility");
+            }
+        })?;
 
-    app.global_shortcut().on_shortcut(quit_shortcut, |_app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            log::info!("Shortcut: Quit application");
-            process::exit(0);
-        }
-    })?;
+    app.global_shortcut()
+        .on_shortcut(quit_shortcut, |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                log::info!("Shortcut: Quit application");
+                process::exit(0);
+            }
+        })?;
 
-    app.global_shortcut().on_shortcut(force_shortcut, |_app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            log::info!("Shortcut: Force OCR");
-        }
-    })?;
+    app.global_shortcut()
+        .on_shortcut(force_shortcut, |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                log::info!("Shortcut: Force OCR");
+            }
+        })?;
 
-    app.global_shortcut().on_shortcut(reset_shortcut, |_app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            log::info!("Shortcut: Manual reset memory");
-        }
-    })?;
+    app.global_shortcut()
+        .on_shortcut(reset_shortcut, |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                log::info!("Shortcut: Manual reset memory");
+            }
+        })?;
 
-    app.global_shortcut().on_shortcut(model_shortcut, |_app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            log::info!("Shortcut: Trigger model switch");
-        }
-    })?;
+    app.global_shortcut()
+        .on_shortcut(model_shortcut, |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                log::info!("Shortcut: Trigger model switch");
+            }
+        })?;
 
     Ok(())
 }

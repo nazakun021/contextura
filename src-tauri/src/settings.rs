@@ -60,7 +60,10 @@ impl Settings {
     /// # Errors
     /// Returns an error if the serialization fails or if the file cannot be written.
     // Used when wizard completion is persisted; called from wizard close handler (not yet wired).
-    #[expect(dead_code, reason = "Will be called from the wizard completion handler in the next integration step")]
+    #[expect(
+        dead_code,
+        reason = "Will be called from the wizard completion handler in the next integration step"
+    )]
     pub fn save(&self) -> anyhow::Result<()> {
         let app_dir = Self::dir()?;
         let settings_path = app_dir.join("settings.json");
@@ -71,7 +74,8 @@ impl Settings {
 
     /// Helper to get the standard application support directory.
     pub fn dir() -> anyhow::Result<PathBuf> {
-        let mut path = dirs::data_local_dir().ok_or_else(|| anyhow::anyhow!("No data local dir"))?;
+        let mut path =
+            dirs::data_local_dir().ok_or_else(|| anyhow::anyhow!("No data local dir"))?;
         path.push("jp-translate");
         if !path.exists() {
             fs::create_dir_all(&path)?;
