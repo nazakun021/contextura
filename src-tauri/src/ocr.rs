@@ -33,21 +33,26 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Check if another rect overlaps this one horizontally
     pub fn overlaps_horizontally(&self, other: &Rect, threshold_percent: f32) -> bool {
         let max_x = self.x.max(other.x);
         let min_right = (self.x + self.width).min(other.x + other.width);
-        
+
         if min_right <= max_x {
             return false;
         }
-        
+
         let overlap_width = min_right - max_x;
         let self_width = self.width;
-        
+
         (overlap_width / self_width) >= threshold_percent
     }
 }
@@ -65,29 +70,42 @@ impl OcrEngine {
         }
     }
 
-    pub fn recognize(&self, png_path: &Path, screen_height: f32, scale_factor: f32) -> anyhow::Result<Vec<OcrResult>> {
+    pub fn recognize(
+        &self,
+        png_path: &Path,
+        screen_height: f32,
+        scale_factor: f32,
+    ) -> anyhow::Result<Vec<OcrResult>> {
         let output = Command::new(&self.vision_helper_path)
             .arg(png_path)
             .output()?;
-            
+
         let raw: Vec<VisionHelperResult> = serde_json::from_slice(&output.stdout)?;
-        
-        let mut results: Vec<OcrResult> = raw.into_iter().map(|r| {
-            let is_vertical = r.text_angle.abs() > std::f32::consts::PI / 4.0;
-            OcrResult {
-                text: r.text,
-                confidence: r.confidence,
-                bounding_box: Rect::new(r.x, r.y, r.width, r.height),
-                text_angle: r.text_angle,
-                is_vertical,
-                is_furigana: false,
-            }
-        }).collect();
+
+        let results: Vec<OcrResult> = raw
+            .into_iter()
+            .map(|r| {
+                let is_vertical = r.text_angle.abs() > std::f32::consts::PI / 4.0;
+                OcrResult {
+                    text: r.text,
+                    confidence: r.confidence,
+                    bounding_box: Rect::new(r.x, r.y, r.width, r.height),
+                    text_angle: r.text_angle,
+                    is_vertical,
+                    is_furigana: false,
+                }
+            })
+            .collect();
 
         Ok(self.process_vision_results(results, screen_height, scale_factor))
     }
 
-    pub fn process_vision_results(&self, mut results: Vec<OcrResult>, screen_height: f32, scale_factor: f32) -> Vec<OcrResult> {
+    pub fn process_vision_results(
+        &self,
+        mut results: Vec<OcrResult>,
+        screen_height: f32,
+        scale_factor: f32,
+    ) -> Vec<OcrResult> {
         // 1. Coordinate Conversion (Bottom-left origin to Top-left logical)
         for result in &mut results {
             let mut x = result.bounding_box.x;
@@ -116,10 +134,13 @@ impl OcrEngine {
                     if i == j {
                         continue;
                     }
-                    
+
                     // Box height < 40% of overlapping box height -> furigana
                     if candidate.bounding_box.height < (parent.bounding_box.height * 0.4) {
-                        if candidate.bounding_box.overlaps_horizontally(&parent.bounding_box, 0.70) {
+                        if candidate
+                            .bounding_box
+                            .overlaps_horizontally(&parent.bounding_box, 0.70)
+                        {
                             to_mark_furigana.push(i);
                             break;
                         }
@@ -133,7 +154,8 @@ impl OcrEngine {
         }
 
         // 3. Filtering
-        results.into_iter()
+        results
+            .into_iter()
             .filter(|r| r.confidence >= 0.4)
             .filter(|r| !r.is_furigana)
             .collect()

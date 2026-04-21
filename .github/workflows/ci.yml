@@ -2,32 +2,36 @@ name: Rust CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
-    runs-on: macos-13
+    runs-on: macos-14
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt
-    - name: Install macOS Dependencies
-      run: |
-        xcode-select --install || true
-    - name: Check Formatting
-      run: cargo fmt --all -- --check
-      working-directory: src-tauri
-    - name: Clippy Lints
-      # Use -D clippy::perf per best practices chapter 3
-      run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::perf
-      working-directory: src-tauri
-    - name: Unit Tests
-      run: cargo test
-      working-directory: src-tauri
-    - name: E2E Test Suite
-      run: cargo run --bin contextura -- --debug-cli --test-suite ../test-corpus
-      working-directory: src-tauri
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install macOS Dependencies
+        run: |
+          xcode-select --install || true
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+        working-directory: src-tauri
+      - name: Clippy Lints
+        # Use -D clippy::perf per best practices chapter 3
+        run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::perf
+        working-directory: src-tauri
+      - name: Unit Tests
+        run: cargo test
+        working-directory: src-tauri
+      - name: E2E Test Suite
+        run: cargo run --bin contextura -- --debug-cli --test-suite ../test-corpus
+        working-directory: src-tauri

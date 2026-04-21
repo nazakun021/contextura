@@ -1,10 +1,8 @@
-use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use std::collections::VecDeque;
+use std::time::Duration;
 use tokio::time::sleep;
-use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 #[derive(Debug)]
 pub struct TranslationMemory {
@@ -93,7 +91,7 @@ impl TranslationClient {
 
         prompt.push_str("Translate each numbered Japanese string to English.\n");
         prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
-        
+
         for (i, s) in strings.iter().enumerate() {
             prompt.push_str(&format!("{}: {}\n", i + 1, s));
         }
@@ -109,10 +107,19 @@ impl TranslationClient {
         });
 
         let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
-        let res: Value = self.client.post(&url).json(&payload).send().await?.json().await?;
-        
-        let content = res["choices"][0]["message"]["content"].as_str().unwrap_or("");
-        
+        let res: Value = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let content = res["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("");
+
         let mut results = vec![String::new(); strings.len()];
         for line in content.lines() {
             if let Some((num, text)) = line.split_once(':') {

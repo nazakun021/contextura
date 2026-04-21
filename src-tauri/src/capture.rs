@@ -1,4 +1,4 @@
-use crossbeam_channel::{bounded, Sender, Receiver, TrySendError};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use screencapturekit::prelude::*;
 use std::thread;
 
@@ -34,9 +34,9 @@ impl SCStreamOutputTrait for OutputHandler {
                 let width = guard.width();
                 let height = guard.height();
                 let row_bytes = guard.bytes_per_row();
-                
+
                 let is_dirty = true; // SCFrameStatus::Complete could be checked? Let's assume dirty
-                
+
                 let frame = CaptureFrame {
                     buffer: PixelBuffer {
                         data,
@@ -48,7 +48,7 @@ impl SCStreamOutputTrait for OutputHandler {
                     scale_factor: self.scale_factor,
                     is_dirty,
                 };
-                
+
                 // Drop frame if channel is full
                 let _ = self.tx.try_send(frame);
             }
@@ -63,27 +63,32 @@ impl DisplayManager {
 
     pub fn start_capture(&self, display_id: u32) -> Receiver<CaptureFrame> {
         let (tx, rx) = bounded::<CaptureFrame>(2);
-        
+
         thread::spawn(move || {
             let content = SCShareableContent::get().expect("Failed to get shareable content");
-            
-            let display = content.displays().into_iter().find(|d| d.display_id() == display_id)
+
+            let display = content
+                .displays()
+                .into_iter()
+                .find(|d| d.display_id() == display_id)
                 .or_else(|| content.displays().into_iter().next())
                 .expect("No displays found");
-            
-            let filter = SCContentFilter::create()
-                .with_display(&display)
-                .build();
-                
+
+            let filter = SCContentFilter::create().with_display(&display).build();
+
             let config = SCStreamConfiguration::new()
                 .with_width(display.width() as u32)
                 .with_height(display.height() as u32);
 
             let mut stream = SCStream::new(&filter, &config);
-            let handler = OutputHandler { tx, display_id, scale_factor: 2.0 };
+            let handler = OutputHandler {
+                tx,
+                display_id,
+                scale_factor: 2.0,
+            };
             stream.add_output_handler(handler, SCStreamOutputType::Screen);
             stream.start_capture().expect("Failed to start capture");
-            
+
             // Keep the thread alive
             loop {
                 thread::sleep(std::time::Duration::from_secs(1));
