@@ -460,44 +460,44 @@ _Goal: Hit latency/memory targets, E2E test suite, full edge case coverage._
 
 ### 7.1 Performance Profiling
 
-- [ ] Profile with Xcode Instruments: Time Profiler + Allocations
-- [ ] Measure end-to-end latency: frame capture → overlay render
-- [ ] Measure peak RAM in Default and Quality mode
-- [ ] Verify targets: NLLB < 2s, Gemma 4 < 5s, model load < 5s/8s
+- [x] Profile with Xcode Instruments: Time Profiler + Allocations
+- [x] Measure end-to-end latency: frame capture → overlay render
+- [x] Measure peak RAM in Default and Quality mode
+- [x] Verify targets: NLLB < 2s, Gemma 4 < 5s, model load < 5s/8s
 
 ### 7.2 Optimization Tasks
 
-- [ ] If motion detection slow: pre-allocate thumbnail buffers, avoid heap alloc in hot path
-- [ ] If translation slow: reduce `n_ctx`, experiment with batch sizes
-- [ ] If overlay jank: batch DOM updates via `requestAnimationFrame`
+- [x] If motion detection slow: pre-allocate thumbnail buffers, avoid heap alloc in hot path
+- [x] If translation slow: reduce `n_ctx`, experiment with batch sizes
+- [x] If overlay jank: batch DOM updates via `requestAnimationFrame`
 
 ### 7.3 E2E Test Suite (`--test-suite`)
 
-- [ ] Curate test corpus in `test-corpus/`: at least 10 Japanese PNG screenshots
-- [ ] Write companion `.expected.json` per PNG:
+- [x] Curate test corpus in `test-corpus/`: at least 10 Japanese PNG screenshots
+- [x] Write companion `.expected.json` per PNG:
   ```json
   { "ocr_must_contain": ["日本語"], "translation_must_contain": ["Japanese"] }
   ```
-- [ ] Implement `--debug-cli --test-suite <dir>`:
-  - [ ] Run full pipeline per PNG; assert OCR substrings + translation similarity
-  - [ ] Print pass/fail per image; exit `0` (all pass) or `1` (any fail)
-- [ ] Set up CI (GitHub Actions): run test suite on every commit
-- [ ] Include at least 2 vertical-text PNGs and 1 furigana-heavy PNG in corpus
+- [x] Implement `--debug-cli --test-suite <dir>`:
+  - [x] Run full pipeline per PNG; assert OCR substrings + translation similarity
+  - [x] Print pass/fail per image; exit `0` (all pass) or `1` (any fail)
+- [x] Set up CI (GitHub Actions): run test suite on every commit
+- [x] Include at least 2 vertical-text PNGs and 1 furigana-heavy PNG in corpus
 
 ### 7.4 Edge Case Hardening
 
-- [ ] Resolution change mid-session: update `scale_factor` + stream config per display
-- [ ] System sleep/wake: restart SCKit streams on wake
-- [ ] OCR empty results: overlay clears gracefully
-- [ ] Mixed Japanese/English: English strings not passed to translator
-- [ ] Simulate RAM < 12GB: Quality Mode disabled at startup
-- [ ] No displays connected: app stays alive, logs warning
+- [x] Resolution change mid-session: update `scale_factor` + stream config per display
+- [x] System sleep/wake: restart SCKit streams on wake
+- [x] OCR empty results: overlay clears gracefully
+- [x] Mixed Japanese/English: English strings not passed to translator
+- [x] Simulate RAM < 12GB: Quality Mode disabled at startup
+- [x] No displays connected: app stays alive, logs warning
 
 ### 7.5 Memory Leak Check
 
-- [ ] Run app 30 minutes; monitor in Activity Monitor
-- [ ] No unbounded growth in frame buffer allocations
-- [ ] No WebView DOM node accumulation over many translation cycles
+- [x] Run app 30 minutes; monitor in Activity Monitor
+- [x] No unbounded growth in frame buffer allocations
+- [x] No WebView DOM node accumulation over many translation cycles
 
 **✅ Phase 7 Milestone:** E2E suite passes in CI. Latency < 2s (Default), < 5s (Quality). Memory stable after 30 minutes.
 

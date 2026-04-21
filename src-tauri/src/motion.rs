@@ -84,7 +84,8 @@ impl DebounceStateMachine {
 pub struct MotionDetector {
     pixel_diff_threshold: u8,
     edge_inset_percent: u32,
-    prev_thumbnail: Option<Vec<u8>>, // 160x90 grayscale pixels
+    prev_thumbnail: Vec<u8>, // 160x90 grayscale pixels pre-allocated
+    curr_thumbnail: Vec<u8>, // Second buffer for double-buffering
     width: usize,
     height: usize,
 }
@@ -94,7 +95,8 @@ impl MotionDetector {
         Self {
             pixel_diff_threshold,
             edge_inset_percent,
-            prev_thumbnail: None,
+            prev_thumbnail: vec![0; 160 * 90],
+            curr_thumbnail: vec![0; 160 * 90],
             width: 160,
             height: 90,
         }
@@ -193,15 +195,17 @@ impl MotionDetector {
         size
     }
 
-    pub fn process_thumbnail(&mut self, current: Vec<u8>) -> f32 {
-        let ratio = if let Some(prev) = &self.prev_thumbnail {
-            let mask = self.compute_diff_mask(prev, &current);
-            self.largest_contiguous_region(&mask)
-        } else {
-            1.0 // First frame always counts as motion
-        };
+    pub fn process_thumbnail(&mut self, current: &[u8]) -> f32 {
+        // Double-buffering copy
+        self.curr_thumbnail.copy_from_slice(current);
+        
+        // Compute diff
+        let mask = self.compute_diff_mask(&self.prev_thumbnail, &self.curr_thumbnail);
+        let ratio = self.largest_contiguous_region(&mask);
 
-        self.prev_thumbnail = Some(current);
+        // Swap buffers for next frame
+        std::mem::swap(&mut self.prev_thumbnail, &mut self.curr_thumbnail);
+        
         ratio
     }
 }

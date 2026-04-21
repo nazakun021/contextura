@@ -14,29 +14,31 @@ document.addEventListener('DOMContentLoaded', () => {
     spinner.classList.add('hidden');
     clearTimeout(spinnerTimeout);
     
-    // Clear old boxes
-    container.innerHTML = '';
-    
-    // Render new boxes
-    for (const box of payload.boxes) {
-      const div = document.createElement('div');
-      div.className = 'translation-box';
-      if (box.is_vertical) {
-        div.classList.add('vertical');
-      }
-      
-      div.style.left = `${box.x}px`;
-      div.style.top = `${box.y}px`;
-      div.style.width = `${box.width}px`;
-      div.style.height = `${box.height}px`;
-      div.style.backgroundColor = box.bg_color;
-      div.style.color = box.fg_color;
-      
-      div.textContent = box.translated;
-      div.title = box.original; // Tooltip shows original
-      
-      container.appendChild(div);
-    }
+    requestAnimationFrame(() => {
+        // Clear old boxes
+        container.innerHTML = '';
+        
+        // Render new boxes
+        for (const box of payload.boxes) {
+          const div = document.createElement('div');
+          div.className = 'translation-box';
+          if (box.is_vertical) {
+            div.classList.add('vertical');
+          }
+          
+          div.style.left = `${box.x}px`;
+          div.style.top = `${box.y}px`;
+          div.style.width = `${box.width}px`;
+          div.style.height = `${box.height}px`;
+          div.style.backgroundColor = box.bg_color;
+          div.style.color = box.fg_color;
+          
+          div.textContent = box.translated;
+          div.title = box.original; // Tooltip shows original
+          
+          container.appendChild(div);
+        }
+    });
   });
 
   listen('translation-clear', () => {

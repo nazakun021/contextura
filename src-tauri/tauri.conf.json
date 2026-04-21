@@ -5,12 +5,11 @@
   "identifier": "com.contextura.app",
   "build": {
     "frontendDist": "../src",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "overlay-main",

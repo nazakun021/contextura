@@ -16,7 +16,7 @@
   <div class="card">
     <h1>Welcome to Contextura</h1>
     <p>Contextura needs Screen Recording permission to translate on-screen text in real time. It runs entirely offline and never sends your screen contents anywhere.</p>
-    <button class="btn" onclick="alert('Not implemented yet!')">Open System Settings</button>
+    <button class="btn" onclick="window.__TAURI__.webviewWindow.getCurrentWebviewWindow().close()">Enter Contextura</button>
   </div>
 </body>
 </html>
