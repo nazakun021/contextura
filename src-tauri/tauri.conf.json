@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicknisi/tauri/next/.schema/config.schema.json",
+  "productName": "Contextura",
+  "version": "1.0.0",
+  "identifier": "com.contextura.app",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "overlay-main",
+        "title": "",
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "fullscreen": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "13.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/contextura/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
+    }
+  }
+}

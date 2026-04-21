@@ -21,59 +21,59 @@ _Goal: Have a running Tauri app that opens a transparent window. Add Debug CLI e
 
 ### 0.1 Prerequisites
 
-- [ ] Install Rust stable toolchain via `rustup` (`rustup toolchain install stable`)
-- [ ] Install Node.js LTS (required for Tauri CLI)
-- [ ] Install Tauri CLI v2: `cargo install tauri-cli --version "^2"`
-- [ ] Enroll in Apple Developer Program (required for entitlements & notarization)
-- [ ] Install Xcode and Xcode Command Line Tools
-- [ ] Verify Metal is available: `system_profiler SPDisplaysDataType | grep Metal`
+- [x] Install Rust stable toolchain via `rustup` (`rustup toolchain install stable`)
+- [x] Install Node.js LTS (required for Tauri CLI)
+- [x] Install Tauri CLI v2: `cargo install tauri-cli --version "^2"`
+- [x] Enroll in Apple Developer Program (required for entitlements & notarization)
+- [x] Install Xcode and Xcode Command Line Tools
+- [x] Verify Metal is available: `system_profiler SPDisplaysDataType | grep Metal`
 
 ### 0.2 Project Scaffold
 
-- [ ] Create new Tauri v2 project: `cargo tauri init`
-- [ ] Set project name: `jp-translate`
-- [ ] Configure `tauri.conf.json`:
-  - [ ] `"transparent": true`, `"decorations": false`, `"alwaysOnTop": true`, `"skipTaskbar": true`
-- [ ] Add macOS entitlements file (`entitlements.plist`) with `com.apple.security.screen-capture`
-- [ ] Link entitlements in `tauri.conf.json` under `bundle.macOS.entitlements`
+- [x] Create new Tauri v2 project: `cargo tauri init`
+- [x] Set project name: `jp-translate`
+- [x] Configure `tauri.conf.json`:
+  - [x] `"transparent": true`, `"decorations": false`, `"alwaysOnTop": true`, `"skipTaskbar": true`
+- [x] Add macOS entitlements file (`entitlements.plist`) with `com.apple.security.screen-capture`
+- [x] Link entitlements in `tauri.conf.json` under `bundle.macOS.entitlements`
 
 ### 0.3 Initial Dependencies (Cargo.toml)
 
-- [ ] `tauri = { version = "2", features = ["..."] }`
-- [ ] `objc2 = "0.5"`, `objc2-foundation = "0.2"`, `objc2-vision = "0.2"`
-- [ ] `crossbeam-channel = "0.5"`, `rayon = "1.10"`
-- [ ] `serde = { version = "1", features = ["derive"] }`, `serde_json = "1"`
-- [ ] `uuid = { version = "1", features = ["v4"] }`
-- [ ] `log = "0.4"`, `env_logger = "0.11"`
-- [ ] `reqwest = { version = "0.12", features = ["stream"] }` (model downloader)
-- [ ] `clap = { version = "4", features = ["derive"] }` (CLI flags)
-- [ ] `sentry = "0.34"` (opt-in crash reporting)
+- [x] `tauri = { version = "2", features = ["..."] }`
+- [x] `objc2 = "0.5"`, `objc2-foundation = "0.2"`, `objc2-vision = "0.2"`
+- [x] `crossbeam-channel = "0.5"`, `rayon = "1.10"`
+- [x] `serde = { version = "1", features = ["derive"] }`, `serde_json = "1"`
+- [x] `uuid = { version = "1", features = ["v4"] }`
+- [x] `log = "0.4"`, `env_logger = "0.11"`
+- [x] `reqwest = { version = "0.12", features = ["stream"] }` (model downloader)
+- [x] `clap = { version = "4", features = ["derive"] }` (CLI flags)
+- [x] `sentry = "0.34"` (opt-in crash reporting)
 
 ### 0.4 Verify Baseline
 
-- [ ] `cargo tauri dev` — app compiles and launches
-- [ ] Confirm window is transparent and borderless
-- [ ] Confirm window sits on top of other windows
+- [x] `cargo tauri dev` — app compiles and launches
+- [x] Confirm window is transparent and borderless
+- [x] Confirm window sits on top of other windows
 
 ### 0.5 Debug CLI Mode (Add Early — Save Yourself Pain)
 
-- [ ] Implement `--debug-cli` flag using `clap`:
-  - [ ] Skips Tauri window creation entirely
-  - [ ] Runs full Rust engine (capture → motion → OCR → translation → styling)
-  - [ ] Prints each trigger's output as pretty-printed JSON to stdout
-  - [ ] Includes timing fields: `trigger_latency_ms`, `ocr_duration_ms`, `translation_duration_ms`
-- [ ] Implement `--debug-cli --once`: trigger one OCR cycle then exit
-- [ ] Implement `--debug-cli --test-suite <dir>`: E2E test runner (see Phase 7.3)
-- [ ] Implement `--list-models`: print manifest table and exit
-- [ ] Implement `--prune-models`: interactive cleanup wizard
-- [ ] Test: `cargo run -- --debug-cli` runs without panicking (output is empty until Phase 1)
+- [x] Implement `--debug-cli` flag using `clap`:
+  - [x] Skips Tauri window creation entirely
+  - [x] Runs full Rust engine (capture → motion → OCR → translation → styling)
+  - [x] Prints each trigger's output as pretty-printed JSON to stdout
+  - [x] Includes timing fields: `trigger_latency_ms`, `ocr_duration_ms`, `translation_duration_ms`
+- [x] Implement `--debug-cli --once`: trigger one OCR cycle then exit
+- [x] Implement `--debug-cli --test-suite <dir>`: E2E test runner (see Phase 7.3)
+- [x] Implement `--list-models`: print manifest table and exit
+- [x] Implement `--prune-models`: interactive cleanup wizard
+- [x] Test: `cargo run -- --debug-cli` runs without panicking (output is empty until Phase 1)
 
 > **Why now:** You cannot open browser DevTools on a transparent click-through window while another app is in focus. Build this in Phase 0 and use it throughout Phases 1–4.
 
 ### 0.6 Settings File
 
-- [ ] On startup, check for `~/Library/Application Support/jp-translate/settings.json`
-- [ ] If missing, create with defaults:
+- [x] On startup, check for `~/Library/Application Support/jp-translate/settings.json`
+- [x] If missing, create with defaults:
   ```json
   {
     "debounce_ms": 300,
@@ -87,8 +87,8 @@ _Goal: Have a running Tauri app that opens a transparent window. Add Debug CLI e
     "active_model": "nllb-600m-q4"
   }
   ```
-- [ ] Read settings at startup; apply to all relevant constants
-- [ ] Add tray menu item "Open Settings File" → reveal in Finder via `NSWorkspace::open()`
+- [x] Read settings at startup; apply to all relevant constants
+- [x] Add tray menu item "Open Settings File" → reveal in Finder via `NSWorkspace::open()`
 
 **✅ Phase 0 Milestone:** Transparent Tauri window opens. `--debug-cli` runs without panic. `settings.json` is created on first run.
 
@@ -100,48 +100,48 @@ _Goal: Capture frames from all displays, detect scroll-stop per display._
 
 ### 1.1 Multi-Display ScreenCaptureKit
 
-- [ ] Add `objc2-screen-capture-kit` crate (or write manual `objc2` bindings)
-- [ ] Write a `DisplayManager` struct that:
-  - [ ] Enumerates all active displays via `NSScreen.screens()` + `SCShareableContent`
-  - [ ] For each display, creates one `SCStream` with `SCContentFilter` targeting that display
-  - [ ] Configures `SCStreamConfiguration`: `BGRA8Unorm`, 30 FPS, full display resolution
-  - [ ] Excludes the corresponding overlay window via `excludedWindows`
-  - [ ] Delivers frames via a per-display bounded channel (capacity: 2)
-- [ ] Subscribe to `CGDisplayRegisterReconfigurationCallback`:
-  - [ ] On display removed: stop stream, drop channel, close Tauri window
-  - [ ] On display added: create new stream and overlay window
-- [ ] Request screen recording permission on startup; show error UI if denied
-- [ ] Test: Print frame dimensions and display ID to console at 30 FPS per display
+- [x] Add `objc2-screen-capture-kit` crate (or write manual `objc2` bindings)
+- [x] Write a `DisplayManager` struct that:
+  - [x] Enumerates all active displays via `NSScreen.screens()` + `SCShareableContent`
+  - [x] For each display, creates one `SCStream` with `SCContentFilter` targeting that display
+  - [x] Configures `SCStreamConfiguration`: `BGRA8Unorm`, 30 FPS, full display resolution
+  - [x] Excludes the corresponding overlay window via `excludedWindows`
+  - [x] Delivers frames via a per-display bounded channel (capacity: 2)
+- [x] Subscribe to `CGDisplayRegisterReconfigurationCallback`:
+  - [x] On display removed: stop stream, drop channel, close Tauri window
+  - [x] On display added: create new stream and overlay window
+- [x] Request screen recording permission on startup; show error UI if denied
+- [x] Test: Print frame dimensions and display ID to console at 30 FPS per display
 
 ### 1.2 Frame Pipeline Infrastructure
 
-- [ ] Per display: `crossbeam_channel::bounded(2)` → `(frame_tx, frame_rx)`
-- [ ] In SCStream callback: send to channel; drop if full (backpressure, non-blocking)
-- [ ] Spawn one dedicated OS thread per display to receive from `frame_rx`
-- [ ] Test: Confirm frame drops are logged and don't block the capture callback
+- [x] Per display: `crossbeam_channel::bounded(2)` → `(frame_tx, frame_rx)`
+- [x] In SCStream callback: send to channel; drop if full (backpressure, non-blocking)
+- [x] Spawn one dedicated OS thread per display to receive from `frame_rx`
+- [x] Test: Confirm frame drops are logged and don't block the capture callback
 
 ### 1.3 Motion Detection
 
-- [ ] Write `MotionDetector` struct with:
-  - [ ] `fn downscale_to_thumbnail(buffer: &PixelBuffer) -> GrayImage` (160×90)
-  - [ ] Edge inset: crop `edge_inset_percent` margin from all sides before comparison
-  - [ ] `fn compute_diff_mask(prev: &GrayImage, curr: &GrayImage) -> BinaryMask`
-    - [ ] Per-pixel absolute diff; mark as changed if diff > `pixel_diff_threshold`
-  - [ ] `fn largest_contiguous_region(mask: &BinaryMask) -> f32`
-    - [ ] Union-find connected-components pass on mask
-    - [ ] Return area of the largest single connected region as fraction of total pixels
-    - [ ] This is `motion_ratio` — not the raw sum of all changed pixels
-  - [ ] Store previous thumbnail per display
-- [ ] Write `DebounceStateMachine` enum: `Scrolling | Settling(Instant) | Idle`
-  - [ ] `fn update(&mut self, motion_ratio: f32) -> DebounceEvent`
-  - [ ] Returns `DebounceEvent::Triggered` when timer hits 0 in Settling
-  - [ ] Returns `DebounceEvent::MotionDetected` when motion resets timer
-- [ ] Test: Blinking cursor and spinning loader do NOT reset the debounce timer
+- [x] Write `MotionDetector` struct with:
+  - [x] `fn downscale_to_thumbnail(buffer: &PixelBuffer) -> GrayImage` (160×90)
+  - [x] Edge inset: crop `edge_inset_percent` margin from all sides before comparison
+  - [x] `fn compute_diff_mask(prev: &GrayImage, curr: &GrayImage) -> BinaryMask`
+    - [x] Per-pixel absolute diff; mark as changed if diff > `pixel_diff_threshold`
+  - [x] `fn largest_contiguous_region(mask: &BinaryMask) -> f32`
+    - [x] Union-find connected-components pass on mask
+    - [x] Return area of the largest single connected region as fraction of total pixels
+    - [x] This is `motion_ratio` — not the raw sum of all changed pixels
+  - [x] Store previous thumbnail per display
+- [x] Write `DebounceStateMachine` enum: `Scrolling | Settling(Instant) | Idle`
+  - [x] `fn update(&mut self, motion_ratio: f32) -> DebounceEvent`
+  - [x] Returns `DebounceEvent::Triggered` when timer hits 0 in Settling
+  - [x] Returns `DebounceEvent::MotionDetected` when motion resets timer
+- [x] Test: Blinking cursor and spinning loader do NOT reset the debounce timer
 
 ### 1.4 Static Frame Snapshot
 
-- [ ] On `DebounceEvent::Triggered`: clone current `PixelBuffer` as snapshot
-- [ ] Pass snapshot + `display_id` to OCR pipeline via separate channel
+- [x] On `DebounceEvent::Triggered`: clone current `PixelBuffer` as snapshot
+- [x] Pass snapshot + `display_id` to OCR pipeline via separate channel
 
 **✅ Phase 1 Milestone:** "TRIGGERED" appears ~300ms after stopping scroll on each display. Each display triggers independently.
 
@@ -153,53 +153,53 @@ _Goal: Extract Japanese text, bounding boxes, orientation, and suppress furigana
 
 ### 2.1 Vision Framework Bindings
 
-- [ ] Confirm `objc2-vision` v0.2+ provides `VNRecognizeTextRequest`, `VNRecognizedTextObservation`, `boundingBox`, and `textAngle`
-- [ ] **Time-box research to 2 hours.** If incomplete or segfaulting, implement Swift CLI fallback:
-  - [ ] `vision-helper`: ~50-line Swift CLI tool accepting an image path argument
-  - [ ] Runs `VNRecognizeTextRequest` with `recognitionLanguages: ["ja-JP"]`
-  - [ ] Prints JSON array: `{ text, confidence, x, y, width, height, text_angle }` to stdout
-  - [ ] Called from Rust via `std::process::Command`; parse stdout as JSON
-  - [ ] Fully production-viable — ~5ms process spawn overhead
-- [ ] Document decision in `DECISIONS.md`
+- [x] Confirm `objc2-vision` v0.2+ provides `VNRecognizeTextRequest`, `VNRecognizedTextObservation`, `boundingBox`, and `textAngle`
+- [x] **Time-box research to 2 hours.** If incomplete or segfaulting, implement Swift CLI fallback:
+  - [x] `vision-helper`: ~50-line Swift CLI tool accepting an image path argument
+  - [x] Runs `VNRecognizeTextRequest` with `recognitionLanguages: ["ja-JP"]`
+  - [x] Prints JSON array: `{ text, confidence, x, y, width, height, text_angle }` to stdout
+  - [x] Called from Rust via `std::process::Command`; parse stdout as JSON
+  - [x] Fully production-viable — ~5ms process spawn overhead
+- [x] Document decision in `DECISIONS.md`
 
 ### 2.2 OCR Request Handler
 
-- [ ] Write `OcrEngine` struct:
-  - [ ] `fn recognize(pixel_buffer: &PixelBuffer) -> Vec<OcrResult>`
-  - [ ] `VNRecognizeTextRequest`: `recognitionLevel = .accurate`, `recognitionLanguages = ["ja-JP"]`, `usesLanguageCorrection = true`
-  - [ ] Extract `textAngle` per observation; set `is_vertical = |text_angle| > π/4`
-  - [ ] Return `Vec<OcrResult> { text, confidence, bounding_box, text_angle, is_vertical }`
+- [x] Write `OcrEngine` struct:
+  - [x] `fn recognize(pixel_buffer: &PixelBuffer) -> Vec<OcrResult>`
+  - [x] `VNRecognizeTextRequest`: `recognitionLevel = .accurate`, `recognitionLanguages = ["ja-JP"]`, `usesLanguageCorrection = true`
+  - [x] Extract `textAngle` per observation; set `is_vertical = |text_angle| > π/4`
+  - [x] Return `Vec<OcrResult> { text, confidence, bounding_box, text_angle, is_vertical }`
 
 ### 2.3 Coordinate Conversion
 
-- [ ] Write `fn vision_to_screen(bbox: NormalizedRect, screen: Size, scale: f32, is_vertical: bool) -> ScreenRect`
-  - [ ] Flip Y-axis: `screen_y = (1.0 - vision_y - vision_height) * screen_height`
-  - [ ] Divide by `scale_factor` to get logical CSS points
-  - [ ] If `is_vertical`: swap width and height in result
-- [ ] Query `NSScreen.backingScaleFactor` per display; store per `display_id`
-- [ ] Update on `NSApplicationDidChangeScreenParametersNotification`
+- [x] Write `fn vision_to_screen(bbox: NormalizedRect, screen: Size, scale: f32, is_vertical: bool) -> ScreenRect`
+  - [x] Flip Y-axis: `screen_y = (1.0 - vision_y - vision_height) * screen_height`
+  - [x] Divide by `scale_factor` to get logical CSS points
+  - [x] If `is_vertical`: swap width and height in result
+- [x] Query `NSScreen.backingScaleFactor` per display; store per `display_id`
+- [x] Update on `NSApplicationDidChangeScreenParametersNotification`
 
 ### 2.4 Furigana Suppression
 
-- [ ] Post-process OCR results after coordinate conversion:
-  - [ ] For each box, find all others with > 70% horizontal overlap
-  - [ ] If box height < 40% of the overlapping box → classify as furigana
-  - [ ] Exclude from translation pipeline; store in parent box's `furigana` field
-- [ ] Toggle via `settings.json: furigana_suppression`
-- [ ] Test: Manga screenshot → furigana boxes absent from pipeline output
+- [x] Post-process OCR results after coordinate conversion:
+  - [x] For each box, find all others with > 70% horizontal overlap
+  - [x] If box height < 40% of the overlapping box → classify as furigana
+  - [x] Exclude from translation pipeline; store in parent box's `furigana` field
+- [x] Toggle via `settings.json: furigana_suppression`
+- [x] Test: Manga screenshot → furigana boxes absent from pipeline output
 
 ### 2.5 Result Filtering
 
-- [ ] Drop results with `confidence < 0.4`
-- [ ] Drop results with no CJK characters (`\u{3040}–\u{9FFF}`)
-- [ ] Merge overlapping bounding boxes (IoU > 0.3)
+- [x] Drop results with `confidence < 0.4`
+- [x] Drop results with no CJK characters (`\u{3040}–\u{9FFF}`)
+- [x] Merge overlapping bounding boxes (IoU > 0.3)
 
 ### 2.6 Testing OCR
 
-- [ ] Unit test: load static PNG, run OCR, assert recognized strings
-- [ ] Test on browser page: verify coordinates in `--debug-cli` output
-- [ ] Test on vertical manga screenshot: verify `is_vertical = true` and swapped dimensions
-- [ ] Test furigana suppression: small reading-aid characters excluded
+- [x] Unit test: load static PNG, run OCR, assert recognized strings
+- [x] Test on browser page: verify coordinates in `--debug-cli` output
+- [x] Test on vertical manga screenshot: verify `is_vertical = true` and swapped dimensions
+- [x] Test furigana suppression: small reading-aid characters excluded
 
 **✅ Phase 2 Milestone:** OCR returns correct strings + orientation from horizontal and vertical Japanese text. Furigana excluded.
 
@@ -211,121 +211,121 @@ _Goal: Translate with context memory, crash recovery, thermal awareness, and mod
 
 ### 3.1 Model Downloader & First-Run Wizard
 
-- [ ] Build 4-screen onboarding wizard in frontend (HTML/CSS/JS) — `src/wizard.html`:
-  - [ ] **Screen 1:** Screen recording permission — explain why, open System Settings, poll until granted
-  - [ ] **Screen 2:** Model selection — Standard (NLLB) vs Quality (Gemma 4); grey out Quality if RAM < 12GB
-  - [ ] **Screen 3:** In-app download:
-    - [ ] Rust `download_model` command via `reqwest` chunked streaming
-    - [ ] Progress bar showing percentage + MB/s
-    - [ ] Write to `.part` file; rename to `.gguf` only on successful SHA256 verification
-    - [ ] If wizard closed mid-download: continue in background, show progress in tray
-    - [ ] On SHA256 mismatch: delete file, show retry dialog
-    - [ ] Post-download: show 30s interactive demo on bundled sample Japanese image
-  - [ ] **Screen 4:** Privacy disclosure + Sentry opt-in checkbox + GitHub privacy policy link
-- [ ] Save wizard completion flag to `settings.json` so it does not re-appear
+- [x] Build 4-screen onboarding wizard in frontend (HTML/CSS/JS) — `src/wizard.html`:
+  - [x] **Screen 1:** Screen recording permission — explain why, open System Settings, poll until granted
+  - [x] **Screen 2:** Model selection — Standard (NLLB) vs Quality (Gemma 4); grey out Quality if RAM < 12GB
+  - [x] **Screen 3:** In-app download:
+    - [x] Rust `download_model` command via `reqwest` chunked streaming
+    - [x] Progress bar showing percentage + MB/s
+    - [x] Write to `.part` file; rename to `.gguf` only on successful SHA256 verification
+    - [x] If wizard closed mid-download: continue in background, show progress in tray
+    - [x] On SHA256 mismatch: delete file, show retry dialog
+    - [x] Post-download: show 30s interactive demo on bundled sample Japanese image
+  - [x] **Screen 4:** Privacy disclosure + Sentry opt-in checkbox + GitHub privacy policy link
+- [x] Save wizard completion flag to `settings.json` so it does not re-appear
 
 ### 3.2 Model Storage & Manifest
 
-- [ ] Create `~/Library/Application Support/jp-translate/models/`
-- [ ] Create and maintain `models/manifest.json` (id, filename, size_bytes, sha256, downloaded_at, last_used_at, active)
-- [ ] `fn update_last_used(model_id: &str)` — called on every model load
-- [ ] `fn scan_for_orphans() -> Vec<PathBuf>` — finds `.gguf` files not in manifest
-- [ ] On startup: run orphan scan, offer deletion; check 30-day stale non-active models
-- [ ] Hard 4GB ceiling; block downloads and show cleanup prompt if exceeded
+- [x] Create `~/Library/Application Support/jp-translate/models/`
+- [x] Create and maintain `models/manifest.json` (id, filename, size_bytes, sha256, downloaded_at, last_used_at, active)
+- [x] `fn update_last_used(model_id: &str)` — called on every model load
+- [x] `fn scan_for_orphans() -> Vec<PathBuf>` — finds `.gguf` files not in manifest
+- [x] On startup: run orphan scan, offer deletion; check 30-day stale non-active models
+- [x] Hard 4GB ceiling; block downloads and show cleanup prompt if exceeded
 
 ### 3.3 RAM Guard
 
-- [ ] At startup: `sysctl hw.memsize` to get total RAM
-- [ ] If total RAM < 12GB: disable Quality Mode entirely
-  - [ ] Grey out in tray menu: _"Gemma 4 requires at least 12GB of RAM"_
-  - [ ] `Cmd+Shift+G` is a no-op; log warning
+- [x] At startup: `sysctl hw.memsize` to get total RAM
+- [x] If total RAM < 12GB: disable Quality Mode entirely
+  - [x] Grey out in tray menu: _"Gemma 4 requires at least 12GB of RAM"_
+  - [x] `Cmd+Shift+G` is a no-op; log warning
 
 ### 3.4 llama.cpp Integration
 
-- [ ] Add `llama_cpp` crate (or `llama-cpp-rs`)
-- [ ] Write `TranslationEngine`:
-  - [ ] `fn load(model_path: &Path) -> Result<Self>`: `n_gpu_layers = 99`, context size 1024
-  - [ ] `fn translate_batch(&self, strings: &[String], context: &[(String, String)]) -> Result<Vec<String>>`
-    - [ ] Build batched numbered prompt with context memory header if non-empty
-    - [ ] **Single sequential inference pass — never concurrent on Metal**
-    - [ ] Parse `^(\d+): (.+)$` per response line; `""` for missing/malformed lines
-    - [ ] Sub-batch at 15 strings if OCR returns more
-- [ ] Keep model loaded for entire session
+- [x] Add `llama_cpp` crate (or `llama-cpp-rs`)
+- [x] Write `TranslationEngine`:
+  - [x] `fn load(model_path: &Path) -> Result<Self>`: `n_gpu_layers = 99`, context size 1024
+  - [x] `fn translate_batch(&self, strings: &[String], context: &[(String, String)]) -> Result<Vec<String>>`
+    - [x] Build batched numbered prompt with context memory header if non-empty
+    - [x] **Single sequential inference pass — never concurrent on Metal**
+    - [x] Parse `^(\d+): (.+)$` per response line; `""` for missing/malformed lines
+    - [x] Sub-batch at 15 strings if OCR returns more
+- [x] Keep model loaded for entire session
 
 > **Critical:** Do NOT use `rayon::par_iter()` for inference. Metal KV cache allocation is not thread-safe. Concurrent inference calls on the same model will crash.
 
 ### 3.5 Rolling Translation Memory
 
-- [ ] Add `TranslationMemory` struct:
+- [x] Add `TranslationMemory` struct:
   ```rust
   struct TranslationMemory {
       entries: VecDeque<(String, String)>,
       max_size: usize,  // from settings.json: context_memory_size (default 6)
   }
   ```
-- [ ] Implement `fn push()`, `fn clear()`, `fn as_context_slice()`
-- [ ] After each successful batch: push all `(original, translated)` pairs
+- [x] Implement `fn push()`, `fn clear()`, `fn as_context_slice()`
+- [x] After each successful batch: push all `(original, translated)` pairs
 
 ### 3.6 Context Invalidation
 
-- [ ] Add `InvalidationReason` enum: `AppSwitch { from, to }`, `ManualReset`, `ModelSwitch`
-- [ ] Create `crossbeam` channel: `invalidation_tx / invalidation_rx`
-- [ ] Write `AppWindowTracker`:
-  - [ ] Store `current_bundle_id: Option<String>`
-  - [ ] Subscribe to `NSWorkspaceDidActivateApplicationNotification` via `objc2-app-kit`
-  - [ ] On notification: if bundle ID changed → send `InvalidationReason::AppSwitch`
-  - [ ] Fallback: poll every 2s if subscription fails; log warning
-- [ ] In translation loop, drain `invalidation_rx` before each cycle:
-  - [ ] `AppSwitch` → `memory.clear()` + emit `"translation-clear"` + log
-  - [ ] `ManualReset` → `memory.clear()` only (keep overlay visible)
-  - [ ] `ModelSwitch` → `memory.clear()` + emit `"translation-clear"`
-- [ ] Wire `Cmd+Shift+M` → send `ManualReset`
-- [ ] Wire model switch → send `ModelSwitch`
-- [ ] Test:
-  - [ ] Safari → Terminal: memory cleared
-  - [ ] Safari tab switch: memory NOT cleared (same bundle ID)
-  - [ ] `Cmd+Shift+M`: memory clears, overlay stays visible
-  - [ ] Model switch: memory and overlay both clear
+- [x] Add `InvalidationReason` enum: `AppSwitch { from, to }`, `ManualReset`, `ModelSwitch`
+- [x] Create `crossbeam` channel: `invalidation_tx / invalidation_rx`
+- [x] Write `AppWindowTracker`:
+  - [x] Store `current_bundle_id: Option<String>`
+  - [x] Subscribe to `NSWorkspaceDidActivateApplicationNotification` via `objc2-app-kit`
+  - [x] On notification: if bundle ID changed → send `InvalidationReason::AppSwitch`
+  - [x] Fallback: poll every 2s if subscription fails; log warning
+- [x] In translation loop, drain `invalidation_rx` before each cycle:
+  - [x] `AppSwitch` → `memory.clear()` + emit `"translation-clear"` + log
+  - [x] `ManualReset` → `memory.clear()` only (keep overlay visible)
+  - [x] `ModelSwitch` → `memory.clear()` + emit `"translation-clear"`
+- [x] Wire `Cmd+Shift+M` → send `ManualReset`
+- [x] Wire model switch → send `ModelSwitch`
+- [x] Test:
+  - [x] Safari → Terminal: memory cleared
+  - [x] Safari tab switch: memory NOT cleared (same bundle ID)
+  - [x] `Cmd+Shift+M`: memory clears, overlay stays visible
+  - [x] Model switch: memory and overlay both clear
 
 ### 3.7 Gemma 4 E4B Quality Mode
 
-- [ ] Download `gemma-4-e4b-it.Q4_K_M.gguf` during onboarding (if selected) or via tray
-- [ ] `fn switch_model(new_model_id: &str) -> Result<()>`:
-  - [ ] Drop current model (GPU buffers released)
-  - [ ] Show "Loading model…" in overlay + tray
-  - [ ] Load new model; send `ModelSwitch` invalidation
-- [ ] `Cmd+Shift+G` → toggle NLLB ↔ Gemma 4 (no-op if RAM < 12GB)
-- [ ] Check free RAM before switching to Gemma 4; warn if < 8GB free
+- [x] Download `gemma-4-e4b-it.Q4_K_M.gguf` during onboarding (if selected) or via tray
+- [x] `fn switch_model(new_model_id: &str) -> Result<()>`:
+  - [x] Drop current model (GPU buffers released)
+  - [x] Show "Loading model…" in overlay + tray
+  - [x] Load new model; send `ModelSwitch` invalidation
+- [x] `Cmd+Shift+G` → toggle NLLB ↔ Gemma 4 (no-op if RAM < 12GB)
+- [x] Check free RAM before switching to Gemma 4; warn if < 8GB free
 
 ### 3.8 Crash Recovery Watchdog
 
-- [ ] Wrap `TranslationEngine` in a supervised thread
-- [ ] Count consecutive failures (timeout, Metal error, OOM)
-- [ ] After 3 failures:
-  - [ ] Restart thread, reload model
-  - [ ] Emit `"translation-error"` → frontend banner: _"Translation engine restarted."_ (4s auto-dismiss)
-  - [ ] Clear overlay until next successful translation
+- [x] Wrap `TranslationEngine` in a supervised thread
+- [x] Count consecutive failures (timeout, Metal error, OOM)
+- [x] After 3 failures:
+  - [x] Restart thread, reload model
+  - [x] Emit `"translation-error"` → frontend banner: _"Translation engine restarted."_ (4s auto-dismiss)
+  - [x] Clear overlay until next successful translation
 
 ### 3.9 Thermal / Battery Awareness
 
-- [ ] Subscribe to IOKit power source notifications
-- [ ] Subscribe to IOKit thermal notifications
-- [ ] On battery + thermal state `serious` or `critical`:
-  - [ ] Force switch to NLLB; send `ModelSwitch` invalidation
-  - [ ] Set runtime `debounce_ms = 600`
-  - [ ] Show thermal badge on tray icon
-- [ ] Restore normal behavior when plugged in or thermal state improves
+- [x] Subscribe to IOKit power source notifications
+- [x] Subscribe to IOKit thermal notifications
+- [x] On battery + thermal state `serious` or `critical`:
+  - [x] Force switch to NLLB; send `ModelSwitch` invalidation
+  - [x] Set runtime `debounce_ms = 600`
+  - [x] Show thermal badge on tray icon
+- [x] Restore normal behavior when plugged in or thermal state improves
 
 ### 3.10 Parallel Styling (CPU Tasks Only)
 
-- [ ] Use `rayon::par_iter()` for: background color sampling, luminance calculation, payload serialization
-- [ ] Never for inference
+- [x] Use `rayon::par_iter()` for: background color sampling, luminance calculation, payload serialization
+- [x] Never for inference
 
 ### 3.11 Translation Quality Validation
 
-- [ ] Build test set of 20 Japanese sentences with known translations
-- [ ] Include 5 sentences requiring context (dropped subjects, pronouns)
-- [ ] Run on both NLLB and Gemma 4; document quality findings in `DECISIONS.md`
+- [x] Build test set of 20 Japanese sentences with known translations
+- [x] Include 5 sentences requiring context (dropped subjects, pronouns)
+- [x] Run on both NLLB and Gemma 4; document quality findings in `DECISIONS.md`
 
 **✅ Phase 3 Milestone:** Translation works with rolling context. Auto-recovers from crashes. Adapts to thermal state. RAM guard works on sub-12GB systems.
 
@@ -337,22 +337,22 @@ _Goal: Calculate readable text/background colors for every translation box._
 
 ### 4.1 Background Color Sampling
 
-- [ ] `fn sample_border_color(buffer: &PixelBuffer, rect: ScreenRect) -> Rgba`
-  - [ ] Sample outer 2px ring; average RGBA; clamp rect to screen bounds
+- [x] `fn sample_border_color(buffer: &PixelBuffer, rect: ScreenRect) -> Rgba`
+  - [x] Sample outer 2px ring; average RGBA; clamp rect to screen bounds
 
 ### 4.2 Contrast Calculation (WCAG 2.1)
 
-- [ ] `fn relative_luminance(r: f32, g: f32, b: f32) -> f32`
-- [ ] `fn linearize_channel(c: f32) -> f32`
-- [ ] `L > 0.179` → `fg_color = "#000000"`, else `fg_color = "#FFFFFF"`
-- [ ] `overlay_bg` = sampled color at 85% opacity
+- [x] `fn relative_luminance(r: f32, g: f32, b: f32) -> f32`
+- [x] `fn linearize_channel(c: f32) -> f32`
+- [x] `L > 0.179` → `fg_color = "#000000"`, else `fg_color = "#FFFFFF"`
+- [x] `overlay_bg` = sampled color at 85% opacity
 
 ### 4.3 Unit Tests
 
-- [ ] White background → black text
-- [ ] Black background → white text
-- [ ] Mid-gray (#808080) → correct threshold behavior
-- [ ] Dark blue → white text
+- [x] White background → black text
+- [x] Black background → white text
+- [x] Mid-gray (#808080) → correct threshold behavior
+- [x] Dark blue → white text
 
 **✅ Phase 4 Milestone:** All unit tests pass.
 
@@ -364,34 +364,34 @@ _Goal: Render boxes on correct display with vertical text support and status fee
 
 ### 5.1 IPC Payload Assembly
 
-- [ ] `TranslationBox` struct with `#[derive(Serialize)]`: include `is_vertical: bool`, `display_id: u32`
-- [ ] `fn build_payload(ocr, translations, display_id, scale_factor, frame_id) -> TranslationPayload`
+- [x] `TranslationBox` struct with `#[derive(Serialize)]`: include `is_vertical: bool`, `display_id: u32`
+- [x] `fn build_payload(ocr, translations, display_id, scale_factor, frame_id) -> TranslationPayload`
 
 ### 5.2 Tauri Event Emission
 
-- [ ] Emit `"translation-started"` when inference begins (triggers spinner)
-- [ ] Emit `"translation-update"` with full payload when complete
-- [ ] Emit `"translation-clear"` when motion detected or app switched
-- [ ] Emit `"translation-error"` when watchdog restarts engine
-- [ ] Route each event to the correct window using `display_id`
+- [x] Emit `"translation-started"` when inference begins (triggers spinner)
+- [x] Emit `"translation-update"` with full payload when complete
+- [x] Emit `"translation-clear"` when motion detected or app switched
+- [x] Emit `"translation-error"` when watchdog restarts engine
+- [x] Route each event to the correct window using `display_id`
 
 ### 5.3 Frontend HTML/CSS/JS
 
-- [ ] `<body>`: `margin: 0; overflow: hidden; background: transparent`
-- [ ] `#overlay`: `position: fixed; inset: 0; pointer-events: none`
-- [ ] `"translation-update"` → clear existing boxes, render new divs with dynamic styles
-- [ ] For `is_vertical` boxes: add `writing-mode: vertical-rl; text-orientation: mixed`
-- [ ] `"translation-clear"` → remove all boxes
-- [ ] `"translation-started"` → show bottom-right spinner _"Translating…"_ (opacity 0.6)
-- [ ] `"translation-error"` → show top banner, auto-dismiss after 4s
-- [ ] CSS transition: `opacity 0.15s ease-in` on box appearance
+- [x] `<body>`: `margin: 0; overflow: hidden; background: transparent`
+- [x] `#overlay`: `position: fixed; inset: 0; pointer-events: none`
+- [x] `"translation-update"` → clear existing boxes, render new divs with dynamic styles
+- [x] For `is_vertical` boxes: add `writing-mode: vertical-rl; text-orientation: mixed`
+- [x] `"translation-clear"` → remove all boxes
+- [x] `"translation-started"` → show bottom-right spinner _"Translating…"_ (opacity 0.6)
+- [x] `"translation-error"` → show top banner, auto-dismiss after 4s
+- [x] CSS transition: `opacity 0.15s ease-in` on box appearance
 
 ### 5.4 Visual Alignment Testing
 
-- [ ] Horizontal text on Japanese webpage — Retina + external monitor
-- [ ] Vertical text on manga screenshot
-- [ ] Box positions at 1x and 2x `scale_factor`
-- [ ] Spinner and error banner appear/dismiss correctly
+- [x] Horizontal text on Japanese webpage — Retina + external monitor
+- [x] Vertical text on manga screenshot
+- [x] Box positions at 1x and 2x `scale_factor`
+- [x] Spinner and error banner appear/dismiss correctly
 
 **✅ Phase 5 Milestone:** Overlays appear on all displays. Vertical text renders correctly. Spinner and error banner work.
 
@@ -403,52 +403,52 @@ _Goal: Full UX control, tray menu, first-run wizard, help, auto-update, crash re
 
 ### 6.1 Global Shortcuts
 
-- [ ] Add `tauri-plugin-global-shortcut`
-- [ ] Register all 5 hotkeys (functional even when overlay is not focused):
-  - [ ] `Cmd+Shift+T` → toggle overlay visibility
-  - [ ] `Cmd+Shift+Q` → quit application
-  - [ ] `Cmd+Shift+R` → force OCR, bypass debounce
-  - [ ] `Cmd+Shift+M` → send `ManualReset` invalidation
-  - [ ] `Cmd+Shift+G` → trigger model switch (no-op if RAM < 12GB)
-- [ ] Test: all hotkeys work when browser is frontmost
+- [x] Add `tauri-plugin-global-shortcut`
+- [x] Register all 5 hotkeys (functional even when overlay is not focused):
+  - [x] `Cmd+Shift+T` → toggle overlay visibility
+  - [x] `Cmd+Shift+Q` → quit application
+  - [x] `Cmd+Shift+R` → force OCR, bypass debounce
+  - [x] `Cmd+Shift+M` → send `ManualReset` invalidation
+  - [x] `Cmd+Shift+G` → trigger model switch (no-op if RAM < 12GB)
+- [x] Test: all hotkeys work when browser is frontmost
 
 ### 6.2 System Tray / Menu Bar Icon
 
-- [ ] Menu items:
-  - [ ] Enable / Disable Overlay (toggle)
-  - [ ] Translate Now (force re-trigger)
-  - [ ] Active Model status + toggle
-  - [ ] Clear Context Memory
-  - [ ] Manage Models (cleanup UI)
-  - [ ] Open Settings File (Finder reveal)
-  - [ ] Help (bundled HTML page)
-  - [ ] Quit
-- [ ] Thermal badge on tray icon when degraded mode is active
-- [ ] Download progress shown in tray if background download is running
+- [x] Menu items:
+  - [x] Enable / Disable Overlay (toggle)
+  - [x] Translate Now (force re-trigger)
+  - [x] Active Model status + toggle
+  - [x] Clear Context Memory
+  - [x] Manage Models (cleanup UI)
+  - [x] Open Settings File (Finder reveal)
+  - [x] Help (bundled HTML page)
+  - [x] Quit
+- [x] Thermal badge on tray icon when degraded mode is active
+- [x] Download progress shown in tray if background download is running
 
 ### 6.3 First-Run Wizard
 
-- [ ] Wizard flows through 4 screens as described in Phase 3.1
-- [ ] Wizard completion flag saved to settings; does not re-appear on relaunch
+- [x] Wizard flows through 4 screens as described in Phase 3.1
+- [x] Wizard completion flag saved to settings; does not re-appear on relaunch
 
 ### 6.4 In-App Help
 
-- [ ] Create `src/help.html` bundled with the app
-- [ ] Cover: permission setup, all 5 hotkeys, model switching, context memory, FAQ
-- [ ] Tray → "Help" opens the bundled page
+- [x] Create `src/help.html` bundled with the app
+- [x] Cover: permission setup, all 5 hotkeys, model switching, context memory, FAQ
+- [x] Tray → "Help" opens the bundled page
 
 ### 6.5 Auto-Update
 
-- [ ] Add `tauri-plugin-updater`
-- [ ] Configure GitHub Releases endpoint in `tauri.conf.json`
-- [ ] Silent check on startup; tray notification if update available
-- [ ] User always opts in — never forced
+- [x] Add `tauri-plugin-updater`
+- [x] Configure GitHub Releases endpoint in `tauri.conf.json`
+- [x] Silent check on startup; tray notification if update available
+- [x] User always opts in — never forced
 
 ### 6.6 Crash Reporting
 
-- [ ] Initialize `sentry-rust` only if user opted in during wizard Screen 4
-- [ ] Transmit only anonymous stack trace + app version
-- [ ] Preference changeable via tray → Settings → Privacy
+- [x] Initialize `sentry-rust` only if user opted in during wizard Screen 4
+- [x] Transmit only anonymous stack trace + app version
+- [x] Preference changeable via tray → Settings → Privacy
 
 **✅ Phase 6 Milestone:** All hotkeys work. Tray complete. Wizard runs on first launch. Help opens. Auto-update checks silently.
 

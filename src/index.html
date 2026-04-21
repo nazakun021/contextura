@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Contextura Overlay</title>
+    <link rel="stylesheet" href="overlay.css" />
+    <script type="module" src="overlay.js" defer></script>
+  </head>
+  <body>
+    <!-- Transparent container for absolutley positioned translation boxes -->
+    <div id="overlay-container"></div>
+    
+    <!-- Translation status spinner -->
+    <div id="status-spinner" class="hidden">
+      Translating...
+    </div>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="hidden">
+      Translation engine restarted.
+    </div>
+  </body>
+</html>

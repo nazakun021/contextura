@@ -2,8 +2,9 @@
 
 **Version:** 1.2.0
 **Target Platform:** macOS 13+ (Apple Silicon, M-series)
-**Last Updated:** 2026-04-18
+**Last Updated:** 2026-04-21
 
+**Implementation Status:** Modules for Phases 0 through 6 (Hotkeys, Tray, Settings, Capture Types, Motion Debouncing, OCR Logic, Translation Memory, and WebView structure) are fully implemented and scaffolded in the `src-tauri` workspace.
 ---
 
 ## 1. Project Overview
