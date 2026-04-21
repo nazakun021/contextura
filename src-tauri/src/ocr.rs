@@ -1,4 +1,17 @@
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionHelperResult {
+    pub text: String,
+    pub confidence: f32,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub text_angle: f32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrResult {
@@ -41,13 +54,37 @@ impl Rect {
 
 pub struct OcrEngine {
     furigana_suppression: bool,
+    vision_helper_path: PathBuf,
 }
 
 impl OcrEngine {
-    pub fn new(furigana_suppression: bool) -> Self {
+    pub fn new(furigana_suppression: bool, vision_helper_path: PathBuf) -> Self {
         Self {
             furigana_suppression,
+            vision_helper_path,
         }
+    }
+
+    pub fn recognize(&self, png_path: &Path, screen_height: f32, scale_factor: f32) -> anyhow::Result<Vec<OcrResult>> {
+        let output = Command::new(&self.vision_helper_path)
+            .arg(png_path)
+            .output()?;
+            
+        let raw: Vec<VisionHelperResult> = serde_json::from_slice(&output.stdout)?;
+        
+        let mut results: Vec<OcrResult> = raw.into_iter().map(|r| {
+            let is_vertical = r.text_angle.abs() > std::f32::consts::PI / 4.0;
+            OcrResult {
+                text: r.text,
+                confidence: r.confidence,
+                bounding_box: Rect::new(r.x, r.y, r.width, r.height),
+                text_angle: r.text_angle,
+                is_vertical,
+                is_furigana: false,
+            }
+        }).collect();
+
+        Ok(self.process_vision_results(results, screen_height, scale_factor))
     }
 
     pub fn process_vision_results(&self, mut results: Vec<OcrResult>, screen_height: f32, scale_factor: f32) -> Vec<OcrResult> {

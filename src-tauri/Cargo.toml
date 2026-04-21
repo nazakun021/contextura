@@ -55,6 +55,7 @@ sentry = "0.35"
 # Async runtime (for reqwest)
 tokio = { version = "1", features = ["rt", "macros"] }
 image = "0.24"
+screencapturekit = "1.5.4"
 
 [lints.rust]
 future-incompatible = "warn"

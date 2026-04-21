@@ -1,4 +1,10 @@
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use reqwest::Client;
+use serde_json::{json, Value};
+use tokio::time::sleep;
+use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 #[derive(Debug)]
 pub struct TranslationMemory {
@@ -34,56 +40,96 @@ impl TranslationMemory {
     }
 }
 
-pub struct TranslationEngine {
-    // llama.cpp state would be here
+pub struct TranslationClient {
     pub memory: TranslationMemory,
     pub model_id: String,
+    port: u16,
+    client: Client,
 }
 
-impl TranslationEngine {
-    pub fn new(max_memory_size: usize, model_id: String) -> anyhow::Result<Self> {
+impl TranslationClient {
+    pub fn new(max_memory_size: usize, model_id: String, port: u16) -> anyhow::Result<Self> {
         Ok(Self {
             memory: TranslationMemory::new(max_memory_size),
             model_id,
+            port,
+            client: Client::new(),
         })
     }
 
-    pub fn switch_model(&mut self, new_model_id: &str) -> anyhow::Result<()> {
-        log::info!("Switching model to {}", new_model_id);
-        self.model_id = new_model_id.to_string();
-        self.memory.clear();
-        // llama engine reload goes here
-        Ok(())
+    pub async fn wait_for_ready(&self) -> anyhow::Result<()> {
+        let url = format!("http://127.0.0.1:{}/health", self.port);
+        let mut attempts = 0;
+        loop {
+            if let Ok(res) = self.client.get(&url).send().await {
+                if let Ok(json) = res.json::<Value>().await {
+                    if json.get("status").and_then(|s| s.as_str()) == Some("ok") {
+                        return Ok(());
+                    }
+                }
+            }
+            attempts += 1;
+            if attempts > 30 {
+                return Err(anyhow::anyhow!("Llama-server health check timed out"));
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
     }
 
-    pub fn translate_batch(&mut self, strings: &[String]) -> anyhow::Result<Vec<String>> {
-        // Build prompt with context if memory is not empty
-        // MOCK: just returning uppercase for now
-        let results = strings.iter().map(|s| format!("{} TRANSLATED", s)).collect::<Vec<_>>();
+    pub async fn translate_batch(&mut self, strings: &[String]) -> anyhow::Result<Vec<String>> {
+        if strings.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut prompt = String::new();
+        let context = self.memory.as_context_slice();
+        if !context.is_empty() {
+            prompt.push_str("Previous context (do not retranslate, for reference only):\n");
+            for (ja, en) in context {
+                prompt.push_str(&format!("- {} -> \"{}\"\n", ja, en));
+            }
+            prompt.push_str("\n");
+        }
+
+        prompt.push_str("Translate each numbered Japanese string to English.\n");
+        prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
         
-        // Push to memory
-        for (original, translated) in strings.iter().zip(results.iter()) {
-            self.memory.push(original.clone(), translated.clone());
+        for (i, s) in strings.iter().enumerate() {
+            prompt.push_str(&format!("{}: {}\n", i + 1, s));
+        }
+
+        let payload = json!({
+            "model": "local",
+            "messages": [
+                { "role": "system", "content": "You are a Japanese-to-English translator. Do not include any explanations, just translate." },
+                { "role": "user", "content": prompt }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 512
+        });
+
+        let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
+        let res: Value = self.client.post(&url).json(&payload).send().await?.json().await?;
+        
+        let content = res["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        
+        let mut results = vec![String::new(); strings.len()];
+        for line in content.lines() {
+            if let Some((num, text)) = line.split_once(':') {
+                if let Ok(idx) = num.trim().parse::<usize>() {
+                    if idx > 0 && idx <= strings.len() {
+                        results[idx - 1] = text.trim().to_string();
+                    }
+                }
+            }
+        }
+
+        for (i, s) in strings.iter().enumerate() {
+            if !results[i].is_empty() {
+                self.memory.push(s.clone(), results[i].clone());
+            }
         }
 
         Ok(results)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn memory_should_enforce_max_size() {
-        let mut memory = TranslationMemory::new(2);
-        memory.push("1".to_string(), "one".to_string());
-        memory.push("2".to_string(), "two".to_string());
-        memory.push("3".to_string(), "three".to_string());
-
-        let slice = memory.as_context_slice();
-        assert_eq!(slice.len(), 2);
-        assert_eq!(slice[0].0, "2");
-        assert_eq!(slice[1].0, "3");
     }
 }

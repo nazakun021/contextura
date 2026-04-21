@@ -31,6 +31,13 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "app"],
+    "externalBin": [
+      "binaries/llama-server",
+      "binaries/vision-helper"
+    ],
+    "resources": [
+      "binaries/llama-b8869/*"
+    ],
     "macOS": {
       "entitlements": "entitlements.plist",
       "minimumSystemVersion": "13.0"

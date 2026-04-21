@@ -12,21 +12,30 @@ Contextura is a high-performance desktop overlay application for macOS (Apple Si
 
 ## Current Implementation Status
 
-**Phases 0 through 6 have been successfully scaffolded and implemented!**
+**Phases 0 through 6 and Phase P have been successfully scaffolded and implemented!**
+
 - Phase 0: Project setup and CLI debug harness
-- Phase 1: ScreenCaptureKit interfaces and connected-components motion detection
+- Phase 1: ScreenCaptureKit capture + motion detection
 - Phase 2: Apple Vision OCR integration with furigana suppression
 - Phase 3: Translation Memory and app context invalidation tracking
 - Phase 4: Dynamic background color styling adhering to WCAG 2.1
 - Phase 5: Tauri WebView front-end overlay and IPC payloads
 - Phase 6: Global shortcuts, System Tray integration, and Wizards
+- Phase P: Pipeline Activation — wired real implementations for capture, OCR, and translation sidecar
+
+**Next steps:**
+
+- Phase 8: Code signing, notarization, distribution
 
 ## Development Setup
+
 ### Prerequisites
+
 - macOS 13+ (Apple Silicon)
 - [Rust Toolchain](https://rustup.rs/)
 
 ### Running Locally
+
 To run the app in development mode with hot-reloading:
 
 1. Clone the repository and cd into it.
@@ -38,6 +47,7 @@ To run the app in development mode with hot-reloading:
    ```
 
 To run the headless Debug CLI and execute the E2E test suite mock pipeline:
+
 ```bash
 cd src-tauri
 cargo run --bin contextura -- --debug-cli --test-suite ../test-corpus
@@ -45,13 +55,14 @@ cargo run --bin contextura -- --debug-cli --test-suite ../test-corpus
 
 ## Usage
 
-Once installed and running, Contextura sits quietly in your macOS menu bar. 
+Once installed and running, Contextura sits quietly in your macOS menu bar.
 
 1. **Start Reading**: Simply open any app containing Japanese text. Contextura detects when you stop scrolling or moving your mouse and automatically translates the text.
-2. **Translation Overlay**: The English translations will appear directly over the Japanese text in a transparent, click-through overlay. 
+2. **Translation Overlay**: The English translations will appear directly over the Japanese text in a transparent, click-through overlay.
 3. **Menu Bar Settings**: Click the Contextura icon in your menu bar (top right of your screen) to temporarily disable the overlay, switch models, clear context, or manage settings.
 
 ### Global Hotkeys
+
 You can control the app seamlessly without clicking the menu bar using these global macOS shortcuts:
 
 - <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>T</kbd> : **Toggle Overlay** (Hide/Show translations)
@@ -61,4 +72,5 @@ You can control the app seamlessly without clicking the menu bar using these glo
 - <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd> : **Quit Application**
 
 ## Architecture Setup
+
 To review the detailed architecture and best practices applied during development, see [SPEC.md](./SPEC.md) and [TODO.md](./TODO.md).

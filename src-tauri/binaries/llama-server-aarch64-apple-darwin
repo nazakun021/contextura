@@ -1,0 +1,5 @@
+#!/bin/bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+RESOURCE_DIR="$(dirname "$DIR")/Resources/llama"
+export DYLD_LIBRARY_PATH="$RESOURCE_DIR:$DYLD_LIBRARY_PATH"
+exec "$RESOURCE_DIR/llama-server" "$@"
