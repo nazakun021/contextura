@@ -26,11 +26,11 @@
 
 ## Pre-Flight Checks (Updated — Do Before Writing Any Code)
 
-- [ ] **Remove or rename the NLLB model file**
+- [x] **Remove or rename the NLLB model file**
   - `rm "~/Library/Application Support/contextura/models/nllb-200-distilled-600M.Q4_K_M.gguf"`
   - It will never load with this sidecar — keeping it wastes 1.2GB
 
-- [ ] **Download Qwen3-0.6B Q4_K_M**
+- [x] **Download Qwen3-0.6B Q4_K_M**
 
   ```bash
   huggingface-cli download Qwen/Qwen3-0.6B-GGUF \
@@ -40,7 +40,7 @@
 
   Verify: file size should be ~350MB
 
-- [ ] **Update `manifest.json`**
+- [x] **Update `manifest.json`**
   - Change `active_model` entry to:
     ```json
     {
@@ -50,10 +50,10 @@
     }
     ```
 
-- [ ] **Update `settings.json`**
+- [x] **Update `settings.json`**
   - Change `active_model` to `"qwen3-0.6b-q4"`
 
-- [ ] **Test llama-server manually with Qwen3**
+- [x] **Test llama-server manually with Qwen3**
 
   ```bash
   ./src-tauri/binaries/llama-server-aarch64-apple-darwin \
@@ -73,7 +73,7 @@
 
   Expected: `{"status":"ok"}`
 
-- [ ] **Test a translation manually**
+- [x] **Test a translation manually**
 
   ```bash
   curl -X POST http://127.0.0.1:8765/v1/chat/completions \
@@ -91,7 +91,7 @@
 
   Expected: response containing `1: Hello` and `2: Thank you`
 
-- [ ] **Fix `capabilities/default.json`**
+- [x] **Fix `capabilities/default.json`**
   - Path: `src-tauri/capabilities/default.json`
   - Add:
     ```json
@@ -104,7 +104,7 @@
     }
     ```
 
-- [ ] **Test vision-helper**
+- [x] **Test vision-helper**
   - Save a real Japanese screenshot as `/tmp/test-jp.png`
   - Run: `./src-tauri/binaries/vision-helper-aarch64-apple-darwin /tmp/test-jp.png`
   - Expected: JSON array with text/confidence/coordinates
