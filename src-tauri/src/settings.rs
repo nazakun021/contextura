@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub debounce_ms: u64,
     pub motion_threshold: f32,
@@ -28,7 +28,7 @@ impl Default for Settings {
             furigana_suppression: true,
             show_original_text: false,
             context_memory_size: 6,
-            active_model: "nllb-600m-q4".to_string(),
+            active_model: "qwen3-0.6b-q4".to_string(),
             wizard_completed: false,
         }
     }
@@ -39,13 +39,15 @@ impl Settings {
     ///
     /// # Errors
     /// Returns an error if the directory cannot be created or file cannot be written/read.
-    pub fn load() -> anyhow::Result<Self> {
-        let app_dir = Self::dir()?;
+    pub fn load(app_dir: &std::path::Path) -> anyhow::Result<Self> {
         let settings_path = app_dir.join("settings.json");
 
         if !settings_path.exists() {
             let default_settings = Self::default();
             let json = serde_json::to_string_pretty(&default_settings)?;
+            if !app_dir.exists() {
+                fs::create_dir_all(app_dir)?;
+            }
             fs::write(&settings_path, json)?;
             return Ok(default_settings);
         }
@@ -59,24 +61,22 @@ impl Settings {
     ///
     /// # Errors
     /// Returns an error if the serialization fails or if the file cannot be written.
-    // Used when wizard completion is persisted; called from wizard close handler (not yet wired).
-    #[expect(
-        dead_code,
-        reason = "Will be called from the wizard completion handler in the next integration step"
-    )]
-    pub fn save(&self) -> anyhow::Result<()> {
-        let app_dir = Self::dir()?;
+    pub fn save(&self, app_dir: &std::path::Path) -> anyhow::Result<()> {
         let settings_path = app_dir.join("settings.json");
         let json = serde_json::to_string_pretty(self)?;
+        if !app_dir.exists() {
+            fs::create_dir_all(app_dir)?;
+        }
         fs::write(settings_path, json)?;
         Ok(())
     }
 
     /// Helper to get the standard application support directory.
+    /// Note: In Tauri v2, prefer using `app.path().app_data_dir()` or similar.
     pub fn dir() -> anyhow::Result<PathBuf> {
         let mut path =
             dirs::data_local_dir().ok_or_else(|| anyhow::anyhow!("No data local dir"))?;
-        path.push("jp-translate");
+        path.push("contextura");
         if !path.exists() {
             fs::create_dir_all(&path)?;
         }

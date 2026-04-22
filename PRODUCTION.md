@@ -1,182 +1,148 @@
 # PRODUCTION.md — Road to 10/10
 
-**Document Version:** 2.0.0
-**Related Spec:** SPEC.md v1.2.0 · TODO.md (Phase 0–8)
-**Last Updated:** 2026-04-18
+**Document Version:** 3.1.0
+**Audit Date:** 2026-04-22
+**Overall Health Score:** 5.5 / 10
 
 ---
 
 ## Overview
 
-This document tracks all production-readiness considerations beyond the core translation pipeline. It serves as a final polish checklist before public beta or initial release.
-
-**Status Key:**
-
-- ✅ **In Spec + TODO** — fully specified and has concrete implementation tasks
-- 🔶 **Partial** — mentioned in spec but lacks full TODO tasks; needs attention before shipping
-- 📋 **v1.1 Backlog** — deliberately deferred; not a v1.0 blocker
+Tracks production readiness based on verified code state. Previous version (2.0.0) contained inaccurate ✅ statuses. Version 3.0.0 corrected those. Version 3.1.0 adds the **model architecture fix** (NLLB removed, Qwen3-0.6B introduced) as the new highest-priority blocker.
 
 ---
 
-## Summary Table
+## Model Architecture Fix — New Top Priority
 
-| Consideration                      | Status                                 | Effort | Priority |
-| ---------------------------------- | -------------------------------------- | ------ | -------- |
-| Resumable Downloads                | ✅ In Spec + TODO (Phase 3.1)          | Medium | v1.0     |
-| User Feedback During Translation   | ✅ In Spec + TODO (Phase 5.3)          | Small  | v1.0     |
-| Silent Background Updates          | ✅ In Spec + TODO (Phase 6.5)          | Small  | v1.0     |
-| Low-Memory System Guard            | ✅ In Spec + TODO (Phase 3.3)          | Small  | v1.0     |
-| Privacy Transparency               | ✅ In Spec + TODO (Phase 3.1 Screen 4) | Small  | v1.0     |
-| Minimal Settings File              | ✅ In Spec + TODO (Phase 0.6)          | Small  | v1.0     |
-| In-App Help                        | ✅ In Spec + TODO (Phase 6.4)          | Small  | v1.0     |
-| E2E Test Suite                     | ✅ In Spec + TODO (Phase 7.3)          | Medium | v1.0     |
-| Display Hot-Plug Handling          | ✅ In Spec + TODO (Phase 1.1)          | Medium | v1.0     |
-| Onboarding Polish & Error Recovery | ✅ In Spec + TODO (Phase 3.1)          | Medium | v1.0     |
-| Accessibility & Localization       | 📋 v1.1 Backlog                        | Medium | v1.1     |
-| Tab-Level Context Isolation        | 📋 v1.1 Backlog                        | Medium | v1.1     |
+**Finding:** NLLB-200 is an encoder-decoder (seq2seq/BART) model. llama.cpp supports only decoder-only architectures. This incompatibility is architectural and cannot be resolved through configuration.
+
+**Resolution:**
+
+- Remove NLLB model file from `models/` directory
+- Download `Qwen/Qwen3-0.6B-GGUF` Q4_K_M (~350MB) from Hugging Face
+- Update `manifest.json` and `settings.json` to reference the new model
+- Add `--jinja` to llama-server sidecar launch args
+- Add `/no_think` to system prompt in `translation.rs`
+
+No other code in the translation pipeline changes. HTTP API, payload format, and response parsing are identical.
 
 ---
 
-## 1. Onboarding Polish & Error Recovery ✅
+## Current Blockers (Must fix to see any translation)
 
-**Now specified in:** SPEC.md §6.1, TODO.md Phase 3.1
-
-All three original gaps are closed:
-
-- **Resumable downloads:** HTTP Range requests + `.part` sidecar file; resumes on restart
-- **Verification failure UI:** SHA256 mismatch deletes file and shows retry dialog
-- **Background download:** Wizard close continues download in background; tray shows progress with cancel
-
-No further action needed for v1.0.
-
----
-
-## 2. Accessibility & Localization 📋
-
-**Status:** Deferred to v1.1. In TODO Backlog.
-
-The v1.0 app has English-only UI. This is acceptable for initial release given the target audience. For v1.1:
-
-- Localization infrastructure: wrap UI strings in a `tr!()` macro or JSON key-value store; ship English + Japanese translations
-- VoiceOver: `aria-label` on overlay boxes, `role="status"` on overlay container
-- Original text toggle: tray option to show Japanese alongside translation (field already in IPC payload)
+| Priority | Blocker                           | File                        | Status                           |
+| -------- | --------------------------------- | --------------------------- | -------------------------------- |
+| 1        | Wrong model architecture (NLLB)   | models/ + settings          | ❌ NLLB incompatible             |
+| 2        | Shell capability missing          | `capabilities/default.json` | ❌ Missing `shell:allow-execute` |
+| 3        | PNG snapshot never written        | `lib.rs`                    | ❌ Frame never saved             |
+| 4        | Motion detection not instantiated | `lib.rs`                    | ❌ Never created in pipeline     |
+| 5        | IPC events never emitted          | `lib.rs`                    | ❌ `app_handle.emit()` absent    |
+| 6        | Styling never called              | `lib.rs`                    | ❌ `StylingEngine` dead code     |
 
 ---
 
-## 3. Silent Background Updates ✅
+## Full Status Table (Audit-Accurate)
 
-**Now specified in:** SPEC.md §12, TODO.md Phase 6.5
-
-`tauri-plugin-updater` with GitHub Releases feed. Silent check on startup. Non-intrusive tray notification. User always opts in.
-
-No further action needed for v1.0.
-
----
-
-## 4. User Feedback During Long Operations ✅
-
-**Now specified in:** SPEC.md §5.9, TODO.md Phase 5.3
-
-`"translation-started"` event triggers a subtle bottom-right spinner (_"Translating…"_, opacity 0.6, no pointer events). Dismissed when `"translation-update"` or `"translation-clear"` arrives.
-
-No further action needed for v1.0.
-
----
-
-## 5. Display Hot-Plug Handling ✅
-
-**Now specified in:** SPEC.md §5.1, TODO.md Phase 1.1
-
-`CGDisplayRegisterReconfigurationCallback` handles display add/remove. On remove: stop SCStream, drop channel, close Tauri window. On add: create new stream and overlay window.
-
-No further action needed for v1.0.
-
----
-
-## 6. Minimal Settings File ✅
-
-**Now specified in:** SPEC.md §7, TODO.md Phase 0.6
-
-`settings.json` at `~/Library/Application Support/jp-translate/settings.json`. Created on first run with all defaults. Exposes: `debounce_ms`, `motion_threshold`, `pixel_diff_threshold`, `capture_fps`, `edge_inset_percent`, `furigana_suppression`, `show_original_text`, `context_memory_size`, `active_model`. Tray menu item reveals it in Finder.
-
-No further action needed for v1.0.
+| Consideration                    | Status                          | Priority            |
+| -------------------------------- | ------------------------------- | ------------------- |
+| Model architecture compatibility | ❌ NLLB wrong arch → Qwen3-0.6B | 🔴 Immediate        |
+| Shell capabilities for sidecar   | ❌ Missing                      | 🔴 Immediate        |
+| Pipeline end-to-end              | ❌ Not wired                    | 🔴 Immediate        |
+| `--jinja` flag for Qwen3         | ❌ Not in sidecar args          | 🔴 Immediate        |
+| `/no_think` in system prompt     | ❌ Not in prompt                | 🔴 Immediate        |
+| `Cmd+Shift+T` toggle overlay     | ✅ Done                          | 🟢 Completed        |
+| `Cmd+Shift+R` force OCR          | ✅ Done                          | 🟢 Completed        |
+| Context `memory.clear()` wiring  | ✅ Done                          | 🟢 Completed        |
+| Temp PNG cleanup                 | ✅ Done                          | 🟢 Completed        |
+| Real `scale_factor` from display | ❌ Hardcoded 2.0                | 🟠 Phase P.Complete |
+| Battery check in thermal         | ✅ Done                          | 🟢 Completed        |
+| Sentry initialization            | ❌ Never called                 | 🟡 Step 7           |
+| Watchdog health poll + restart   | ✅ Done                          | 🟢 Completed        |
+| `excludedWindows` in capture     | ❌ Missing                      | 🟡 Phase 7          |
+| Wizard screens 2–4               | ❌ Only screen 1                | 🟡 Phase 8          |
+| Auto-updater pubkey              | ⚠️ Empty string                 | 🟡 Phase 8          |
+| `--debug-cli` real output        | ❌ Stub                         | 🟡 Phase 7          |
+| `--test-suite` real E2E          | ❌ Stub                         | 🟡 Phase 7          |
+| Multi-display support            | ❌ Display 0 only               | 📋 v1.1             |
+| Model switching (Quality Mode)   | ❌ No `switch_model()`          | 📋 v1.1             |
+| RAM gate for Quality Mode        | ❌ Not implemented              | 📋 v1.1             |
+| Apple Foundation Models          | ❌ Not started                  | 📋 v1.1             |
 
 ---
 
-## 7. E2E Test Suite ✅
+## 1. Model Architecture ❌ → Qwen3-0.6B
 
-**Now specified in:** SPEC.md §8, TODO.md Phase 7.3
+The NLLB model is physically incompatible with llama-server. It must be replaced.
 
-`--debug-cli --test-suite <dir>` mode. Test corpus of PNG screenshots with `.expected.json` companions. Asserts OCR substrings + translation similarity. Exits `0`/`1` for CI integration. GitHub Actions to run on every commit.
+**Positive side effect:** Qwen3-0.6B Q4_K_M is ~350MB — lighter than NLLB's 1.2GB. The Standard tier memory footprint drops from ~1.5GB to ~650MB. This gives more headroom on a loaded 16GB system.
 
-**Action before shipping:** Curate the test corpus (at least 10 PNGs including 2 vertical-text and 1 furigana-heavy). This requires real Japanese screenshots — gather these during Phase 2 testing.
+**Qwen3-specific requirements:**
 
----
-
-## 8. Privacy & Data Collection Transparency ✅
-
-**Now specified in:** SPEC.md §14, TODO.md Phase 3.1 (Screen 4)
-
-Onboarding Screen 4 lists all three network request categories explicitly. Opt-in Sentry checkbox with GitHub privacy policy link. _"The app never sends screen contents anywhere."_ Preference is saved and changeable via tray.
-
-No further action needed for v1.0.
+- `--jinja` flag in llama-server args (Jinja2 chat template required for Qwen3)
+- `/no_think` in system prompt (disables thinking mode that would break response parsing)
 
 ---
 
-## 9. Graceful Degradation on Low-Memory Systems ✅
+## 2. Pipeline End-to-End ❌
 
-**Now specified in:** SPEC.md §5.4 (RAM Gate), TODO.md Phase 3.3
+All subsystems work individually. `lib.rs` never connects them. See TODO.md Phase P.Complete Steps 1–6 for the specific wiring work.
 
-`sysctl hw.memsize` at startup. If total RAM < 12GB: Quality Mode fully disabled, greyed out in tray with explanatory tooltip, `Cmd+Shift+G` is a no-op.
+**What's needed in `lib.rs`:**
 
-No further action needed for v1.0.
-
----
-
-## 10. In-App Help ✅
-
-**Now specified in:** SPEC.md §10, TODO.md Phase 6.4
-
-Bundled `help.html` opened from tray → "Help". Covers: permission setup, all 5 hotkeys, model switching, context memory, FAQ with 4 common questions.
-
-No further action needed for v1.0.
+- `save_frame_as_png()` using the `image` crate
+- `MotionDetector` + `DebounceStateMachine` instantiation
+- `StylingEngine` instantiation + `par_iter()` call
+- `app_handle.emit()` for all 4 event types
+- `invalidation_rx` drain for context memory management
 
 ---
 
-## 11. Tab-Level Context Isolation 📋
+## 3. Shell Capabilities ❌
 
-**Status:** Deferred to v1.1. Noted in TODO Backlog.
+`capabilities/default.json` is missing `shell:allow-execute`. Without this, the `app.shell().sidecar("llama-server")` call silently fails in Tauri v2's permission model.
 
-By design, context memory is scoped to the active _application_ (bundle ID), not the active browser tab. Switching Safari tabs does NOT clear context — this is intentional for multi-tab Japanese reading sessions.
+**Fix (one line to add):**
 
-For users who want per-tab isolation (e.g., comparing two different Japanese texts side by side in the same browser), v1.1 could add optional tab-level tracking via accessibility APIs or browser extension bridge. This is complex and not worth v1.0 scope.
+```json
+"shell:allow-execute"
+```
 
----
-
-## Remaining Action Items Before v1.0 Ship
-
-These are the only outstanding tasks that don't yet have a concrete "done" state:
-
-1. **Curate E2E test corpus** (Phase 7.3) — gather 10+ Japanese screenshots during Phase 2 testing; write `.expected.json` for each
-2. **Obtain real SHA256 hashes** for model files and populate `manifest.json` template in SPEC §6.2
-3. **Register Apple Developer account** if not already done (Phase 0.1 prerequisite)
-4. **Host privacy policy** on project GitHub before onboarding wizard goes live (referenced on Screen 4)
-5. **Set up GitHub Releases** JSON feed for auto-updater (Phase 6.5)
-
-All other production considerations are fully specified and have corresponding TODO tasks.
+This must be fixed before pipeline testing. The sidecar will not spawn without it.
 
 ---
 
-## Estimated Remaining Effort
+## 4. Remaining Items (Unchanged from v3.0.0)
 
-| Phase      | Remaining Work                | Estimate        |
-| ---------- | ----------------------------- | --------------- |
-| Phases 0–2 | Scaffold, capture, OCR        | 2–3 weeks       |
-| Phase 3    | Translation + all sub-systems | 3–4 weeks       |
-| Phases 4–5 | Styling + frontend            | 1 week          |
-| Phase 6    | Polish, wizard, hotkeys       | 1–2 weeks       |
-| Phase 7    | Testing + hardening           | 1 week          |
-| Phase 8    | Build + distribution          | 3–5 days        |
-| **Total**  |                               | **~9–12 weeks** |
+### Wizard Screens 2–4 ❌
 
-Estimates assume you're learning Rust as you go. With prior Rust experience, knock 30–40% off.
+Screen 1 only. For local development: set `wizard_completed: true` in `settings.json`. Implement screens 2–4 before Phase 8.
+
+### Hotkeys — Partial ⚠️
+
+`Cmd+Shift+Q` and `Cmd+Shift+M` work. `T`, `R`, `G` are log stubs. `T` and `R` in Phase P.Complete Step 6. `G` (model switch) in v1.1.
+
+### Watchdog ❌
+
+No background `/health` polling. Add in Phase P.Complete Step 7.
+
+### Sentry ❌
+
+Dependency present. `sentry::init()` never called. Wire conditionally in Phase P.Complete Step 7.
+
+### Auto-Updater ⚠️
+
+Configured except for empty pubkey. Populate in Phase 8.
+
+---
+
+## Estimated Effort to Ship
+
+| Work                                 | Estimate       |
+| ------------------------------------ | -------------- |
+| Model swap + Qwen3 config (today)    | 30 minutes     |
+| Phase P.Complete (pipeline wiring)   | 1–3 days       |
+| Phase 7 (hardening, real test suite) | 1 week         |
+| Phase 8 (signing, wizard, packaging) | 3–5 days       |
+| **Total to v1.0**                    | **~2–3 weeks** |
+
+The model swap is the smallest item and unblocks everything else. Do it first today, then run the pre-flight checks, then start Phase P.Complete.

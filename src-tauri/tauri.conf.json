@@ -20,7 +20,8 @@
         "resizable": false,
         "skipTaskbar": true,
         "shadow": false,
-        "fullscreen": true,
+        "fullscreen": false,
+        "maximized": true,
         "visible": false
       }
     ],
@@ -36,7 +37,7 @@
       "binaries/vision-helper"
     ],
     "resources": [
-      "binaries/llama-b8869/*"
+      "binaries/*.dylib"
     ],
     "macOS": {
       "entitlements": "entitlements.plist",

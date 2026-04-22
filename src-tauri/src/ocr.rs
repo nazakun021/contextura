@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::ops::Add;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionHelperResult {
@@ -73,6 +74,7 @@ impl OcrEngine {
     pub fn recognize(
         &self,
         png_path: &Path,
+        screen_width: f32,
         screen_height: f32,
         scale_factor: f32,
     ) -> anyhow::Result<Vec<OcrResult>> {
@@ -97,21 +99,22 @@ impl OcrEngine {
             })
             .collect();
 
-        Ok(self.process_vision_results(results, screen_height, scale_factor))
+        Ok(self.process_vision_results(results, screen_width, screen_height, scale_factor))
     }
 
     pub fn process_vision_results(
         &self,
         mut results: Vec<OcrResult>,
+        screen_width: f32,
         screen_height: f32,
         scale_factor: f32,
     ) -> Vec<OcrResult> {
         // 1. Coordinate Conversion (Bottom-left origin to Top-left logical)
         for result in &mut results {
-            let mut x = result.bounding_box.x;
+            let mut x = result.bounding_box.x * screen_width;
             let mut y = (1.0 - result.bounding_box.y - result.bounding_box.height) * screen_height;
-            let mut width = result.bounding_box.width;
-            let mut height = result.bounding_box.height;
+            let mut width = result.bounding_box.width * screen_width;
+            let mut height = result.bounding_box.height * screen_height;
 
             x /= scale_factor;
             y /= scale_factor;
@@ -152,11 +155,59 @@ impl OcrEngine {
             }
         }
 
-        // 3. Filtering
-        results
-            .into_iter()
-            .filter(|r| r.confidence >= 0.4)
-            .filter(|r| !r.is_furigana)
-            .collect()
+        // 3. Merging overlapping boxes (IoU > 0.3)
+        let mut merged_results: Vec<OcrResult> = Vec::new();
+        for res in results {
+            if res.is_furigana || res.confidence < 0.4 || !Self::contains_cjk(&res.text) {
+                continue;
+            }
+
+            let mut merged = false;
+            for existing in &mut merged_results {
+                if Self::calculate_iou(&res.bounding_box, &existing.bounding_box) > 0.3 {
+                    // Simple merge: take the union of boxes and the text with higher confidence
+                    let x = res.bounding_box.x.min(existing.bounding_box.x);
+                    let y = res.bounding_box.y.min(existing.bounding_box.y);
+                    let r = (res.bounding_box.x + res.bounding_box.width)
+                        .max(existing.bounding_box.x + existing.bounding_box.width);
+                    let b = (res.bounding_box.y + res.bounding_box.height)
+                        .max(existing.bounding_box.y + existing.bounding_box.height);
+
+                    existing.bounding_box = Rect::new(x, y, r - x, b - y);
+                    if res.confidence > existing.confidence {
+                        existing.text.clone_from(&res.text);
+                        existing.confidence = res.confidence;
+                    }
+                    merged = true;
+                    break;
+                }
+            }
+
+            if !merged {
+                merged_results.push(res);
+            }
+        }
+
+        merged_results
+    }
+
+    fn contains_cjk(text: &str) -> bool {
+        text.chars().any(|c| {
+            matches!(c, '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}' | '\u{4E00}'..='\u{9FFF}')
+        })
+    }
+
+    fn calculate_iou(a: &Rect, b: &Rect) -> f32 {
+        let x_overlap = 0.0f32.max(a.x.add(a.width).min(b.x.add(b.width)) - a.x.max(b.x));
+        let y_overlap = 0.0f32.max(a.y.add(a.height).min(b.y.add(b.height)) - a.y.max(b.y));
+        let intersection = x_overlap * y_overlap;
+        let area_a = a.width * a.height;
+        let area_b = b.width * b.height;
+        let union = area_a + area_b - intersection;
+        if union <= 0.0 {
+            0.0
+        } else {
+            intersection / union
+        }
     }
 }

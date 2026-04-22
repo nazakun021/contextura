@@ -7,6 +7,10 @@ license = "MIT"
 default-run = "contextura"
 build = "build.rs"
 
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -53,7 +57,7 @@ anyhow = "1"
 sentry = "0.35"
 
 # Async runtime (for reqwest)
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 image = "0.24"
 screencapturekit = "1.5.4"
 

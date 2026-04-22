@@ -70,17 +70,9 @@
   <script>
     document.getElementById('enter-btn').addEventListener('click', async () => {
       try {
-        // Tauri v2 API: close the current webview window
-        const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
-        await getCurrentWebviewWindow().close();
+        await window.__TAURI__.core.invoke('complete_wizard');
       } catch (err) {
         console.error('Failed to close wizard:', err);
-        // Fallback: try the older path
-        try {
-          await window.__TAURI__.window.getCurrent().close();
-        } catch (_) {
-          window.close();
-        }
       }
     });
   </script>

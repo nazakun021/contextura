@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
-use std::fmt::Write as _;
+use std::fmt::Write;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -41,19 +41,46 @@ impl TranslationMemory {
 
 pub struct TranslationClient {
     pub memory: TranslationMemory,
-    pub model_id: String,
     port: u16,
     client: Client,
 }
 
 impl TranslationClient {
-    pub fn new(max_memory_size: usize, model_id: String, port: u16) -> Self {
+    pub fn new(max_memory_size: usize, port: u16) -> Self {
         Self {
             memory: TranslationMemory::new(max_memory_size),
-            model_id,
             port,
             client: Client::new(),
         }
+    }
+
+    pub fn start_sidecar(
+        &self,
+        app: &tauri::AppHandle,
+        model_path: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        use tauri_plugin_shell::ShellExt;
+        let _sidecar = app
+            .shell()
+            .sidecar("llama-server")?
+            .args([
+                "--model",
+                model_path.to_str().unwrap(),
+                "--port",
+                &self.port.to_string(),
+                "--n-gpu-layers",
+                "99", // full Metal offload
+                "--ctx-size",
+                "1024",
+                "--host",
+                "127.0.0.1",
+                "--log-disable", // quiet; Rust handles logging
+                "--jinja",       // required for Qwen3 chat template (Jinja2 format)
+            ])
+            .spawn()?;
+
+        log::info!("Sidecar started");
+        Ok(())
     }
 
     pub async fn wait_for_ready(&self) -> anyhow::Result<()> {
@@ -79,64 +106,72 @@ impl TranslationClient {
             return Ok(vec![]);
         }
 
-        let mut prompt = String::new();
-        let context = self.memory.as_context_slice();
-        if !context.is_empty() {
-            prompt.push_str("Previous context (do not retranslate, for reference only):\n");
-            for (ja, en) in context {
-                let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
-            }
-            prompt.push('\n');
-        }
+        let mut final_results = vec![String::new(); strings.len()];
 
-        prompt.push_str("Translate each numbered Japanese string to English.\n");
-        prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
+        // Sub-batch at 15 strings to avoid hitting token limits or context window issues
+        for (chunk_idx, chunk_strings) in strings.chunks(15).enumerate() {
+            let offset = chunk_idx * 15;
+
+            let mut prompt = String::new();
+            let context = self.memory.as_context_slice();
+            if !context.is_empty() {
+                prompt.push_str("Previous context (do not retranslate, for reference only):\n");
+                for (ja, en) in context {
+                    let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
+                }
+                prompt.push('\n');
+            }
+
+            prompt.push_str("Translate each numbered Japanese string to English.\n");
+            prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
+
+            for (i, s) in chunk_strings.iter().enumerate() {
+                let _ = writeln!(prompt, "{}: {}", i + 1, s);
+            }
+
+            let payload = json!({
+                "model": "local",
+                "messages": [
+                    // /no_think disables Qwen3 thinking mode — without it, the model outputs
+                    // <think>...</think> tokens before the response, breaking our ^(\d+): parser.
+                    { "role": "system", "content": "You are a Japanese-to-English translator. /no_think" },
+                    { "role": "user", "content": prompt }
+                ],
+                "temperature": 0.1,
+                "max_tokens": 512
+            });
+
+            let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
+            let res: Value = self
+                .client
+                .post(&url)
+                .json(&payload)
+                .send()
+                .await?
+                .json()
+                .await?;
+
+            let response_content = res["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("");
+
+            for line in response_content.lines() {
+                if let Some((num, text)) = line.split_once(':')
+                    && let Ok(idx) = num.trim().parse::<usize>()
+                    && idx > 0
+                    && idx <= chunk_strings.len()
+                {
+                    final_results[offset + idx - 1] = text.trim().to_string();
+                }
+            }
+        }
 
         for (i, s) in strings.iter().enumerate() {
-            let _ = writeln!(prompt, "{}: {}", i + 1, s);
-        }
-
-        let payload = json!({
-            "model": "local",
-            "messages": [
-                { "role": "system", "content": "You are a Japanese-to-English translator. Do not include any explanations, just translate." },
-                { "role": "user", "content": prompt }
-            ],
-            "temperature": 0.1,
-            "max_tokens": 512
-        });
-
-        let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
-        let res: Value = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await?
-            .json()
-            .await?;
-
-        let response_content = res["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("");
-
-        let mut results = vec![String::new(); strings.len()];
-        for line in response_content.lines() {
-            if let Some((num, text)) = line.split_once(':')
-                && let Ok(idx) = num.trim().parse::<usize>()
-                && idx > 0
-                && idx <= strings.len()
-            {
-                results[idx - 1] = text.trim().to_string();
+            if !final_results[i].is_empty() {
+                self.memory.push(s.clone(), final_results[i].clone());
             }
         }
 
-        for (i, s) in strings.iter().enumerate() {
-            if !results[i].is_empty() {
-                self.memory.push(s.clone(), results[i].clone());
-            }
-        }
-
-        Ok(results)
+        Ok(final_results)
     }
 }

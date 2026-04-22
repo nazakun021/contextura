@@ -1,557 +1,462 @@
-# TODO.md — Real-Time Screen Translation Overlay
+# TODO.md — Contextura: Real-Time Screen Translation Overlay
 
-**Development Roadmap & Task Tracker**
-**Stack:** Rust · Tauri v2 · Swift subprocesses · llama-server sidecar
+**Stack:** Rust · Tauri v2 · Swift vision-helper · llama-server sidecar · Qwen3-0.6B
 **Platform:** macOS 13+ (Apple Silicon)
+**Last Updated:** 2026-04-22
 
 ---
 
 ## Status Legend
 
-- `[x]` — Genuinely implemented and working
-- `[-]` — Scaffolded / mocked (structure exists, real implementation needed)
-- `[ ]` — Not yet started
+- `[x]` — Verified working
+- `[-]` — Code exists but stub/disconnected
+- `[ ]` — Not started
 
 ---
 
-## How to Use This File
+## ⚠️ Model Change Notice
 
-- Phases 0, 4, 5, 6 are done. The current focus is **Phase P — Pipeline Activation**.
-- After Phase P is complete, Phase 7 (E2E testing) becomes meaningful.
-- Phase 8 (distribution) is last.
-- Record all architectural decisions in `DECISIONS.md`.
+**NLLB has been removed from this project.** NLLB is an encoder-decoder (BART/seq2seq) architecture. llama.cpp supports **only decoder-only models**. This is not fixable via configuration.
 
----
+**New Standard tier:** Qwen3-0.6B Q4_K_M (~350MB, decoder-only, Japanese-capable, fully llama.cpp compatible)
 
-## Phase 0 — Environment & Project Setup ✅ Complete
-
-### 0.1 Prerequisites
-
-- [x] Install Rust stable toolchain
-- [x] Install Node.js LTS
-- [x] Install Tauri CLI v2
-- [x] Enroll in Apple Developer Program
-- [x] Install Xcode and Command Line Tools
-- [x] Verify Metal available
-
-### 0.2 Project Scaffold
-
-- [x] Create Tauri v2 project (`jp-translate`)
-- [x] Configure `tauri.conf.json`: transparent, borderless, alwaysOnTop, skipTaskbar
-- [x] Add entitlements (`com.apple.security.screen-capture`)
-
-### 0.3 Initial Dependencies
-
-- [x] `tauri`, `objc2`, `crossbeam-channel`, `rayon`, `serde`, `serde_json`, `uuid`
-- [x] `log`, `env_logger`, `reqwest`, `clap`, `sentry`
-
-### 0.4 Baseline
-
-- [x] `cargo tauri dev` compiles and launches transparent window
-
-### 0.5 Debug CLI Mode
-
-- [x] `--debug-cli` flag (currently outputs mock data; will be real after Phase P)
-- [x] `--debug-cli --once`
-- [x] `--debug-cli --test-suite <dir>` (scaffolded)
-- [x] `--list-models`, `--prune-models`
-
-### 0.6 Settings File
-
-- [x] `settings.json` created on first run with all defaults
-- [x] Read at startup; applied to constants
-- [x] Tray → "Open Settings File" (Finder reveal)
+**No other code changes are required** — the HTTP API, payload format, and all `translation.rs` parsing logic remain identical. Only the model file and two sidecar launch args change.
 
 ---
 
-## Phase 1 — Screen Capture & Motion Detection 🔨 Scaffolded
+## Pre-Flight Checks (Updated — Do Before Writing Any Code)
 
-**Current state:** `capture.rs` has a `thread::spawn` mock that generates fake frames. `motion.rs` logic is implemented but receives mock input. Nothing real runs end-to-end.
+- [ ] **Remove or rename the NLLB model file**
+  - `rm "~/Library/Application Support/contextura/models/nllb-200-distilled-600M.Q4_K_M.gguf"`
+  - It will never load with this sidecar — keeping it wastes 1.2GB
 
-**Note: Phase 1 real implementation is handled in Phase P.1 below.**
+- [ ] **Download Qwen3-0.6B Q4_K_M**
 
----
-
-## Phase 2 — OCR Integration 🔨 Scaffolded
-
-**Current state:** `ocr.rs` has `OcrEngine` struct with mock output. `vision-helper.swift` not yet written or compiled. Architecture decision resolved: use Swift subprocess.
-
-**Note: Phase 2 real implementation is handled in Phase P.2 below.**
-
----
-
-## Phase 3 — Translation Engine 🔨 Scaffolded
-
-**Current state:** `translation.rs` has `TranslationEngine` with mock uppercase translation. `TranslationMemory`, `AppWindowTracker`, and `InvalidationReason` are scaffolded. `llama-server` not yet bundled. Architecture decision resolved: use `llama-server` sidecar.
-
-### 3.2–3.3 Model Storage & RAM Guard
-
-- [x] `manifest.json` management
-- [x] Orphan scan + 30-day stale check
-- [x] `sysctl hw.memsize` RAM gate (Quality Mode disabled if < 12GB)
-
-### 3.5–3.6 Context Memory & Invalidation
-
-- [x] `TranslationMemory` struct (`push`, `clear`, `as_context_slice`)
-- [x] `AppWindowTracker` + `InvalidationReason` channel scaffolded
-- [-] `NSWorkspaceDidActivateApplicationNotification` subscription — structure exists but not wired in pipeline loop
-
-### 3.7–3.9 Quality Mode, Watchdog, Thermal
-
-- [x] `switch_model()` scaffolded
-- [x] Watchdog thread structure
-- [x] IOKit thermal subscription scaffolded
-- [-] None of these are connected to a real sidecar yet
-
-**Note: Phase 3 real implementation is handled in Phase P.3 below.**
-
----
-
-## Phase 4 — Dynamic Styling ✅ Complete
-
-- [x] `fn sample_border_color()` — outer 2px sampling
-- [x] `fn relative_luminance()` + `fn linearize_channel()`
-- [x] Contrast threshold: `L > 0.179` → black text, else white
-- [x] `overlay_bg` at 85% opacity
-- [x] Unit tests: white/black/gray/dark-blue backgrounds all pass
-
----
-
-## Phase 5 — IPC & Frontend Rendering ✅ Complete
-
-- [x] `TranslationBox` + `TranslationPayload` structs with `#[derive(Serialize)]`
-- [x] `fn build_payload()` implemented
-- [x] All 4 Tauri events emitted (`translation-update`, `translation-clear`, `translation-started`, `translation-error`)
-- [x] `display_id` routing to correct window
-- [x] Frontend: transparent overlay, absolutely-positioned divs, vertical text (`writing-mode`)
-- [x] Spinner on `"translation-started"`, error banner on `"translation-error"`
-- [x] CSS `opacity 0.15s ease-in` transition
-
----
-
-## Phase 6 — Global Hotkeys & App Polish ✅ Complete
-
-- [x] All 5 global shortcuts registered and functional
-- [x] Tray menu: all items (toggle, translate now, model status, clear memory, manage models, settings, help, quit)
-- [x] Thermal badge on tray icon
-- [x] First-run 4-screen wizard (permission, model selection, download, privacy)
-- [x] Wizard completion flag; does not re-appear
-- [x] `help.html` bundled and accessible from tray
-- [x] `tauri-plugin-updater` configured with GitHub Releases endpoint
-- [x] `sentry-rust` initialized only if user opted in
-
----
-
-## Phase P — Pipeline Activation ⬜ Current Focus
-
-**This is the critical phase.** Everything from Phase 1–3 exists as scaffolding. This phase replaces every mock with a real implementation and wires them together in `main.rs`. Complete sub-phases in order.
-
----
-
-### P.0 — Resolve Pre-flight Questions (Do First)
-
-Before writing any code, answer these two questions and record them in `DECISIONS.md`:
-
-- [x] **Q1: Do you already have `nllb-200-distilled-600M.Q4_K_M.gguf` locally?**
-  - Yes → skip model download during development; point sidecar directly at local path
-  - No → implement Phase P.3.1 (model downloader) before attempting P.3.2 (sidecar)
-
-- [x] **Q2: Confirmed architecture decisions:**
-  - OCR: Swift `vision-helper` subprocess ✅ (resolved)
-  - Translation: `llama-server` sidecar ✅ (resolved)
-  - Capture: try `screencapturekit` Rust crate first (1-day time-box); if broken, Swift capture helper
-  - Record final decisions in `DECISIONS.md`
-
----
-
-### P.1 — Real Screen Capture
-
-**Goal:** Replace the `thread::spawn` mock in `capture.rs` with actual SCKit frame delivery.
-
-#### P.1.1 — Try `screencapturekit` Rust Crate (1-day time-box)
-
-- [x] Add `screencapturekit` crate to `Cargo.toml`
-- [x] In `capture.rs`, remove the mock thread
-- [x] Write `DisplayManager::start()`:
-  - [x] Request screen recording permission; block with error UI if denied
-  - [x] Enumerate displays via `SCShareableContent::get()`
-  - [x] For each display: create `SCStream` with `SCContentFilter` + `SCStreamConfiguration`
-    - [x] `BGRA8Unorm` pixel format, 30 FPS, full resolution
-    - [x] Exclude overlay window via `excludedWindows`
-  - [x] In frame callback: extract `CVPixelBuffer`; send to `crossbeam` channel (drop if full)
-- [x] Test: print real frame dimensions and timestamp to console at 30 FPS
-- [x] If this works: mark done. If crate is broken/incomplete after 1 day: proceed to P.1.2
-
-#### P.1.2 — Swift Capture Helper (Fallback Only)
-
-- [ ] Write `src-tauri/src/bin/capture-helper.swift`:
-  - [ ] Creates `SCStream` in Swift, writes frames to a Unix domain socket or named pipe
-  - [ ] Rust reads frame bytes from the socket into its `crossbeam` channel
-- [ ] Wire Rust to spawn `capture-helper` subprocess and read from its output stream
-- [x] Test: print real frame dimensions at 30 FPS
-
-#### P.1.3 — Wire to Motion Detector
-
-- [x] Remove `#[expect(dead_code)]` from `motion.rs`
-- [x] In frame-processing thread: pass real `CVPixelBuffer` (or frame bytes) to `MotionDetector`
-- [ ] Test: `--debug-cli` output shows "TRIGGERED" ~300ms after stopping scroll
-- [ ] Test: blinking cursor does NOT trigger (connected-components check)
-- [ ] Test: each display triggers independently (multi-monitor)
-
-#### P.1.4 — Snapshot to PNG
-
-- [x] On `DebounceEvent::Triggered`: encode current pixel buffer as PNG to a temp file
-  - [x] Use `image` crate (`image::save_buffer()`) or write raw BGRA bytes then convert
-  - [x] Temp path: `/tmp/jp-translate-frame-{frame_id}.png`
-- [x] Pass PNG path + `display_id` to OCR channel
-
-**✅ P.1 Milestone:** `--debug-cli` output shows real screen trigger events with correct timing. PNG files appear in `/tmp` on trigger.
-
----
-
-### P.2 — Real OCR via `vision-helper`
-
-**Goal:** Build the Swift helper, wire it into `OcrEngine`, confirm Japanese text extraction works.
-
-#### P.2.1 — Build `vision-helper` Swift Tool
-
-- [x] Create `src-tauri/src/bin/vision-helper.swift`:
-
-```swift
-import Foundation
-import Vision
-import AppKit
-
-let imagePath = CommandLine.arguments[1]
-guard let image = NSImage(contentsOfFile: imagePath),
-      let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-    print("[]"); exit(0)
-}
-
-let request = VNRecognizeTextRequest()
-request.recognitionLevel = .accurate
-request.recognitionLanguages = ["ja-JP"]
-request.usesLanguageCorrection = true
-
-let handler = VNImageRequestHandler(cgImage: cgImage)
-try? handler.perform([request])
-
-struct Result: Codable {
-    let text: String
-    let confidence: Float
-    let x, y, width, height: Double
-    let text_angle: Double
-}
-
-var results: [Result] = []
-for obs in (request.results ?? []) {
-    guard let candidate = obs.topCandidates(1).first else { continue }
-    let box = obs.boundingBox
-    results.append(Result(
-        text: candidate.string,
-        confidence: candidate.confidence,
-        x: box.origin.x, y: box.origin.y,
-        width: box.size.width, height: box.size.height,
-        text_angle: Double(obs.yaw?.doubleValue ?? 0.0)
-    ))
-}
-
-let data = try! JSONEncoder().encode(results)
-print(String(data: data, encoding: .utf8)!)
-```
-
-- [x] Compile: `swiftc vision-helper.swift -o vision-helper`
-- [x] Test manually: `./vision-helper /path/to/japanese.png` outputs valid JSON
-- [x] Add compile step to Tauri build pipeline (build script or `build.rs`)
-- [x] Bundle compiled binary in app: add to `tauri.conf.json` → `bundle.resources`
-
-#### P.2.2 — Wire `OcrEngine` to Subprocess
-
-- [x] In `ocr.rs`, replace mock output:
-
-```rust
-pub fn recognize(&self, png_path: &Path) -> Result<Vec<OcrResult>> {
-    let output = Command::new(&self.vision_helper_path)
-        .arg(png_path)
-        .output()?;
-    let raw: Vec<VisionHelperResult> = serde_json::from_slice(&output.stdout)?;
-    // ... convert to OcrResult, apply coordinate conversion, filtering
-}
-```
-
-- [x] Implement coordinate conversion: flip Y-axis, divide by `scale_factor`
-- [x] Derive `is_vertical = text_angle.abs() > std::f64::consts::PI / 4.0`
-- [x] Apply furigana suppression (already scaffolded — confirm it works with real data)
-- [x] Apply confidence filter (< 0.4), CJK filter, IoU merge
-- [x] Clean up temp PNG file after subprocess exits
-
-#### P.2.3 — Test OCR End-to-End
-
-- [ ] Run `--debug-cli` with a Japanese webpage open; verify real text appears in JSON output
-- [x] Test on vertical manga screenshot; verify `is_vertical: true` and swapped dimensions
-- [x] Test furigana-heavy screenshot; verify furigana boxes absent from output
-- [ ] Verify bounding box coordinates align visually (draw debug outline if needed)
-
-**✅ P.2 Milestone:** `--debug-cli` shows real Japanese text strings + bounding boxes extracted from screen content.
-
----
-
-### P.3 — Real Translation via `llama-server` Sidecar
-
-**Goal:** Bundle `llama-server`, manage its lifecycle, call it for real translations.
-
-#### P.3.1 — Obtain Model File
-
-- [x] If NLLB model already present locally: note path; use directly in P.3.2
-- [ ] If NOT present: ensure onboarding wizard model downloader works correctly
-  - [x] Test: wizard Screen 3 downloads to correct path, SHA256 verifies, manifest updated
-  - [x] Do not proceed to P.3.2 until a valid `.gguf` file is confirmed present
-
-#### P.3.2 — Bundle `llama-server` Binary
-
-- [x] Download pre-compiled `llama-server` from official llama.cpp GitHub releases
-  - [x] Ensure it is the **macOS ARM64 / Apple Silicon** build with Metal support
-  - [x] Verify it runs: `./llama-server --version`
-- [x] Place at `src-tauri/binaries/llama-server-aarch64-apple-darwin`
-  - [x] Tauri expects the binary name to include the target triple
-- [x] Add to `tauri.conf.json`:
-  ```json
-  { "bundle": { "externalBin": ["binaries/llama-server"] } }
+  ```bash
+  huggingface-cli download Qwen/Qwen3-0.6B-GGUF \
+    qwen3-0.6b-q4_k_m.gguf \
+    --local-dir ~/Library/Application\ Support/contextura/models/
   ```
-- [x] Test: `cargo tauri build` includes the binary; `cargo tauri dev` can find it
 
-#### P.3.3 — Implement Sidecar Lifecycle in `translation.rs`
+  Verify: file size should be ~350MB
 
-- [x] Remove mock uppercase translation
-- [x] Write `TranslationClient` struct:
-  - [x] `fn start_sidecar(model_path: &Path, port: u16) -> Result<Child>`
-    - [x] Spawn via Tauri shell: `app.shell().sidecar("llama-server").args([...]).spawn()`
-    - [x] Args: `--model <path>`, `--port <port>`, `--n-gpu-layers 99`, `--ctx-size 1024`, `--host 127.0.0.1`, `--log-disable`
-  - [x] `fn wait_for_ready(port: u16) -> Result<()>`
-    - [x] Poll `GET http://127.0.0.1:{port}/health` every 500ms
-    - [x] Timeout after 15s; return error
-  - [x] `fn translate_batch(&self, strings: &[String], context: &[(String,String)]) -> Result<Vec<String>>`
-    - [x] Build batched numbered prompt with context header
-    - [x] `POST /v1/chat/completions` with system prompt + user prompt
-    - [x] Parse response; extract numbered lines; map to indices
-    - [x] `""` for missing/malformed lines
-    - [x] Sub-batch at 15 strings
-- [x] On app quit: kill the sidecar child process
+- [ ] **Update `manifest.json`**
+  - Change `active_model` entry to:
+    ```json
+    {
+      "id": "qwen3-0.6b-q4",
+      "filename": "qwen3-0.6b-q4_k_m.gguf",
+      "active": true
+    }
+    ```
 
-#### P.3.4 — Wire Watchdog to HTTP Health Check
+- [ ] **Update `settings.json`**
+  - Change `active_model` to `"qwen3-0.6b-q4"`
 
-- [x] Replace old thread-panic watchdog with HTTP-polling watchdog:
-  - [x] Background thread polls `GET /health` every 5s
-  - [x] On 3 consecutive failures: restart sidecar, wait for ready, emit `"translation-error"`
-- [x] Test: manually kill `llama-server`; verify app recovers within ~15s
+- [ ] **Test llama-server manually with Qwen3**
 
-#### P.3.5 — Wire Context Invalidation
+  ```bash
+  ./src-tauri/binaries/llama-server-aarch64-apple-darwin \
+    --model ~/Library/Application\ Support/contextura/models/qwen3-0.6b-q4_k_m.gguf \
+    --port 8765 \
+    --n-gpu-layers 99 \
+    --ctx-size 1024 \
+    --host 127.0.0.1 \
+    --jinja
+  ```
 
-- [x] Remove `#[expect(dead_code)]` from `context.rs`
-- [x] Subscribe `NSWorkspaceDidActivateApplicationNotification` in `main.rs` setup
-- [x] In translation pipeline loop: drain `invalidation_rx` before each cycle
-- [x] Test: switch from Safari to Terminal → memory clears, overlay clears
-- [x] Test: switch Safari tabs → memory NOT cleared
+  In another terminal:
 
-#### P.3.6 — Wire Gemma 4 Model Switch
+  ```bash
+  curl http://127.0.0.1:8765/health
+  ```
 
-- [x] `switch_model()` restarts `llama-server` sidecar with new `--model` path
-- [x] Show "Loading model…" spinner during restart + health check wait
-- [x] `Cmd+Shift+G` → `switch_model()` (no-op if RAM < 12GB)
+  Expected: `{"status":"ok"}`
 
-**✅ P.3 Milestone:** `--debug-cli` shows real English translations for real Japanese OCR results. Context memory carries across sequential screens.
+- [ ] **Test a translation manually**
+
+  ```bash
+  curl -X POST http://127.0.0.1:8765/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "local",
+      "messages": [
+        {"role": "system", "content": "You are a Japanese-to-English translator. /no_think"},
+        {"role": "user", "content": "Translate each numbered Japanese string to English.\nOutput only translations, one per line, same numbered format.\n\n1: こんにちは\n2: ありがとうございます"}
+      ],
+      "temperature": 0.1,
+      "max_tokens": 256
+    }'
+  ```
+
+  Expected: response containing `1: Hello` and `2: Thank you`
+
+- [ ] **Fix `capabilities/default.json`**
+  - Path: `src-tauri/capabilities/default.json`
+  - Add:
+    ```json
+    {
+      "permissions": [
+        "core:default",
+        "shell:allow-execute",
+        "shell:allow-spawn"
+      ]
+    }
+    ```
+
+- [ ] **Test vision-helper**
+  - Save a real Japanese screenshot as `/tmp/test-jp.png`
+  - Run: `./src-tauri/binaries/vision-helper-aarch64-apple-darwin /tmp/test-jp.png`
+  - Expected: JSON array with text/confidence/coordinates
+
+**✅ Pre-flight complete when:** llama-server returns `{"status":"ok"}`, manual translation curl returns real English strings, vision-helper returns real JSON.
 
 ---
 
-### P.4 — Wire `main.rs` Pipeline Orchestration
+## Required Code Changes Before Pipeline Wiring
 
-**Goal:** Connect all real subsystems in `main.rs` setup. This is the final wiring step.
+These are small but must be done before `lib.rs` wiring works.
 
-- [x] Remove all `#[expect(dead_code)]` annotations from all pipeline modules
-- [ ] In `tauri::Builder::setup` closure, implement the full orchestration sequence:
-  - [x] Start `llama-server` sidecar; call `wait_for_ready()`
-  - [ ] Load settings; initialize `TranslationMemory`
-  - [x] Subscribe `NSWorkspaceDidActivateApplicationNotification`
-  - [ ] Subscribe IOKit thermal notifications
-  - [x] For each display:
-    - [ ] Create `SCStream` (or launch capture helper)
-    - [ ] Create frame `crossbeam` channel
-    - [x] Spawn frame-processing thread:
-      ```
-      loop {
-          frame = frame_rx.recv()
-          motion_ratio = motion_detector.update(frame)
-          match debounce.update(motion_ratio):
-              MotionDetected -> emit "translation-clear"
-              Triggered ->
-                  png_path = save_frame_as_png(frame)
-                  ocr_results = ocr_engine.recognize(png_path)
-                  delete_temp_png(png_path)
-                  drain invalidation_rx; apply clears
-                  emit "translation-started"
-                  translations = translation_client.translate_batch(
-                      ocr_results.texts(), memory.as_context_slice()
-                  )
-                  styled_boxes = styling::build_boxes(frame, ocr_results, translations) // Rayon
-                  payload = build_payload(styled_boxes, display_id, scale_factor, frame_id)
-                  emit "translation-update" to correct window
-                  memory.push_all(ocr_results, translations)
+### C.1 — Update Sidecar Args in `lib.rs` or `translation.rs`
+
+Add `--jinja` to the llama-server launch args:
+
+- [ ] Find where `llama-server` is spawned (likely `translation.rs` or `lib.rs`)
+- [ ] Add `"--jinja"` to the args array
+- [ ] Verify `--jinja` is present when the sidecar spawns (check logs)
+
+### C.2 — Update System Prompt in `translation.rs`
+
+Add `/no_think` to the system prompt to disable Qwen3 thinking mode:
+
+- [ ] Find the system prompt string in `translation.rs`
+- [ ] Change it to: `"You are a Japanese-to-English translator. /no_think"`
+- [ ] Without this, Qwen3 will output `<think>...</think>` tokens that break parsing
+
+### C.3 — Verify `active_model` Path Resolution
+
+- [ ] Trace how `settings.active_model` maps to the actual `.gguf` file path
+- [ ] Confirm the resolved path is passed correctly as `--model` to the sidecar
+- [ ] Test: log the model path on startup before the sidecar launches
+
+---
+
+## Phase P.Complete — Wire the Pipeline in `lib.rs`
+
+**The individual subsystems all work.** This connects them.
+**Complete steps in order — verify each before proceeding.**
+
+---
+
+### Step 1 — Write PNG Snapshot on Debounce Trigger
+
+**Problem:** `lib.rs` passes `/tmp/contextura-frame-latest.png` to OCR but never writes this file. The `image` crate is in `Cargo.toml` but never used.
+
+**Fix:**
+
+- [x] Add to `lib.rs` imports:
+  ```rust
+  use image::{ImageBuffer, RgbaImage};
+  use std::path::PathBuf;
+  ```
+- [x] Add helper function:
+  ```rust
+  fn save_frame_as_png(frame: &CaptureFrame, frame_id: u64) -> anyhow::Result<PathBuf> {
+      let path = PathBuf::from(format!("/tmp/contextura-frame-{}.png", frame_id));
+      // CaptureFrame pixel buffer is BGRA — swap B and R to get RGBA
+      let mut rgba_data = frame.data.clone();
+      for pixel in rgba_data.chunks_exact_mut(4) {
+          pixel.swap(0, 2);  // swap index 0 (B) with index 2 (R)
       }
-      ```
-  - [ ] Subscribe `CGDisplayRegisterReconfigurationCallback` for hot-plug
+      let img: RgbaImage = ImageBuffer::from_raw(frame.width, frame.height, rgba_data)
+          .ok_or_else(|| anyhow::anyhow!("Failed to build image buffer"))?;
+      img.save(&path)?;
+      Ok(path)
+  }
+  ```
+- [x] Add `frame_id: u64 = 0` counter before the frame loop; increment on each trigger
+- [x] **Verify BGRA channel order** — check `capture.rs` pixel format constant; if format is already RGBA, skip the `pixel.swap(0, 2)` step
 
-**✅ P.4 Milestone:** Full end-to-end pipeline works. Open a Japanese webpage, stop scrolling, translation boxes appear over the text within 2 seconds. `--debug-cli` shows real timing metrics.
+**Verification:**
 
----
-
-### P.5 — Smoke Test & Validation
-
-- [ ] Open Japanese course material website → overlay translates correctly
-- [ ] Open manga with vertical text → vertical boxes appear correctly
-- [x] Open manga with furigana → furigana suppressed
-- [ ] Switch from browser to Terminal → overlay clears, memory clears
-- [ ] Press `Cmd+Shift+R` → immediate re-translation without scrolling
-- [ ] Press `Cmd+Shift+M` → memory clears; overlay stays
-- [ ] Let Mac sit on battery under load → thermal degradation kicks in (longer debounce, NLLB forced)
-- [ ] Plug in / cool down → normal behavior restored
-- [ ] Unplug external monitor → overlay for that monitor closes gracefully
-- [ ] Run `--debug-cli --once` on a Japanese screenshot → JSON output contains real translations
-
-**✅ Phase P Complete Milestone:** The application translates real Japanese screen content end-to-end. Every mock has been replaced.
+- [ ] Trigger a debounce (stop scrolling for 300ms)
+- [ ] Confirm `/tmp/contextura-frame-0.png` appears
+- [ ] Open it — should be a legible screenshot of your screen
 
 ---
 
-## Phase 7 — Performance, E2E Testing & Hardening 🔨 Scaffolded → Meaningful After Phase P
+### Step 2 — Instantiate Motion Detection
 
-**Note:** These tasks are scaffolded but cannot produce meaningful results until Phase P is complete.
+**Problem:** `MotionDetector` and `DebounceStateMachine` in `motion.rs` are never created in `lib.rs`.
 
-### 7.1 Performance Profiling
+**Fix:**
+
+- [x] Add imports to `lib.rs`:
+  ```rust
+  use crate::motion::{MotionDetector, DebounceStateMachine, DebounceEvent};
+  ```
+- [x] Before the frame receive loop, instantiate:
+  ```rust
+  let mut motion_detector = MotionDetector::new(
+      settings.motion_threshold,
+      settings.pixel_diff_threshold,
+      settings.edge_inset_percent,
+  );
+  let mut debounce = DebounceStateMachine::new(
+      std::time::Duration::from_millis(settings.debounce_ms as u64)
+  );
+  ```
+- [x] Replace the current loop body with:
+  ```rust
+  let frame = frame_rx.recv()?;
+  let motion_ratio = motion_detector.process(&frame);
+  match debounce.update(motion_ratio) {
+      DebounceEvent::MotionDetected => { /* Step 4 */ }
+      DebounceEvent::Triggered => { /* Steps 1, 3, 4 */ }
+      DebounceEvent::NoChange => continue,
+  }
+  ```
+
+**Verification:**
+
+- [ ] Scroll a page → check logs for "SCROLLING" state
+- [ ] Stop scrolling → check logs for "TRIGGERED" ~300ms later
+- [ ] Blinking cursor should NOT produce "TRIGGERED"
+
+---
+
+### Step 3 — Wire OCR and Translation Into Trigger Branch
+
+**Problem:** OCR uses wrong path; translation results are logged but not used.
+
+**Fix in `DebounceEvent::Triggered` branch:**
+
+- [x] Call `save_frame_as_png()` (Step 1)
+- [x] Call `ocr_engine.recognize(&png_path)` with the real path
+- [x] Call `std::fs::remove_file(&png_path)` after OCR returns (whether success or error)
+- [x] Skip if `ocr_results.is_empty()`
+- [x] Call `translation_client.translate_batch(&texts, memory.as_context_slice())`
+- [x] Use results in Step 4 (not just log them)
+
+**Verification:**
+
+- [ ] Open a Japanese webpage, stop scrolling
+- [ ] Check logs: should see real Japanese text extracted by OCR
+- [ ] Check logs: should see real English translations returned
+- [ ] Check `/tmp/` — PNG should appear then disappear (cleanup working)
+
+---
+
+### Step 4 — Wire Styling and Emit IPC Events
+
+**Problem:** `StylingEngine` never called. `app_handle.emit()` never called. Frontend never receives events.
+
+**Fix:**
+
+- [x] Add import: `use crate::styling::StylingEngine;`
+- [x] Add import: `use crate::ipc::{TranslationBox, TranslationPayload};`
+- [x] Add import: `use rayon::prelude::*;`
+- [x] Instantiate `StylingEngine` ONCE before the loop: `let styling_engine = StylingEngine::new();`
+- [x] In `DebounceEvent::MotionDetected` branch:
+  ```rust
+  let _ = app_handle.emit("translation-clear", ());
+  ```
+- [x] Before `translate_batch()` call:
+  ```rust
+  let _ = app_handle.emit("translation-started", serde_json::json!({"display_id": 0}));
+  ```
+- [x] After translations are returned, build boxes with Rayon:
+  ```rust
+  let styled_boxes: Vec<TranslationBox> = ocr_results
+      .par_iter()
+      .zip(translations.par_iter())
+      .enumerate()
+      .map(|(i, (ocr, translation))| {
+          let (bg_color, fg_color) = styling_engine.style_for_box(&frame, &ocr.bounding_box);
+          TranslationBox {
+              id: format!("{}-{}", frame_id, i),
+              translated: translation.clone(),
+              original: ocr.text.clone(),
+              x: ocr.bounding_box.x,
+              y: ocr.bounding_box.y,
+              width: ocr.bounding_box.width,
+              height: ocr.bounding_box.height,
+              is_vertical: ocr.is_vertical,
+              bg_color,
+              fg_color,
+              confidence: ocr.confidence,
+          }
+      })
+      .collect();
+  ```
+- [x] Build payload and emit:
+  ```rust
+  let payload = TranslationPayload {
+      boxes: styled_boxes,
+      scale_factor: 2.0,  // TODO: query real scale_factor from display
+      display_id: 0,
+      frame_id,
+  };
+  let _ = app_handle.emit("translation-update", &payload);
+  ```
+- [x] Push results to memory:
+  ```rust
+  for (ocr, translation) in ocr_results.iter().zip(translations.iter()) {
+      translation_memory.push(ocr.text.clone(), translation.clone());
+  }
+  ```
+- [x] Remove `#[allow(dead_code)]` from `ipc.rs`
+
+**Verification:**
+
+- [ ] Open a Japanese webpage, stop scrolling
+- [ ] **Translation boxes should appear over the Japanese text in the overlay**
+- [ ] This is the first working translation milestone
+
+---
+
+### Step 5 — Wire Context Invalidation
+
+**Problem:** App switch detected but `memory.clear()` not called.
+
+**Fix — drain `invalidation_rx` before OCR in the `Triggered` branch:**
+
+- [x] Add to `Triggered` branch before OCR call:
+  ```rust
+  while let Ok(reason) = invalidation_rx.try_recv() {
+      match reason {
+          InvalidationReason::AppSwitch { from, to } => {
+              log::info!("[Context] {} -> {} — clearing memory", from, to);
+              translation_memory.clear();
+              let _ = app_handle.emit("translation-clear", ());
+          }
+          InvalidationReason::ManualReset => {
+              translation_memory.clear();
+              // Do NOT emit translation-clear; user may still be reading
+          }
+          InvalidationReason::ModelSwitch => {
+              translation_memory.clear();
+              let _ = app_handle.emit("translation-clear", ());
+          }
+      }
+  }
+  ```
+
+**Verification:**
+
+- [ ] Translate Japanese content in Safari
+- [ ] Switch to Terminal → overlay should clear; translation_memory.len() = 0
+- [ ] Switch between Safari tabs → overlay should NOT clear (same bundle ID)
+- [ ] Press `Cmd+Shift+M` → memory clears; overlay stays visible
+
+---
+
+### Step 6 — Functional Hotkeys
+
+- [x] **`Cmd+Shift+T` (toggle overlay):**
+- [x] **`Cmd+Shift+R` (force OCR):**
+  - Add `force_trigger_tx: Sender<()>` / `force_trigger_rx: Receiver<()>` channel
+  - In hotkey handler: `let _ = force_trigger_tx.send(());`
+  - In frame loop, at top of loop body before motion check:
+    ```rust
+    let force = force_trigger_rx.try_recv().is_ok();
+    ```
+  - If `force`, skip to OCR immediately (bypass debounce)
+
+---
+
+### Step 7 — Stability Cleanup
+
+After steps 1–6 produce working translations:
+
+- [x] **Temp PNG panic cleanup** — `std::panic::set_hook` to delete `/tmp/contextura-frame-*.png`
+- [ ] **Real scale_factor** — query actual `backingScaleFactor` from display info instead of hardcoded `2.0`
+- [x] **Watchdog thread** — background thread polling `GET /health` every 5s; restart sidecar after 3 failures; emit `"translation-error"`
+- [x] **Battery check** — implement real `IOPSCopyPowerSourcesInfo` (pmset) in `thermal.rs`
+- [ ] **Sentry** — call `sentry::init()` conditionally in `lib.rs` setup
+
+**✅ Phase P.Complete Milestone:** Japanese text on screen → stop scrolling → translation boxes appear → switch app → overlay clears → `Cmd+Shift+T` toggles → `Cmd+Shift+R` forces immediate retranslation.
+
+---
+
+## Phases 0–6 Status (Reference)
+
+| Phase                           | Status                                                 |
+| ------------------------------- | ------------------------------------------------------ |
+| Phase 0 — Setup, CLI, settings  | ✅ Done (CLI outputs are stubs)                        |
+| Phase 1 — SCKit + motion        | ✅ SCKit working; motion code exists but not wired     |
+| Phase 2 — OCR + furigana        | ✅ Working when PNG path is valid                      |
+| Phase 3 — Translation + context | ✅ HTTP client working; model was wrong arch           |
+| Phase 4 — Styling               | ✅ Done (not called from pipeline)                     |
+| Phase 5 — IPC + frontend        | ✅ Done (emit() never called from pipeline)            |
+| Phase 6 — Hotkeys, tray, wizard | ⚠️ Structure done; most hotkeys stubs; wizard 1 screen |
+
+---
+
+## Phase 7 — Performance, E2E Testing & Hardening
+
+**Begin after Phase P.Complete works end-to-end.**
 
 - [ ] Profile with Xcode Instruments: Time Profiler + Allocations
-- [ ] Measure end-to-end latency: frame capture → overlay render
-- [ ] Verify: NLLB < 2s, Gemma 4 < 5s, sidecar startup < 5s/8s
-- [ ] Verify: peak RAM within budget (Default < 3GB, Quality < 8GB)
-
-### 7.2 Optimization
-
-- [ ] If capture slow: pre-allocate thumbnail buffers
-- [ ] If translation slow: reduce `--ctx-size`, test smaller batch sizes
-- [ ] If overlay jank: batch DOM updates via `requestAnimationFrame`
-
-### 7.3 E2E Test Suite
-
-- [x] Curate `test-corpus/`: at least 10 Japanese PNGs (mix of horizontal, vertical, furigana)
-- [ ] Write companion `.expected.json` per PNG
-- [ ] Run `--debug-cli --test-suite ./test-corpus`; confirm all pass
-- [ ] Set up GitHub Actions: run test suite on every commit
-- [x] Include at least 2 vertical-text PNGs and 1 furigana-heavy PNG
-
-### 7.4 Edge Case Hardening
-
-- [ ] Resolution change mid-session: `scale_factor` updates; stream reconfigures
-- [ ] System sleep/wake: SCKit streams restart
-- [ ] OCR empty → overlay clears
-- [ ] Mixed Japanese/English: English strings not sent to translator
-- [ ] Simulate RAM < 12GB: Quality Mode disabled
-- [ ] 0 displays: app stays alive, logs warning
-
-### 7.5 Memory Leak Check
-
-- [ ] Run 30 minutes; verify no unbounded growth in Activity Monitor
-- [ ] No DOM node accumulation over many translation cycles
-
-**✅ Phase 7 Milestone:** E2E suite passes in CI. Latency targets met. Memory stable at 30 minutes.
+- [ ] Measure end-to-end latency target: < 2s for Standard tier
+- [ ] Curate `test-corpus/`: 10 Japanese PNGs (horizontal, vertical, furigana)
+- [ ] Write `.expected.json` per PNG
+- [ ] Make `--debug-cli` run real pipeline and print `TranslationPayload` JSON
+- [ ] Make `--test-suite` call real OCR + translation (not mock)
+- [ ] Set up GitHub Actions CI: run `--test-suite` on every commit
+- [ ] Add `excludedWindows` in `capture.rs` to exclude overlay from SCKit
+- [ ] Handle system sleep/wake: restart SCKit streams
+- [ ] Handle OCR subprocess crash gracefully (already handled; verify)
+- [ ] 30-minute memory leak check in Activity Monitor
 
 ---
 
-## Phase 8 — Build, Sign & Distribution ⬜ Not Started
+## Phase 8 — Build, Sign & Distribution
 
-### 8.1 Code Signing
+**Begin after Phase 7.**
 
+- [ ] Codesign `llama-server` binary independently
+- [ ] Codesign `vision-helper` binary independently
 - [ ] Configure Tauri signing with Apple Developer certificate
-- [ ] Set bundle identifier: `com.yourname.jp-translate`
-- [ ] All entitlements in `entitlements.plist`
-- [x] **Sign `llama-server` and `vision-helper` binaries separately** — both must be codesigned as part of the app bundle or notarization will fail
-
-### 8.2 Notarization
-
-- [ ] Set up `xcrun notarytool` with App Store Connect API key
-- [ ] Add notarization to build script
-- [ ] Test: install notarized `.dmg` on clean Mac; verify no Gatekeeper warnings
-- [ ] Verify `llama-server` subprocess is not blocked by Gatekeeper on first run
-
-### 8.3 Packaging
-
-- [ ] Ship without model (wizard prompts download on first launch)
-- [ ] `llama-server` binary ships inside `.app`
+- [ ] Set bundle identifier: `com.yourname.contextura`
+- [ ] Set up `xcrun notarytool` notarization
+- [ ] Implement wizard screens 2–4 (model selection, download, privacy)
+- [ ] RAM gate: `sysctl hw.memsize`; disable Quality Mode if < 12GB
+- [ ] Populate auto-updater pubkey in `tauri.conf.json`
 - [ ] Create `.dmg` via Tauri bundler
-- [ ] Write `README.md`
-
-### 8.4 Final QA Checklist
-
-- [ ] macOS 13 Ventura (minimum target)
-- [ ] macOS 14 Sonoma
-- [ ] MacBook Pro Retina (2x scale)
-- [ ] External 4K monitor (1x scale)
-- [ ] Safari, Chrome, Firefox
-- [ ] PDF viewer, Terminal, VS Code
-- [ ] Vertical Japanese text
-- [ ] First-run wizard on fresh machine
-- [ ] RAM < 12GB simulation
-
-**✅ Phase 8 Milestone:** `.dmg` installs cleanly, passes Gatekeeper, full pipeline works on fresh machine.
+- [ ] Test on clean macOS 13 and macOS 14
 
 ---
 
 ## Backlog / v1.1+
 
-- [ ] Apple Foundation Models as Native Tier (macOS 26+, zero model download)
-- [ ] Full settings UI (no manual JSON editing)
-- [ ] Tab-level context isolation within same browser
+- [ ] Multi-display support
+- [ ] Gemma 4 E4B Quality Mode + `switch_model()` + real `Cmd+Shift+G`
+- [ ] Apple Foundation Models native tier (macOS 26+)
+- [ ] Full settings UI
+- [ ] Tab-level context isolation
 - [ ] Furigana tooltip on hover
-- [ ] Persist translation memory across sessions (opt-in)
-- [ ] Vocabulary lookup on hover
-- [ ] Export translations to clipboard or text file
-- [ ] Chinese (Traditional/Simplified) and Korean
-- [ ] VoiceOver accessibility
-- [ ] Japanese UI localization
+- [ ] Persist translation memory across sessions
+- [ ] Chinese and Korean support
 
 ---
 
-## Quick Reference: Key File Locations
+## Quick Reference: File Status
 
 ```
-jp-translate/
-├── src-tauri/
-│   ├── src/
-│   │   ├── main.rs              # Pipeline orchestration (Phase P.4)
-│   │   ├── capture.rs           # SCKit capture (Phase P.1)
-│   │   ├── motion.rs            # Motion detection + debounce (scaffolded)
-│   │   ├── ocr.rs               # vision-helper subprocess wrapper (Phase P.2)
-│   │   ├── translation.rs       # llama-server HTTP client (Phase P.3)
-│   │   ├── context.rs           # AppWindowTracker + InvalidationReason
-│   │   ├── thermal.rs           # IOKit thermal monitoring
-│   │   ├── styling.rs           # WCAG contrast calculation
-│   │   ├── ipc.rs               # Payload types + Tauri event emitter
-│   │   ├── downloader.rs        # reqwest model downloader + SHA256
-│   │   └── settings.rs          # settings.json read/write
-│   ├── src/bin/
-│   │   └── vision-helper.swift  # Swift OCR subprocess (Phase P.2.1)
-│   ├── binaries/
-│   │   └── llama-server-aarch64-apple-darwin  # Pre-compiled sidecar (Phase P.3.2)
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   └── entitlements.plist
-├── src/
-│   ├── index.html               # Overlay WebView
-│   ├── overlay.js               # Event listeners + DOM rendering
-│   ├── overlay.css              # Transparent overlay styles
-│   ├── wizard.html              # First-run onboarding wizard
-│   └── help.html                # Bundled help page
-├── test-corpus/                 # PNGs + .expected.json for --test-suite
-├── SPEC.md
-├── TODO.md
-├── PRODUCTION.md
-├── DECISIONS.md                 # Architecture decisions log
-└── README.md
+lib.rs               ← THE WORK — wire all subsystems here
+capture.rs           ✅ Real SCKit frames
+motion.rs            ✅ Code correct — NOT wired in lib.rs
+ocr.rs               ✅ Real vision-helper subprocess
+translation.rs       ✅ Real HTTP — needs --jinja arg + /no_think prompt
+context.rs           ✅ NSWorkspace polling — memory.clear() not wired
+thermal.rs           ⚠️ Thermal real; battery hardcoded false
+styling.rs           ✅ WCAG math correct — NOT called from lib.rs
+ipc.rs               ✅ Structs defined — emit() never called
+hotkeys.rs           ⚠️ T, R, G are log stubs
+capabilities/
+  default.json       ❌ Missing shell:allow-execute — FIX FIRST
+models/
+  nllb-*.gguf        ❌ Wrong architecture — delete or ignore
+  qwen3-0.6b-*.gguf  ⬜ Download this instead
 ```

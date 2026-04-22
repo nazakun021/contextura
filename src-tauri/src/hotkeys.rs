@@ -1,50 +1,94 @@
+use crossbeam_channel::Sender;
 use std::process;
+use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-/// Registers the 5 global shortcuts defined in Phase 6.1.
+use crate::context::AppWindowTracker;
+
+/// Registers all global keyboard shortcuts for the application.
+///
+/// # Shortcut Map
+///
+/// | Shortcut        | Action                                         | Status  |
+/// |-----------------|------------------------------------------------|---------|
+/// | Cmd+Shift+T     | Toggle overlay visibility                      | ✅ Live  |
+/// | Cmd+Shift+R     | Force immediate OCR scan (bypass debounce)     | ✅ Live  |
+/// | Cmd+Shift+M     | Clear translation memory (manual reset)        | ✅ Live  |
+/// | Cmd+Shift+Q     | Quit application                               | ✅ Live  |
+/// | Cmd+Shift+G     | Switch model tier (Quality/Standard)           | ⚠️ Stub  |
 ///
 /// # Errors
-/// Returns an error if the shortcuts cannot be parsed or registered.
-pub fn register_shortcuts(app: &tauri::App) -> anyhow::Result<()> {
+/// Returns an error if any shortcut cannot be registered with the OS.
+pub fn register_shortcuts(
+    app: &tauri::App,
+    window_tracker: AppWindowTracker,
+    force_trigger_tx: Sender<()>,
+) -> anyhow::Result<()> {
     let toggle_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyT);
     let quit_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyQ);
     let force_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyR);
     let reset_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyM);
     let model_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyG);
 
-    app.global_shortcut()
-        .on_shortcut(toggle_shortcut, |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                log::info!("Shortcut: Toggle overlay visibility");
-            }
-        })?;
+    // Cmd+Shift+T — toggle overlay visibility
+    {
+        let app_handle = app.handle().clone();
+        app.global_shortcut()
+            .on_shortcut(toggle_shortcut, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed
+                    && let Some(overlay) = app_handle.get_webview_window("overlay-main")
+                {
+                    let visible = overlay.is_visible().unwrap_or(false);
+                    if visible {
+                        let _ = overlay.hide();
+                        log::info!("[Hotkey] Overlay hidden (Cmd+Shift+T)");
+                    } else {
+                        let _ = overlay.show();
+                        log::info!("[Hotkey] Overlay shown (Cmd+Shift+T)");
+                    }
+                }
+            })?;
+    }
 
+    // Cmd+Shift+Q — quit immediately
     app.global_shortcut()
         .on_shortcut(quit_shortcut, |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
-                log::info!("Shortcut: Quit application");
+                log::info!("[Hotkey] Quit (Cmd+Shift+Q)");
                 process::exit(0);
             }
         })?;
 
-    app.global_shortcut()
-        .on_shortcut(force_shortcut, |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                log::info!("Shortcut: Force OCR");
-            }
-        })?;
+    // Cmd+Shift+R — force immediate OCR scan (bypasses debounce)
+    {
+        let tx = force_trigger_tx;
+        app.global_shortcut()
+            .on_shortcut(force_shortcut, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    log::info!("[Hotkey] Force OCR scan (Cmd+Shift+R)");
+                    let _ = tx.try_send(());
+                }
+            })?;
+    }
 
-    app.global_shortcut()
-        .on_shortcut(reset_shortcut, |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                log::info!("Shortcut: Manual reset memory");
-            }
-        })?;
+    // Cmd+Shift+M — clear translation memory (manual reset)
+    {
+        let tracker = window_tracker;
+        app.global_shortcut()
+            .on_shortcut(reset_shortcut, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    log::info!("[Hotkey] Manual memory reset (Cmd+Shift+M)");
+                    tracker.trigger_manual_reset();
+                }
+            })?;
+    }
 
+    // Cmd+Shift+G — model switch (stub until v1.1 Quality Mode)
     app.global_shortcut()
         .on_shortcut(model_shortcut, |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
-                log::info!("Shortcut: Trigger model switch");
+                // TODO(v1.1): trigger model switch between Standard and Quality tiers
+                log::info!("[Hotkey] Model switch stub (Cmd+Shift+G) — not implemented until v1.1");
             }
         })?;
 

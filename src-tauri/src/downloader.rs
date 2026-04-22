@@ -1,13 +1,15 @@
 use anyhow::Result;
 use reqwest::Client;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::io::AsyncWriteExt;
 use tokio::fs::File;
 use sha2::{Sha256, Digest};
 
+#[allow(dead_code)]
 pub struct Downloader;
 
 impl Downloader {
+    #[allow(dead_code)]
     pub async fn download_model(url: &str, dest_path: &Path, expected_sha256: Option<&str>) -> Result<()> {
         let client = Client::new();
         let mut response = client.get(url).send().await?.error_for_status()?;
@@ -25,7 +27,7 @@ impl Downloader {
         if let Some(expected) = expected_sha256 {
             let hash = format!("{:x}", hasher.finalize());
             if hash != expected {
-                return Err(anyhow::anyhow!("SHA256 mismatch: expected {}, got {}", expected, hash));
+                return Err(anyhow::anyhow!("SHA256 mismatch: expected {expected}, got {hash}"));
             }
         }
         

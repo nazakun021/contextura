@@ -8,14 +8,13 @@ pub struct PixelBuffer {
     pub data: Vec<u8>,
     pub width: usize,
     pub height: usize,
-    pub row_bytes: usize,
 }
 
 pub struct CaptureFrame {
     pub buffer: PixelBuffer,
+    #[allow(dead_code)] // used by future multi-display routing (Phase 8)
     pub display_id: u32,
     pub scale_factor: f32,
-    pub is_dirty: bool,
 }
 
 pub struct DisplayManager {}
@@ -34,20 +33,14 @@ impl SCStreamOutputTrait for OutputHandler {
             let data = guard.as_slice().to_vec();
             let width = guard.width();
             let height = guard.height();
-            let row_bytes = guard.bytes_per_row();
-
-            let is_dirty = true; // SCFrameStatus::Complete could be checked? Let's assume dirty
-
             let frame = CaptureFrame {
                 buffer: PixelBuffer {
                     data,
                     width,
                     height,
-                    row_bytes,
                 },
                 display_id: self.display_id,
                 scale_factor: self.scale_factor,
-                is_dirty,
             };
 
             // Drop frame if channel is full
@@ -85,7 +78,7 @@ impl DisplayManager {
             let handler = OutputHandler {
                 tx,
                 display_id,
-                scale_factor: 2.0,
+                scale_factor: 2.0, // TODO: query actual backingScaleFactor from main thread (Phase 7)
             };
             stream.add_output_handler(handler, SCStreamOutputType::Screen);
             stream.start_capture().expect("Failed to start capture");

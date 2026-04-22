@@ -203,6 +203,32 @@ impl MotionDetector {
         size
     }
 
+    pub fn downsample(&self, rgba_data: &[u8], full_width: usize, full_height: usize) -> Vec<u8> {
+        let mut thumbnail = vec![0u8; self.width * self.height];
+        
+        let x_step = full_width as f32 / self.width as f32;
+        let y_step = full_height as f32 / self.height as f32;
+
+        for ty in 0..self.height {
+            for tx in 0..self.width {
+                let fx = (tx as f32 * x_step) as usize;
+                let fy = (ty as f32 * y_step) as usize;
+                
+                let rgba_idx = (fy * full_width + fx) * 4;
+                if rgba_idx + 2 < rgba_data.len() {
+                    let r = rgba_data[rgba_idx];
+                    let g = rgba_data[rgba_idx + 1];
+                    let b = rgba_data[rgba_idx + 2];
+                    
+                    // Simple grayscale conversion: 0.299R + 0.587G + 0.114B
+                    let gray = (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) as u8;
+                    thumbnail[ty * self.width + tx] = gray;
+                }
+            }
+        }
+        thumbnail
+    }
+
     pub fn process_thumbnail(&mut self, current: &[u8]) -> f32 {
         // Double-buffering copy
         self.curr_thumbnail.copy_from_slice(current);
