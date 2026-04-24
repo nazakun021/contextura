@@ -59,9 +59,7 @@ impl ThermalMonitor {
     /// Falls back to `false` (assume plugged in) on any parse failure — the safe
     /// direction for throttle decisions since we only throttle when on battery.
     fn check_on_battery() -> bool {
-        let output = Command::new("pmset")
-            .args(["-g", "batt"])
-            .output();
+        let output = Command::new("pmset").args(["-g", "batt"]).output();
 
         match output {
             Ok(out) => {

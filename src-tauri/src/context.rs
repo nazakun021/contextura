@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
+use objc2_app_kit::NSWorkspace;
 use std::thread;
 use std::time::Duration;
-use objc2_app_kit::NSWorkspace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvalidationReason {
@@ -35,10 +35,9 @@ impl AppWindowTracker {
 
                 let workspace = NSWorkspace::sharedWorkspace();
                 let front_app = workspace.frontmostApplication();
-                
-                let active_bundle = front_app.and_then(|app| { 
-                    app.bundleIdentifier().map(|id| id.to_string()) 
-                });
+
+                let active_bundle =
+                    front_app.and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
 
                 if active_bundle != last_bundle {
                     if let (Some(from), Some(to)) = (&last_bundle, &active_bundle) {

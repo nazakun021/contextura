@@ -2,79 +2,364 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Contextura Setup</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --card: rgba(255, 255, 255, 0.94);
+      --ink: #122033;
+      --muted: #516276;
+      --line: rgba(18, 32, 51, 0.1);
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --accent-soft: rgba(15, 118, 110, 0.12);
+    }
+
+    * { box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      background: #f5f5f7;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.22), transparent 38%),
+        radial-gradient(circle at bottom right, rgba(37, 99, 235, 0.16), transparent 32%),
+        linear-gradient(180deg, #f5f7fb 0%, var(--bg) 100%);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+      padding: 24px;
       -webkit-font-smoothing: antialiased;
     }
 
-    .card {
-      background: white;
-      padding: 48px 40px;
-      border-radius: 16px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
-      max-width: 480px;
-      width: 100%;
-      text-align: center;
+    .shell {
+      width: min(720px, 100%);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: 0 28px 70px rgba(18, 32, 51, 0.16);
+      overflow: hidden;
+      backdrop-filter: blur(24px);
     }
 
-    .icon { font-size: 48px; margin-bottom: 16px; }
+    .progress {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 24px 28px 0;
+    }
+
+    .progress span {
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(18, 32, 51, 0.08);
+      transition: background 0.2s ease;
+    }
+
+    .progress span.active {
+      background: linear-gradient(90deg, var(--accent), #2563eb);
+    }
+
+    .content {
+      padding: 28px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
 
     h1 {
-      font-size: 22px;
-      font-weight: 600;
-      color: #1d1d1f;
-      margin-bottom: 12px;
+      margin: 0;
+      font-size: clamp(28px, 4vw, 38px);
+      line-height: 1.05;
     }
 
     p {
-      font-size: 15px;
-      color: #6e6e73;
+      margin: 0;
+      color: var(--muted);
       line-height: 1.6;
-      margin-bottom: 32px;
+      font-size: 15px;
     }
 
-    .btn {
-      display: inline-block;
-      background: #007aff;
-      color: white;
-      border: none;
-      padding: 13px 28px;
-      border-radius: 980px; /* Apple pill-button style */
-      font-size: 15px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.15s ease, transform 0.1s ease;
-      -webkit-app-region: no-drag;
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.82);
+      display: grid;
+      gap: 10px;
     }
-    .btn:hover { background: #0066d6; }
-    .btn:active { transform: scale(0.97); }
+
+    .panel strong {
+      font-size: 14px;
+    }
+
+    .panel code {
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(18, 32, 51, 0.06);
+      font-family: "SF Mono", "Menlo", monospace;
+      font-size: 12px;
+    }
+
+    .meta-list {
+      display: grid;
+      gap: 10px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    .meta-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    .meta-list li:last-child {
+      border-bottom: none;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      font-size: 13px;
+      font-weight: 600;
+      width: fit-content;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 28px 28px;
+      flex-wrap: wrap;
+    }
+
+    .left-actions, .right-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+    }
+
+    button:active { transform: scale(0.98); }
+
+    .primary {
+      background: linear-gradient(90deg, var(--accent), #2563eb);
+      color: white;
+    }
+
+    .secondary {
+      background: rgba(18, 32, 51, 0.08);
+      color: var(--ink);
+    }
+
+    .ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+
+    @media (max-width: 640px) {
+      .actions { padding-top: 8px; }
+      .left-actions, .right-actions { width: 100%; }
+      .left-actions button, .right-actions button { flex: 1; }
+      .meta-list li { flex-direction: column; gap: 6px; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="icon">🔏</div>
-    <h1>Welcome to Contextura</h1>
-    <p>Contextura needs <strong>Screen Recording permission</strong> to translate text on-screen in real time. It runs entirely offline — your screen contents are never transmitted anywhere.</p>
-    <button class="btn" id="enter-btn">Continue</button>
+  <div class="shell">
+    <div class="progress" aria-hidden="true">
+      <span class="active"></span>
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+    <div class="content">
+      <div class="eyebrow" id="step-label">Step 1 of 4</div>
+      <h1 id="title">Allow screen capture.</h1>
+      <p id="body"></p>
+      <div class="status" id="status-pill"></div>
+      <div class="panel" id="panel"></div>
+    </div>
+    <div class="actions">
+      <div class="left-actions">
+        <button class="ghost" id="back-btn">Back</button>
+        <button class="secondary" id="side-btn">Open System Settings</button>
+      </div>
+      <div class="right-actions">
+        <button class="secondary" id="skip-btn">Skip for now</button>
+        <button class="primary" id="next-btn">Continue</button>
+      </div>
+    </div>
   </div>
 
   <script>
-    document.getElementById('enter-btn').addEventListener('click', async () => {
+    const { invoke } = window.__TAURI__.core;
+
+    const views = [
+      {
+        title: 'Allow screen capture.',
+        body: 'Contextura only works after macOS grants Screen Recording permission. The overlay stays local and reads frames on-device.',
+        status: 'Required before live translation',
+        sideLabel: 'Open System Settings',
+        sideAction: () => invoke('open_screen_recording_settings'),
+        panel: (status) => `
+          <strong>What to do</strong>
+          <p>Open the <strong>Screen Recording</strong> privacy panel, enable Contextura, then relaunch if macOS asks.</p>
+          <p>Once enabled, the OCR pipeline can start reading Japanese text from the active display.</p>
+        `,
+      },
+      {
+        title: 'Check your local model.',
+        body: 'Contextura needs a decoder-only GGUF model for the bundled <code>llama-server</code> sidecar.',
+        status: (status) => status.has_model ? 'Model detected' : 'Model not detected yet',
+        sideLabel: 'Open Models Folder',
+        sideAction: () => invoke('open_models_folder_command'),
+        panel: (status) => `
+          <strong>Current model</strong>
+          <ul class="meta-list">
+            <li><span>Active</span><span>${status.active_model_label || 'No model detected'}</span></li>
+            <li><span>Tier</span><span>${status.active_model_tier || 'Unavailable'}</span></li>
+            <li><span>Models folder</span><code>${status.models_dir}</code></li>
+          </ul>
+          <p>Recommended default: <strong>Qwen3-0.6B Q4_K_M</strong>. Add alternate GGUF files here if you want live model switching with <strong>Cmd+Shift+G</strong>.</p>
+        `,
+      },
+      {
+        title: 'Learn the live controls.',
+        body: 'Contextura is designed for keyboard-first use. These shortcuts work globally once the app is running.',
+        status: 'Hotkeys available',
+        sideLabel: 'Open Models Folder',
+        sideAction: () => invoke('open_models_folder_command'),
+        panel: () => `
+          <strong>Core shortcuts</strong>
+          <ul class="meta-list">
+            <li><span>Toggle overlay</span><span><code>Cmd+Shift+T</code></span></li>
+            <li><span>Translate now</span><span><code>Cmd+Shift+R</code></span></li>
+            <li><span>Clear memory</span><span><code>Cmd+Shift+M</code></span></li>
+            <li><span>Switch model</span><span><code>Cmd+Shift+G</code></span></li>
+          </ul>
+        `,
+      },
+      {
+        title: 'You are ready.',
+        body: 'After you finish this setup, the overlay window appears and Contextura can start translating once the screen settles.',
+        status: 'Setup can be completed now',
+        sideLabel: 'Open Models Folder',
+        sideAction: () => invoke('open_models_folder_command'),
+        panel: (status) => `
+          <strong>Before closing setup</strong>
+          <p>${status.has_model ? 'A local model is already present, so you can start testing immediately.' : 'You still need to add a GGUF model before translations can appear.'}</p>
+          <p>Live smoke verification is still recommended after setup: stop scrolling, wait for debounce, and confirm translated boxes line up with the Japanese source text.</p>
+        `,
+      },
+    ];
+
+    let currentStep = 0;
+    let wizardStatus = {
+      has_model: false,
+      active_model_label: '',
+      active_model_tier: '',
+      models_dir: '',
+    };
+
+    const progressDots = [...document.querySelectorAll('.progress span')];
+    const stepLabel = document.getElementById('step-label');
+    const title = document.getElementById('title');
+    const body = document.getElementById('body');
+    const statusPill = document.getElementById('status-pill');
+    const panel = document.getElementById('panel');
+    const backBtn = document.getElementById('back-btn');
+    const sideBtn = document.getElementById('side-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const skipBtn = document.getElementById('skip-btn');
+
+    async function loadStatus() {
       try {
-        await window.__TAURI__.core.invoke('complete_wizard');
-      } catch (err) {
-        console.error('Failed to close wizard:', err);
+        wizardStatus = await invoke('wizard_status');
+      } catch (error) {
+        console.error('Failed to load wizard status', error);
+      }
+    }
+
+    function render() {
+      const view = views[currentStep];
+      stepLabel.textContent = `Step ${currentStep + 1} of ${views.length}`;
+      title.textContent = view.title;
+      body.innerHTML = view.body;
+      statusPill.textContent = typeof view.status === 'function' ? view.status(wizardStatus) : view.status;
+      panel.innerHTML = view.panel(wizardStatus);
+      sideBtn.textContent = view.sideLabel;
+      nextBtn.textContent = currentStep === views.length - 1 ? 'Finish Setup' : 'Continue';
+      backBtn.disabled = currentStep === 0;
+      progressDots.forEach((dot, index) => {
+        dot.classList.toggle('active', index <= currentStep);
+      });
+    }
+
+    backBtn.addEventListener('click', () => {
+      currentStep = Math.max(0, currentStep - 1);
+      render();
+    });
+
+    sideBtn.addEventListener('click', async () => {
+      await views[currentStep].sideAction();
+      if (currentStep === 1) {
+        await loadStatus();
+        render();
       }
     });
+
+    skipBtn.addEventListener('click', async () => {
+      currentStep = Math.min(views.length - 1, currentStep + 1);
+      await loadStatus();
+      render();
+    });
+
+    nextBtn.addEventListener('click', async () => {
+      if (currentStep < views.length - 1) {
+        currentStep += 1;
+        await loadStatus();
+        render();
+        return;
+      }
+
+      try {
+        await invoke('complete_wizard');
+      } catch (error) {
+        console.error('Failed to complete wizard', error);
+      }
+    });
+
+    loadStatus().then(render);
   </script>
 </body>
 </html>

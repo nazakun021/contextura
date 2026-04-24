@@ -17,12 +17,14 @@
   <ul>
     <li><kbd>Cmd + Shift + T</kbd> - Toggle overlay visibility</li>
     <li><kbd>Cmd + Shift + M</kbd> - Manually clear context memory</li>
-    <li><kbd>Cmd + Shift + G</kbd> - Switch between NLLB and Gemma 4</li>
+    <li><kbd>Cmd + Shift + G</kbd> - Switch to the next installed local model</li>
     <li><kbd>Cmd + Shift + R</kbd> - Force fresh translation</li>
     <li><kbd>Cmd + Shift + Q</kbd> - Quit</li>
   </ul>
 
   <h2>FAQ</h2>
   <p><strong>Why isn't it appearing?</strong><br>Check Screen Recording permission. Make sure you fully stop scrolling for at least 0.3 seconds.</p>
+  <p><strong>Why does the overlay say capture is restarting?</strong><br>Contextura now restarts the ScreenCaptureKit stream if frames stall after display sleep, wake, or a capture reset.</p>
+  <p><strong>Why can model switching fail?</strong><br><kbd>Cmd + Shift + G</kbd> only works when at least two GGUF models are installed in the models folder.</p>
 </body>
 </html>

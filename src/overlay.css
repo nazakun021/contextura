@@ -1,6 +1,8 @@
 :root {
   --status-bg: rgba(0, 0, 0, 0.6);
-  --error-bg: rgba(220, 38, 38, 0.9);
+  --error-bg-warning: rgba(180, 83, 9, 0.94);
+  --error-bg-error: rgba(185, 28, 28, 0.94);
+  --error-bg-info: rgba(30, 64, 175, 0.94);
   --text-primary: #ffffff;
 }
 
@@ -83,12 +85,36 @@ html, body {
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--error-bg);
+  background: var(--error-bg-warning);
   color: var(--text-primary);
-  padding: 10px 20px;
-  border-radius: 6px;
+  padding: 12px 16px;
+  border-radius: 10px;
   font-weight: 500;
   transition: opacity 0.3s ease-in-out;
   z-index: 60;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(520px, calc(100vw - 32px));
+}
+
+#error-banner[data-level="error"] {
+  background: var(--error-bg-error);
+}
+
+#error-banner[data-level="info"] {
+  background: var(--error-bg-info);
+}
+
+#error-title {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+#error-detail {
+  font-size: 14px;
+  line-height: 1.4;
+  text-transform: none;
 }

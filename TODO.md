@@ -2,7 +2,7 @@
 
 **Stack:** Rust · Tauri v2 · ScreenCaptureKit · Swift `vision-helper` · `llama-server`  
 **Platform:** macOS 13+ · Apple Silicon  
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-04-25
 
 ## Status Legend
 
@@ -99,31 +99,33 @@ Manual app-level smoke testing is still pending:
 
 ### High priority
 
-- [ ] Exclude the overlay window from capture to avoid self-capture loops
+- [x] Exclude the overlay window from capture to avoid self-capture loops
 - [ ] Run a full manual smoke pass with a real Qwen3 model and update verification checkboxes above
-- [ ] Make `translation-error` handling visible and user-friendly during sidecar restarts
+- [x] Make `translation-error` handling visible and user-friendly during sidecar restarts
 
 ### Medium priority
 
-- [ ] Implement `Cmd+Shift+G` model switching
-- [ ] Expand the first-run wizard beyond screen 1
-- [ ] Make `--debug-cli` run the real pipeline instead of stub output
-- [ ] Replace the mock `--test-suite` flow with real OCR/translation checks
+- [x] Implement `Cmd+Shift+G` model switching
+- [x] Expand the first-run wizard beyond screen 1
+- [x] Make `--debug-cli` run the real pipeline instead of stub output
+- [x] Replace the mock `--test-suite` flow with real OCR/translation checks
 - [ ] Curate `test-corpus/` with real Japanese screenshots and expected outputs
-- [ ] Handle sleep/wake and capture restarts more explicitly
+- [x] Handle sleep/wake and capture restarts more explicitly
 
 ### Lower priority
 
 - [ ] Wire in-app updater configuration fully, including a real pubkey
 - [ ] Revisit downloader integration
 - [ ] Add multi-display support
-- [ ] Add quality-tier model switching
+- [-] Add quality-tier model switching
+- [-] Cycle between installed models and surface tier labels is implemented; curated Standard/Quality policy and RAM gating are still pending
 - [ ] Add Apple Foundation Models tier for macOS 26+
 
 ## File Status
 
-- `src-tauri/src/lib.rs`: pipeline orchestrator, wired
-- `src-tauri/src/capture.rs`: ScreenCaptureKit capture, explicit BGRA, real scale factor
+- `src-tauri/src/lib.rs`: pipeline orchestrator, runtime reloads, real CLI/test-suite wiring
+- `src-tauri/src/models.rs`: model manifest loading and active-model switching
+- `src-tauri/src/capture.rs`: ScreenCaptureKit capture, explicit BGRA, real scale factor, app-window exclusion
 - `src-tauri/src/motion.rs`: motion detection and debounce, wired
 - `src-tauri/src/ocr.rs`: `vision-helper` wrapper, wired
 - `src-tauri/src/translation.rs`: sidecar management, batching, watchdog-ready
@@ -131,6 +133,6 @@ Manual app-level smoke testing is still pending:
 - `src-tauri/src/thermal.rs`: thermal plus battery detection
 - `src-tauri/src/styling.rs`: WCAG-based overlay styling, wired
 - `src-tauri/src/ipc.rs`: active IPC payload types
-- `src-tauri/src/hotkeys.rs`: T/R/M/Q live, G still stub
-- `src-tauri/src/tray.rs`: primary tray actions live
-- `src/wizard.html`: initial permission flow only
+- `src-tauri/src/hotkeys.rs`: T/R/M/G/Q live
+- `src-tauri/src/tray.rs`: primary tray actions plus model switch live
+- `src/wizard.html`: 4-step setup flow live

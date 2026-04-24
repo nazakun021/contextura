@@ -32,9 +32,25 @@ pub struct TranslationPayload {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranslationErrorPayload {
     pub message: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub dismiss_ms: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranslationStartedPayload {
     pub display_id: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WizardStatusPayload {
+    pub has_model: bool,
+    pub active_model_label: String,
+    pub active_model_tier: String,
+    pub models_dir: String,
 }

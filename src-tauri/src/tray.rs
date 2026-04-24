@@ -6,18 +6,19 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 
+use crate::PipelineCommand;
 use crate::context::AppWindowTracker;
 
 /// Sets up the system tray icon, menu, and event handler.
 ///
-/// The tray needs a `force_trigger_tx` channel and a `window_tracker` to
-/// provide real behaviour for "Translate Now" and "Clear Context Memory".
+/// The tray needs a pipeline channel and a `window_tracker` to provide real
+/// behaviour for translation, model switching, and context clearing actions.
 ///
 /// # Errors
 /// Returns an error if the menu or tray icon cannot be constructed.
 pub fn setup_tray(
     app: &App,
-    force_trigger_tx: Sender<()>,
+    pipeline_tx: Sender<PipelineCommand>,
     window_tracker: AppWindowTracker,
 ) -> anyhow::Result<()> {
     let toggle_i = MenuItem::with_id(
@@ -30,7 +31,15 @@ pub fn setup_tray(
     let force_i = MenuItem::with_id(app, "force", "Translate Now", true, None::<&str>)?;
     let clear_ctx_i =
         MenuItem::with_id(app, "clear_ctx", "Clear Context Memory", true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "settings", "Open Settings Folder...", true, None::<&str>)?;
+    let switch_model_i =
+        MenuItem::with_id(app, "switch_model", "Switch Model", true, None::<&str>)?;
+    let settings_i = MenuItem::with_id(
+        app,
+        "settings",
+        "Open Settings Folder...",
+        true,
+        None::<&str>,
+    )?;
     let help_i = MenuItem::with_id(app, "help", "Help", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit Contextura", true, None::<&str>)?;
 
@@ -40,6 +49,7 @@ pub fn setup_tray(
             &toggle_i,
             &force_i,
             &clear_ctx_i,
+            &switch_model_i,
             &settings_i,
             &help_i,
             &quit_i,
@@ -63,12 +73,23 @@ pub fn setup_tray(
             }
             "force" => {
                 log::info!("[Tray] Force translate triggered");
-                let _ = force_trigger_tx.try_send(());
+                let _ = pipeline_tx.try_send(PipelineCommand::ForceScan);
             }
             "clear_ctx" => {
                 log::info!("[Tray] Clear context triggered");
                 window_tracker.trigger_manual_reset();
             }
+            "switch_model" => match crate::request_model_switch(app_handle, &pipeline_tx) {
+                Ok(()) => log::info!("[Tray] Model switched"),
+                Err(error) => crate::emit_runtime_notice(
+                    app_handle,
+                    "Model Switch Unavailable",
+                    "No alternate installed model was found.",
+                    error.to_string(),
+                    "warning",
+                    5000,
+                ),
+            },
             "settings" => {
                 if let Ok(dir) = crate::settings::Settings::dir() {
                     let _ = std::process::Command::new("open").arg(&dir).spawn();

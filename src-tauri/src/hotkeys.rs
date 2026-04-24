@@ -3,6 +3,7 @@ use std::process;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+use crate::PipelineCommand;
 use crate::context::AppWindowTracker;
 
 /// Registers all global keyboard shortcuts for the application.
@@ -15,14 +16,14 @@ use crate::context::AppWindowTracker;
 /// | Cmd+Shift+R     | Force immediate OCR scan (bypass debounce)     | ✅ Live  |
 /// | Cmd+Shift+M     | Clear translation memory (manual reset)        | ✅ Live  |
 /// | Cmd+Shift+Q     | Quit application                               | ✅ Live  |
-/// | Cmd+Shift+G     | Switch model tier (Quality/Standard)           | ⚠️ Stub  |
+/// | Cmd+Shift+G     | Switch to the next installed model             | ✅ Live  |
 ///
 /// # Errors
 /// Returns an error if any shortcut cannot be registered with the OS.
 pub fn register_shortcuts(
     app: &tauri::App,
     window_tracker: AppWindowTracker,
-    force_trigger_tx: Sender<()>,
+    pipeline_tx: Sender<PipelineCommand>,
 ) -> anyhow::Result<()> {
     let toggle_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyT);
     let quit_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyQ);
@@ -61,12 +62,12 @@ pub fn register_shortcuts(
 
     // Cmd+Shift+R — force immediate OCR scan (bypasses debounce)
     {
-        let tx = force_trigger_tx;
+        let tx = pipeline_tx.clone();
         app.global_shortcut()
             .on_shortcut(force_shortcut, move |_app, _shortcut, event| {
                 if event.state() == ShortcutState::Pressed {
                     log::info!("[Hotkey] Force OCR scan (Cmd+Shift+R)");
-                    let _ = tx.try_send(());
+                    let _ = tx.try_send(PipelineCommand::ForceScan);
                 }
             })?;
     }
@@ -84,13 +85,29 @@ pub fn register_shortcuts(
     }
 
     // Cmd+Shift+G — model switch (stub until v1.1 Quality Mode)
-    app.global_shortcut()
-        .on_shortcut(model_shortcut, |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                // TODO(v1.1): trigger model switch between Standard and Quality tiers
-                log::info!("[Hotkey] Model switch stub (Cmd+Shift+G) — not implemented until v1.1");
-            }
-        })?;
+    {
+        let app_handle = app.handle().clone();
+        let tx = pipeline_tx;
+        app.global_shortcut()
+            .on_shortcut(model_shortcut, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    match crate::request_model_switch(&app_handle, &tx) {
+                        Ok(()) => log::info!("[Hotkey] Switched model (Cmd+Shift+G)"),
+                        Err(error) => {
+                            log::warn!("[Hotkey] Model switch unavailable: {error}");
+                            crate::emit_runtime_notice(
+                                &app_handle,
+                                "Model Switch Unavailable",
+                                "No alternate installed model was found.",
+                                error.to_string(),
+                                "warning",
+                                5000,
+                            );
+                        }
+                    }
+                }
+            })?;
+    }
 
     Ok(())
 }

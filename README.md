@@ -4,7 +4,7 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 **Platform:** macOS 13+ on Apple Silicon  
 **Stack:** Rust, Tauri v2, ScreenCaptureKit, Swift Vision helper, `llama-server`, vanilla HTML/CSS/JS  
-**Status:** Single-display pipeline is implemented. Manual end-to-end smoke verification is still required with a valid local model.
+**Status:** Single-display pipeline is implemented and Rust-verified. Manual end-to-end smoke verification is still required with a valid local model.
 
 ## What Works
 
@@ -13,16 +13,18 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 - Local OCR through the bundled `vision-helper`
 - Local translation through bundled `llama-server`
 - Dynamic overlay styling for contrast
-- Overlay toggle, force-scan, memory reset, and quit hotkeys
-- App-switch invalidation and watchdog-based sidecar restart
+- Overlay toggle, force-scan, memory reset, model switching, and quit hotkeys
+- App-switch invalidation, watchdog-based sidecar restart, and capture-stream restart handling
+- Overlay self-capture exclusion for Contextura windows
+- A 4-step first-run wizard
+- Real `--debug-cli --input` and `--test-suite` OCR/translation flows
 
 ## Current Limits
 
 - Single-display only
-- `Cmd+Shift+G` model switching is still a stub
-- Wizard screen 1 exists; later setup screens are not implemented
-- Overlay exclusion from capture is still pending
-- Test corpus and CLI E2E flows are still incomplete
+- Updater signing still needs a real public key
+- Quality-tier policy and RAM gating are still incomplete
+- Manual runtime smoke verification is still pending
 
 ## Setup
 
@@ -69,22 +71,22 @@ curl http://127.0.0.1:8765/health
 Expected:
 
 ```json
-{"status":"ok"}
+{ "status": "ok" }
 ```
 
 ### 4. Grant Screen Recording permission
 
-On first launch, Contextura shows the initial wizard screen and requires macOS Screen Recording permission before any capture can work.
+On first launch, Contextura shows a 4-step setup wizard covering Screen Recording permission, model placement, core shortcuts, and final readiness.
 
 ## Hotkeys
 
-| Shortcut | Action | Status |
-| --- | --- | --- |
-| `Cmd+Shift+T` | Toggle overlay visibility | Live |
-| `Cmd+Shift+R` | Force immediate OCR/translation | Live |
-| `Cmd+Shift+M` | Clear translation memory | Live |
-| `Cmd+Shift+Q` | Quit | Live |
-| `Cmd+Shift+G` | Switch model tier | Stub |
+| Shortcut      | Action                                   | Status |
+| ------------- | ---------------------------------------- | ------ |
+| `Cmd+Shift+T` | Toggle overlay visibility                | Live   |
+| `Cmd+Shift+R` | Force immediate OCR/translation          | Live   |
+| `Cmd+Shift+M` | Clear translation memory                 | Live   |
+| `Cmd+Shift+Q` | Quit                                     | Live   |
+| `Cmd+Shift+G` | Switch to the next installed local model | Live   |
 
 ## Runtime Notes
 
@@ -92,6 +94,27 @@ On first launch, Contextura shows the initial wizard screen and requires macOS S
 - The latest captured frame is also kept at `/tmp/contextura-frame-latest.png` for debugging.
 - `llama-server` listens only on `127.0.0.1:8765`.
 - Qwen3 uses `--jinja`, and translation requests include `/no_think` in the system prompt.
+- Screen capture excludes Contextura’s own app windows to avoid self-capture loops.
+- If capture stalls after display sleep/wake or a permission reset, the runtime rebuilds the capture stream.
+
+## CLI
+
+Run one real OCR/translation pass against a PNG:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- \
+  --debug-cli \
+  --input test-corpus/test_1.png \
+  --pretty
+```
+
+Run the bundled corpus checks with the active local model:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- \
+  --debug-cli \
+  --test-suite test-corpus
+```
 
 ## Optional Crash Reporting
 
@@ -125,6 +148,7 @@ src/
 
 src-tauri/src/
   lib.rs
+  models.rs
   capture.rs
   motion.rs
   ocr.rs

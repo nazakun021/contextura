@@ -1,5 +1,6 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
 use screencapturekit::prelude::*;
+use screencapturekit::shareable_content::SCShareableContentOptions;
 
 /// A copied pixel buffer from `ScreenCaptureKit`.
 #[derive(Clone)]
@@ -15,9 +16,6 @@ pub struct CaptureFrame {
     pub display_id: u32,
     pub scale_factor: f32,
 }
-
-
-
 struct OutputHandler {
     tx: Sender<CaptureFrame>,
     display_id: u32,
@@ -33,10 +31,10 @@ impl SCStreamOutputTrait for OutputHandler {
             let width = guard.width();
             let height = guard.height();
             let bytes_per_row = guard.bytes_per_row();
-            
+
             let mut data = Vec::with_capacity(width * height * 4);
             let slice = guard.as_slice();
-            
+
             if bytes_per_row == width * 4 {
                 data = slice.to_vec();
             } else {
@@ -72,19 +70,48 @@ impl DisplayManager {
         Self { stream: None }
     }
 
-    pub fn start_capture(&mut self, display_id: u32) -> Receiver<CaptureFrame> {
+    pub fn start_capture(
+        &mut self,
+        display_id: u32,
+        excluded_bundle_ids: &[&str],
+    ) -> Receiver<CaptureFrame> {
         let (tx, rx) = bounded::<CaptureFrame>(2);
 
-        let content = SCShareableContent::get().expect("Failed to get shareable content");
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.stop_capture();
+        }
+
+        let content = SCShareableContentOptions::default()
+            .with_exclude_desktop_windows(true)
+            .with_on_screen_windows_only(true)
+            .get()
+            .expect("Failed to get shareable content");
 
         let display = content
             .displays()
             .into_iter()
-            .find(|d| d.display_id() == display_id)
+            .find(|d: &SCDisplay| d.display_id() == display_id)
             .or_else(|| content.displays().into_iter().next())
             .expect("No displays found");
 
-        let filter = SCContentFilter::create().with_display(&display).build();
+        let excluded_apps = content
+            .applications()
+            .into_iter()
+            .filter(|app: &SCRunningApplication| {
+                excluded_bundle_ids
+                    .iter()
+                    .any(|bundle_id| app.bundle_identifier() == *bundle_id)
+            })
+            .collect::<Vec<_>>();
+        let excluded_app_refs = excluded_apps.iter().collect::<Vec<_>>();
+        let filter_builder = SCContentFilter::create().with_display(&display);
+        let filter = if excluded_app_refs.is_empty() {
+            filter_builder.build()
+        } else {
+            filter_builder
+                .with_excluding_applications(&excluded_app_refs, &[])
+                .build()
+        };
         let display_frame = display.frame();
         let scale_factor = if display_frame.width > 0.0 {
             #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
@@ -114,10 +141,11 @@ impl DisplayManager {
         };
         stream.add_output_handler(handler, SCStreamOutputType::Screen);
         log::info!(
-            "[Capture] Starting stream for display {} at scale factor {:.2} ({:?})",
+            "[Capture] Starting stream for display {} at scale factor {:.2} ({:?}); excluded apps: {:?}",
             actual_display_id,
             scale_factor,
-            PixelFormat::BGRA
+            PixelFormat::BGRA,
+            excluded_bundle_ids
         );
         stream.start_capture().expect("Failed to start capture");
         log::info!("[Capture] Stream started successfully");

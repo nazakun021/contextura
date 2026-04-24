@@ -86,7 +86,7 @@ impl TranslationClient {
                 "--host",
                 "127.0.0.1",
                 // "--log-disable", // quiet; Rust handles logging
-                "--jinja",       // required for Qwen3 chat template (Jinja2 format)
+                "--jinja", // required for Qwen3 chat template (Jinja2 format)
             ])
             .spawn()?;
 

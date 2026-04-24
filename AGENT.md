@@ -15,18 +15,20 @@ Read this file before changing code or project docs.
 - `Cmd+Shift+T` toggles the overlay.
 - `Cmd+Shift+R` forces an OCR/translation pass by bypassing debounce.
 - `Cmd+Shift+M` clears translation memory.
+- `Cmd+Shift+G` cycles to the next installed local GGUF model and restarts the runtime.
 - The watchdog restarts `llama-server` after repeated health-check failures.
 - Capture now requests BGRA explicitly and uses the display’s real scale factor.
+- Capture excludes the app’s own windows and restarts after prolonged frame stalls.
 - Battery detection uses `pmset -g batt`.
 - Sentry is optional and enabled only when `CONTEXTURA_SENTRY_DSN` is set.
+- Wizard screens 1–4 now exist in `src/wizard.html`.
+- `--debug-cli --input <png>` and `--test-suite <dir>` run the real OCR/translation path.
 
 ## Still Open
 
 - End-to-end manual smoke verification is still required after major pipeline changes.
-- `Cmd+Shift+G` remains a stub until model tier switching exists.
-- Wizard screen 1 exists; screens 2–4 are not implemented.
 - `downloader.rs`, richer CLI flows, curated `test-corpus/`, updater signing, and multi-display support are still future work.
-- Overlay exclusion from capture (`excludedWindows`) is still pending.
+- Quality-tier policy, RAM gating, and updater signing with a real production pubkey are still pending.
 
 ## Source of Truth
 

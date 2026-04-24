@@ -1,5 +1,6 @@
 mod cli;
 mod downloader;
+mod models;
 mod settings;
 
 mod capture;
@@ -17,24 +18,57 @@ mod tray;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::sleep;
 
 use clap::Parser;
 use cli::CliArgs;
+use crossbeam_channel::Sender;
 use image::{ImageBuffer, RgbaImage};
 use rayon::prelude::*;
 use tauri::Emitter;
 
 use crate::ipc::{
-    TranslationBox,
-    TranslationErrorPayload,
-    TranslationPayload,
-    TranslationStartedPayload,
+    TranslationBox, TranslationErrorPayload, TranslationPayload, TranslationStartedPayload,
+    WizardStatusPayload,
 };
+use crate::models::ModelManifest;
 use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::styling::StylingEngine;
+
+#[derive(Debug, Clone)]
+pub enum PipelineCommand {
+    ForceScan,
+    ReloadRuntime { reason: String },
+}
+
+fn resolve_binary_path(binary_name: &str) -> anyhow::Result<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        candidates.push(exe_dir.join(binary_name));
+        candidates.push(exe_dir.join(format!("{binary_name}-aarch64-apple-darwin")));
+        candidates.push(exe_dir.join("binaries").join(binary_name));
+        candidates.push(
+            exe_dir
+                .join("binaries")
+                .join(format!("{binary_name}-aarch64-apple-darwin")),
+        );
+    }
+
+    candidates.push(PathBuf::from(format!("src-tauri/binaries/{binary_name}")));
+    candidates.push(PathBuf::from(format!(
+        "src-tauri/binaries/{binary_name}-aarch64-apple-darwin"
+    )));
+
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| anyhow::anyhow!("Could not locate {binary_name} binary"))
+}
 
 fn resolve_vision_helper_path(app: &tauri::App) -> anyhow::Result<PathBuf> {
     use tauri::Manager;
@@ -43,27 +77,28 @@ fn resolve_vision_helper_path(app: &tauri::App) -> anyhow::Result<PathBuf> {
 
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(resource_dir.join("binaries").join("vision-helper"));
-        candidates.push(resource_dir.join("binaries").join("vision-helper-aarch64-apple-darwin"));
+        candidates.push(
+            resource_dir
+                .join("binaries")
+                .join("vision-helper-aarch64-apple-darwin"),
+        );
         candidates.push(resource_dir.join("vision-helper"));
         candidates.push(resource_dir.join("vision-helper-aarch64-apple-darwin"));
     }
 
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        candidates.push(exe_dir.join("vision-helper"));
-        candidates.push(exe_dir.join("vision-helper-aarch64-apple-darwin"));
-        candidates.push(exe_dir.join("binaries").join("vision-helper"));
-        candidates.push(exe_dir.join("binaries").join("vision-helper-aarch64-apple-darwin"));
-    }
-
-    candidates.push(PathBuf::from("src-tauri/binaries/vision-helper"));
-    candidates.push(PathBuf::from("src-tauri/binaries/vision-helper-aarch64-apple-darwin"));
+    candidates.extend([
+        resolve_binary_path("vision-helper")?,
+        PathBuf::from("src-tauri/binaries/vision-helper-aarch64-apple-darwin"),
+    ]);
 
     candidates
         .into_iter()
         .find(|path| path.exists())
         .ok_or_else(|| anyhow::anyhow!("Could not locate vision-helper binary"))
+}
+
+fn resolve_llama_server_path() -> anyhow::Result<PathBuf> {
+    resolve_binary_path("llama-server")
 }
 
 /// Encodes a BGRA `CaptureFrame` pixel buffer to a temporary PNG file.
@@ -93,6 +128,90 @@ fn save_frame_as_png(frame: &capture::CaptureFrame, frame_id: u64) -> anyhow::Re
     Ok(path)
 }
 
+pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>(
+    app: &tauri::AppHandle,
+    title: S1,
+    message: S2,
+    detail: S3,
+    level: &str,
+    dismiss_ms: u64,
+) {
+    let message = message.into();
+    let _ = app.emit(
+        "translation-error",
+        TranslationErrorPayload {
+            title: title.into(),
+            detail: detail.into(),
+            level: level.to_string(),
+            dismiss_ms,
+            message,
+        },
+    );
+}
+
+fn open_models_folder() -> Result<(), String> {
+    let app_dir = settings::Settings::dir().map_err(|e| e.to_string())?;
+    let models_dir = models::models_dir(&app_dir);
+    std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("open")
+        .arg(&models_dir)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn open_screen_recording_settings_impl() -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn load_wizard_status() -> Result<WizardStatusPayload, String> {
+    let app_dir = settings::Settings::dir().map_err(|e| e.to_string())?;
+    let settings = settings::Settings::load(&app_dir).map_err(|e| e.to_string())?;
+    let manifest = ModelManifest::load(&app_dir, &settings).map_err(|e| e.to_string())?;
+    let active = manifest.active_status(&app_dir);
+
+    Ok(WizardStatusPayload {
+        has_model: active.as_ref().is_some_and(|status| status.installed),
+        active_model_label: active.as_ref().map_or_else(
+            || "No model detected".to_string(),
+            |status| status.entry.display_label().to_string(),
+        ),
+        active_model_tier: active
+            .as_ref()
+            .map_or_else(String::new, |status| status.entry.tier.clone()),
+        models_dir: models::models_dir(&app_dir).display().to_string(),
+    })
+}
+
+pub fn request_model_switch(
+    app: &tauri::AppHandle,
+    pipeline_tx: &Sender<PipelineCommand>,
+) -> anyhow::Result<()> {
+    let app_dir = settings::Settings::dir()?;
+    let mut settings = settings::Settings::load(&app_dir)?;
+    let switch = models::cycle_active_model(&app_dir, &mut settings)?;
+    emit_runtime_notice(
+        app,
+        "Model Switched",
+        format!("Now using {}", switch.current.entry.display_label()),
+        format!(
+            "{} -> {}",
+            switch.previous.entry.display_label(),
+            switch.current.entry.display_label()
+        ),
+        "info",
+        5000,
+    );
+    let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
+        reason: format!("Switched to {}", switch.current.entry.display_label()),
+    });
+    Ok(())
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn complete_wizard(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
@@ -110,6 +229,21 @@ fn complete_wizard(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resul
     Ok(())
 }
 
+#[tauri::command]
+fn wizard_status() -> Result<WizardStatusPayload, String> {
+    load_wizard_status()
+}
+
+#[tauri::command]
+fn open_models_folder_command() -> Result<(), String> {
+    open_models_folder()
+}
+
+#[tauri::command]
+fn open_screen_recording_settings() -> Result<(), String> {
+    open_screen_recording_settings_impl()
+}
+
 #[allow(
     clippy::too_many_lines,
     clippy::cast_precision_loss,
@@ -118,24 +252,28 @@ fn complete_wizard(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resul
 pub fn run() {
     // Initialize logging so log::info!/error! actually emit output.
     env_logger::init();
-    let _sentry = std::env::var("CONTEXTURA_SENTRY_DSN")
-        .ok()
-        .map(|dsn| {
-            log::info!("[Sentry] Crash reporting enabled via CONTEXTURA_SENTRY_DSN");
-            sentry::init(dsn)
-        });
+    let _sentry = std::env::var("CONTEXTURA_SENTRY_DSN").ok().map(|dsn| {
+        log::info!("[Sentry] Crash reporting enabled via CONTEXTURA_SENTRY_DSN");
+        sentry::init(dsn)
+    });
 
     let args = CliArgs::parse();
 
     if args.is_cli_mode() {
-        run_cli(args);
+        run_cli(&args);
         return;
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![complete_wizard])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            complete_wizard,
+            wizard_status,
+            open_models_folder_command,
+            open_screen_recording_settings
+        ])
         .setup(|app| {
             use tauri::Manager;
 
@@ -143,6 +281,7 @@ pub fn run() {
             let settings = settings::Settings::load(&app_dir).expect("Failed to load settings at startup");
             let vision_helper_path =
                 resolve_vision_helper_path(app).expect("Failed to resolve vision-helper path");
+            let app_bundle_id = app.config().identifier.clone();
 
             // --- Subsystem Initialization ---
             let (window_tracker, invalidation_rx) = context::AppWindowTracker::new();
@@ -152,11 +291,10 @@ pub fn run() {
                 vision_helper_path,
             ));
             let mut display_manager = capture::DisplayManager::new();
-
-            let (force_trigger_tx, force_trigger_rx) = crossbeam_channel::bounded(1);
+            let (pipeline_tx, pipeline_rx) = crossbeam_channel::bounded(16);
 
             // Register Hotkeys
-            hotkeys::register_shortcuts(app, window_tracker.clone(), force_trigger_tx.clone())
+            hotkeys::register_shortcuts(app, window_tracker.clone(), pipeline_tx.clone())
                 .expect("Failed to register shortcuts");
 
             // Make the overlay window background truly transparent on macOS and enable click-through.
@@ -201,7 +339,8 @@ pub fn run() {
             }
 
             // Initialize Tray
-            tray::setup_tray(app, force_trigger_tx, window_tracker.clone()).expect("Failed to setup tray");
+            tray::setup_tray(app, pipeline_tx, window_tracker.clone())
+                .expect("Failed to setup tray");
 
             // --- Panic Hook (Cleanup Temp Files) ---
             let default_hook = std::panic::take_hook();
@@ -215,16 +354,18 @@ pub fn run() {
 
             // --- Pipeline Orchestration ---
             let app_handle = app.handle().clone();
-            let settings_sidecar = settings;
+            let app_bundle_id_sidecar = app_bundle_id;
+            let initial_memory_size = settings.context_memory_size;
 
             thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
+                let rt = tokio::runtime::Runtime::new().expect("Tokio runtime should initialize");
                 let client = Arc::new(AsyncMutex::new(translation::TranslationClient::new(
-                    settings_sidecar.context_memory_size,
+                    initial_memory_size,
                     8765,
                 )));
                 let client_clone = Arc::clone(&client);
                 let app_handle_sidecar = app_handle.clone();
+                let active_model_path = Arc::new(AsyncMutex::new(PathBuf::new()));
 
                 // Start Window Tracker on its own thread
                 let mut window_tracker_task = window_tracker;
@@ -232,66 +373,150 @@ pub fn run() {
                     window_tracker_task.start_polling();
                 });
 
-                rt.block_on(async {
-                    let mut failure_count = 0u32;
-                    let mut sidecar_started = false;
+                rt.block_on(async move {
+                    let watchdog_client = Arc::clone(&client);
+                    let watchdog_app_handle = app_handle_sidecar.clone();
+                    let watchdog_model_path = Arc::clone(&active_model_path);
+                    tokio::spawn(async move {
+                        let mut consecutive_failures = 0u8;
+                        loop {
+                            sleep(Duration::from_secs(5)).await;
+                            let model_path = watchdog_model_path.lock().await.clone();
+                            if model_path.as_os_str().is_empty() {
+                                continue;
+                            }
 
-                    // ----- Outer loop: wait for model file, start sidecar, then run pipeline -----
-                    loop {
-                        let app_dir = settings::Settings::dir().expect("Failed to get app directory");
-                        // Derive the model path: settings.active_model -> "<id>.gguf" in models dir.
-                        // The manifest.json filename may differ; the sidecar path is the canonical one.
-                        let manifest_path = app_dir.join("models").join("manifest.json");
-                        let model_path = if manifest_path.exists() {
-                            // Read the active model filename from manifest
-                            if let Ok(data) = std::fs::read_to_string(&manifest_path) {
-                                if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&data) {
-                                    manifest["models"]
-                                        .as_array()
-                                        .and_then(|arr| arr.iter().find(|m| m["active"] == true))
-                                        .and_then(|m| m["filename"].as_str())
-                                        .map_or_else(|| app_dir.join("models").join(format!("{}.gguf", settings_sidecar.active_model)), |f| app_dir.join("models").join(f))
-                                } else {
-                                    app_dir.join("models").join(format!("{}.gguf", settings_sidecar.active_model))
+                            let mut guard = watchdog_client.lock().await;
+                            if guard.wait_for_ready().await.is_err() {
+                                consecutive_failures += 1;
+                                log::warn!(
+                                    "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
+                                );
+                                if consecutive_failures >= 3 {
+                                    emit_runtime_notice(
+                                        &watchdog_app_handle,
+                                        "Translation Engine Restarted",
+                                        "The local translation engine became unresponsive and was restarted.",
+                                        model_path.display().to_string(),
+                                        "warning",
+                                        5000,
+                                    );
+                                    let _ = guard.start_sidecar(&watchdog_app_handle, &model_path);
+                                    consecutive_failures = 0;
                                 }
                             } else {
-                                app_dir.join("models").join(format!("{}.gguf", settings_sidecar.active_model))
+                                consecutive_failures = 0;
                             }
-                        } else {
-                            app_dir.join("models").join(format!("{}.gguf", settings_sidecar.active_model))
+                        }
+                    });
+
+                    let mut failure_count = 0u32;
+                    let mut sidecar_started = false;
+                    let mut warned_missing_model = false;
+                    let mut active_model_id = String::new();
+                    let mut frame_id: u64 = 0;
+
+                    loop {
+                        let app_dir = settings::Settings::dir().expect("Failed to get app directory");
+                        let runtime_settings =
+                            settings::Settings::load(&app_dir).expect("Failed to load settings");
+                        let active_model = match models::active_model_status(&app_dir, &runtime_settings)
+                        {
+                            Ok(model) => model,
+                            Err(error) => {
+                                if !warned_missing_model {
+                                    emit_runtime_notice(
+                                        &app_handle_sidecar,
+                                        "No Model Available",
+                                        "Add a GGUF model to the Contextura models folder to enable translation.",
+                                        error.to_string(),
+                                        "warning",
+                                        6000,
+                                    );
+                                    warned_missing_model = true;
+                                }
+                                sleep(Duration::from_secs(5)).await;
+                                thermal_monitor.update();
+                                continue;
+                            }
                         };
 
-                        log::info!("[Pipeline] Resolved model path: {}", model_path.display());
+                        *active_model_path.lock().await = active_model.path.clone();
 
-                        if !model_path.exists() {
-                            log::warn!("[Pipeline] Model not found at {} — waiting for download", model_path.display());
+                        if !active_model.installed {
+                            if !warned_missing_model {
+                                emit_runtime_notice(
+                                    &app_handle_sidecar,
+                                    "Model Missing",
+                                    format!(
+                                        "The active model {} is not installed.",
+                                        active_model.entry.display_label()
+                                    ),
+                                    active_model.path.display().to_string(),
+                                    "warning",
+                                    6000,
+                                );
+                                warned_missing_model = true;
+                            }
                             sleep(Duration::from_secs(5)).await;
                             thermal_monitor.update();
                             continue;
                         }
+                        warned_missing_model = false;
+
+                        if active_model_id != active_model.entry.id {
+                            sidecar_started = false;
+                            active_model_id = active_model.entry.id.clone();
+                        }
 
                         if !sidecar_started {
-                            match client_clone.lock().await.start_sidecar(&app_handle_sidecar, &model_path) {
+                            match client_clone
+                                .lock()
+                                .await
+                                .start_sidecar(&app_handle_sidecar, &active_model.path)
+                            {
                                 Ok(()) => {
-                                    log::info!("[Pipeline] Sidecar started with model {}", model_path.display());
+                                    log::info!(
+                                        "[Pipeline] Sidecar started with model {}",
+                                        active_model.path.display()
+                                    );
                                     sidecar_started = true;
                                 }
-                                Err(e) => {
-                                    log::error!("[Pipeline] Failed to start sidecar: {e}");
+                                Err(error) => {
+                                    log::error!("[Pipeline] Failed to start sidecar: {error}");
+                                    emit_runtime_notice(
+                                        &app_handle_sidecar,
+                                        "Translation Engine Failed",
+                                        "Contextura could not start the local translation sidecar.",
+                                        error.to_string(),
+                                        "error",
+                                        6000,
+                                    );
                                     sleep(Duration::from_secs(5)).await;
                                     continue;
                                 }
                             }
                         }
 
-                        // Wait for /health OK
                         match client_clone.lock().await.wait_for_ready().await {
-                            Ok(()) => log::info!("[Pipeline] Translation sidecar is ready"),
-                            Err(e) => {
+                            Ok(()) => {
+                                failure_count = 0;
+                                log::info!("[Pipeline] Translation sidecar is ready");
+                            }
+                            Err(error) => {
                                 failure_count += 1;
-                                log::error!("[Pipeline] Sidecar not ready (attempt {failure_count}): {e}");
+                                log::error!(
+                                    "[Pipeline] Sidecar not ready (attempt {failure_count}): {error}"
+                                );
                                 if failure_count > 30 {
-                                    log::error!("[Pipeline] Sidecar failed to become ready — stopping");
+                                    emit_runtime_notice(
+                                        &app_handle_sidecar,
+                                        "Translation Engine Unavailable",
+                                        "The sidecar never became ready. Restart the app after verifying the model file.",
+                                        error.to_string(),
+                                        "error",
+                                        8000,
+                                    );
                                     break;
                                 }
                                 sleep(Duration::from_secs(1)).await;
@@ -299,73 +524,60 @@ pub fn run() {
                             }
                         }
 
-                        // --- Watchdog Thread ---
-                        let watchdog_client = Arc::clone(&client);
-                        let watchdog_app_handle = app_handle_sidecar.clone();
-                        let watchdog_model_path = model_path.clone();
-                        tokio::spawn(async move {
-                            let mut consecutive_failures = 0u8;
-                            loop {
-                                sleep(Duration::from_secs(5)).await;
-                                let mut guard = watchdog_client.lock().await;
-                                if guard.wait_for_ready().await.is_err() {
-                                    consecutive_failures += 1;
-                                    log::warn!(
-                                        "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
-                                    );
-
-                                    if consecutive_failures >= 3 {
-                                        log::warn!("[Watchdog] Sidecar unresponsive, restarting...");
-                                        let _ = watchdog_app_handle.emit(
-                                            "translation-error",
-                                            TranslationErrorPayload {
-                                                message: "Translation engine restarted after repeated health-check failures.".to_string(),
-                                            },
-                                        );
-                                        let _ = guard.start_sidecar(&watchdog_app_handle, &watchdog_model_path);
-                                        consecutive_failures = 0;
-                                    }
-                                } else {
-                                    consecutive_failures = 0;
-                                }
-                            }
-                        });
-
-                        // ----- Inner loop: capture frames, gate on motion, run pipeline -----
                         let ocr_engine_loop = Arc::clone(&ocr_engine);
-                        let frame_rx = display_manager.start_capture(0);
-
+                        let frame_rx =
+                            display_manager.start_capture(0, &[app_bundle_id_sidecar.as_str()]);
                         let mut motion_detector = MotionDetector::new(
-                            settings_sidecar.pixel_diff_threshold,
-                            settings_sidecar.edge_inset_percent,
+                            runtime_settings.pixel_diff_threshold,
+                            runtime_settings.edge_inset_percent,
                         );
                         let mut debounce = DebounceStateMachine::new(
-                            settings_sidecar.debounce_ms,
-                            settings_sidecar.motion_threshold,
+                            runtime_settings.debounce_ms,
+                            runtime_settings.motion_threshold,
                         );
-                        let mut frame_id: u64 = 0;
+                        let mut pending_force_scan = false;
+                        let mut last_frame_at = Instant::now();
 
                         log::info!("[Pipeline] Entering capture loop");
 
-                        loop {
-                            // Yield so the async runtime can service other tasks (e.g. health checks)
+                        'capture: loop {
                             sleep(Duration::from_millis(10)).await;
 
+                            while let Ok(command) = pipeline_rx.try_recv() {
+                                match command {
+                                    PipelineCommand::ForceScan => pending_force_scan = true,
+                                    PipelineCommand::ReloadRuntime { reason } => {
+                                        log::info!("[Pipeline] Reload requested: {reason}");
+                                        sidecar_started = false;
+                                        break 'capture;
+                                    }
+                                }
+                            }
+
                             let Ok(frame) = frame_rx.try_recv() else {
+                                if last_frame_at.elapsed() > Duration::from_secs(10) {
+                                    emit_runtime_notice(
+                                        &app_handle_sidecar,
+                                        "Capture Restarting",
+                                        "Screen capture stalled, so Contextura is restarting the capture stream.",
+                                        "This usually happens after display sleep, wake, or a capture permission reset."
+                                            .to_string(),
+                                        "warning",
+                                        5000,
+                                    );
+                                    break 'capture;
+                                }
                                 continue;
                             };
+                            last_frame_at = Instant::now();
 
-                            // Check for force trigger (Cmd+Shift+R or Tray action)
-                            let is_forced = force_trigger_rx.try_recv().is_ok();
-
-                            // Downsample to 160×90 grayscale for motion detection
+                            let is_forced = std::mem::take(&mut pending_force_scan);
                             let thumbnail = motion_detector.downsample(
                                 &frame.buffer.data,
                                 frame.buffer.width,
                                 frame.buffer.height,
                             );
                             let motion_ratio = motion_detector.process_thumbnail(&thumbnail);
-
                             let debounce_event = if is_forced {
                                 DebounceEvent::Triggered
                             } else {
@@ -374,65 +586,63 @@ pub fn run() {
 
                             match debounce_event {
                                 DebounceEvent::MotionDetected => {
-                                    // Screen is actively changing — clear the overlay so stale
-                                    // translations don't obscure what the user is reading.
-                                    let _ = app_handle.emit("translation-clear", ());
+                                    let _ = app_handle_sidecar.emit("translation-clear", ());
                                 }
-
                                 DebounceEvent::Triggered => {
                                     let current_frame_id = frame_id;
                                     frame_id += 1;
 
-                                    // 1. Drain invalidation channel before processing this frame.
                                     while let Ok(reason) = invalidation_rx.try_recv() {
                                         log::info!("[Context] Invalidation: {reason:?}");
                                         match reason {
                                             context::InvalidationReason::AppSwitch { from, to } => {
-                                                log::info!("[Context] App switch: {from} → {to} — clearing memory");
+                                                log::info!(
+                                                    "[Context] App switch: {from} -> {to} — clearing memory"
+                                                );
                                                 client_clone.lock().await.memory.clear();
-                                                let _ = app_handle.emit("translation-clear", ());
+                                                let _ = app_handle_sidecar.emit("translation-clear", ());
                                             }
                                             context::InvalidationReason::ManualReset => {
-                                                // User explicitly cleared — don't touch the visible overlay,
-                                                // they may still be reading it.
                                                 client_clone.lock().await.memory.clear();
                                             }
                                         }
-
                                     }
 
-                                    // 2. Save frame buffer as PNG for vision-helper subprocess.
                                     let png_path = match save_frame_as_png(&frame, current_frame_id) {
-                                        Ok(p) => p,
-                                        Err(e) => {
-                                            log::error!("[OCR] PNG save failed: {e}");
+                                        Ok(path) => path,
+                                        Err(error) => {
+                                            log::error!("[OCR] PNG save failed: {error}");
                                             continue;
                                         }
                                     };
 
-                                    // 3. Emit "translation-started" so the overlay can show a spinner.
-                                    let _ = app_handle.emit(
+                                    let _ = app_handle_sidecar.emit(
                                         "translation-started",
                                         TranslationStartedPayload {
                                             display_id: frame.display_id,
                                         },
                                     );
 
-                                    // 4. Run OCR (synchronous subprocess call).
                                     let ocr_results = ocr_engine_loop.recognize(
                                         &png_path,
                                         frame.buffer.width as f32,
                                         frame.buffer.height as f32,
                                         frame.scale_factor,
                                     );
-
-                                    // Always clean up the temp PNG regardless of OCR outcome.
                                     let _ = std::fs::remove_file(&png_path);
 
                                     let ocr_results = match ocr_results {
-                                        Ok(r) => r,
-                                        Err(e) => {
-                                            log::error!("[OCR] Recognition failed: {e}");
+                                        Ok(results) => results,
+                                        Err(error) => {
+                                            log::error!("[OCR] Recognition failed: {error}");
+                                            emit_runtime_notice(
+                                                &app_handle_sidecar,
+                                                "OCR Failed",
+                                                "The Vision helper could not read the current frame.",
+                                                error.to_string(),
+                                                "warning",
+                                                4000,
+                                            );
                                             continue;
                                         }
                                     };
@@ -442,14 +652,10 @@ pub fn run() {
                                         continue;
                                     }
 
-                                    log::info!(
-                                        "[OCR] Found {} text boxes in frame {current_frame_id}",
-                                        ocr_results.len()
-                                    );
-
-                                    // 5. Translate (async HTTP to llama-server).
-                                    let texts: Vec<String> =
-                                        ocr_results.iter().map(|r| r.text.clone()).collect();
+                                    let texts = ocr_results
+                                        .iter()
+                                        .map(|result| result.text.clone())
+                                        .collect::<Vec<_>>();
 
                                     let translations = {
                                         let mut guard = client_clone.lock().await;
@@ -457,26 +663,30 @@ pub fn run() {
                                     };
 
                                     let translations = match translations {
-                                        Ok(t) => t,
-                                        Err(e) => {
-                                            log::error!("[Translation] Batch failed: {e}");
+                                        Ok(translations) => translations,
+                                        Err(error) => {
+                                            log::error!("[Translation] Batch failed: {error}");
+                                            emit_runtime_notice(
+                                                &app_handle_sidecar,
+                                                "Translation Failed",
+                                                "The local model did not return a valid translation batch.",
+                                                error.to_string(),
+                                                "warning",
+                                                5000,
+                                            );
                                             continue;
                                         }
                                     };
 
-                                    log::info!("[Translation] Translated {} boxes", translations.len());
-
-                                    // 6. Apply WCAG 2.1 dynamic styling in parallel (Rayon).
                                     let raw_data = &frame.buffer.data;
                                     let buf_width = frame.buffer.width;
                                     let buf_height = frame.buffer.height;
                                     let scale = frame.scale_factor;
-
-                                    let styled_boxes: Vec<TranslationBox> = ocr_results
+                                    let styled_boxes = ocr_results
                                         .par_iter()
                                         .zip(translations.par_iter())
                                         .enumerate()
-                                        .map(|(i, (ocr, translation))| {
+                                        .map(|(index, (ocr, translation))| {
                                             let bg = StylingEngine::sample_rect_ring(
                                                 raw_data,
                                                 buf_width,
@@ -487,9 +697,10 @@ pub fn run() {
                                                 ocr.bounding_box.height,
                                                 scale,
                                             );
-                                            let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
+                                            let fg_color =
+                                                StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
                                             TranslationBox {
-                                                id: format!("{current_frame_id}-{i}"),
+                                                id: format!("{current_frame_id}-{index}"),
                                                 translated: translation.clone(),
                                                 original: ocr.text.clone(),
                                                 x: ocr.bounding_box.x,
@@ -502,9 +713,8 @@ pub fn run() {
                                                 confidence: ocr.confidence,
                                             }
                                         })
-                                        .collect();
+                                        .collect::<Vec<_>>();
 
-                                    // 7. Build payload and emit to frontend.
                                     let payload = TranslationPayload {
                                         boxes: styled_boxes,
                                         scale_factor: scale,
@@ -512,19 +722,19 @@ pub fn run() {
                                         frame_id: current_frame_id,
                                     };
 
-                                    if let Err(e) = app_handle.emit("translation-update", &payload) {
-                                        log::error!("[IPC] Failed to emit translation-update: {e}");
+                                    if let Err(error) =
+                                        app_handle_sidecar.emit("translation-update", &payload)
+                                    {
+                                        log::error!(
+                                            "[IPC] Failed to emit translation-update: {error}"
+                                        );
                                     }
                                 }
-
-                                DebounceEvent::None => {
-                                    // Screen is settling or idle — nothing to do this frame.
-                                }
+                                DebounceEvent::None => {}
                             }
 
                             thermal_monitor.update();
                             if thermal_monitor.should_throttle() {
-                                // Thermal pressure detected — back off frame processing
                                 sleep(Duration::from_millis(500)).await;
                             }
                         }
@@ -538,59 +748,241 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn run_cli(args: CliArgs) {
+#[derive(serde::Serialize)]
+struct CliDebugOutput {
+    input: String,
+    ocr: Vec<String>,
+    translations: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct CorpusExpectation {
+    #[serde(default)]
+    ocr_must_contain: Vec<String>,
+    #[serde(default)]
+    translation_must_contain: Vec<String>,
+}
+
+fn resolve_active_model_for_cli() -> anyhow::Result<(settings::Settings, models::ModelStatus)> {
+    let app_dir = settings::Settings::dir()?;
+    let settings = settings::Settings::load(&app_dir)?;
+    let model = models::active_model_status(&app_dir, &settings)?;
+    Ok((settings, model))
+}
+
+fn spawn_cli_sidecar(
+    model_path: &std::path::Path,
+    port: u16,
+) -> anyhow::Result<std::process::Child> {
+    use std::process::{Command, Stdio};
+
+    let child = Command::new(resolve_llama_server_path()?)
+        .arg("--model")
+        .arg(model_path)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--n-gpu-layers")
+        .arg("99")
+        .arg("--ctx-size")
+        .arg("1024")
+        .arg("--host")
+        .arg("127.0.0.1")
+        .arg("--jinja")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(child)
+}
+
+async fn run_debug_cli_once(args: &CliArgs, input: &std::path::Path) -> anyhow::Result<()> {
+    let (settings, active_model) = resolve_active_model_for_cli()?;
+    if !active_model.installed {
+        anyhow::bail!(
+            "Active model {} is missing at {}",
+            active_model.entry.display_label(),
+            active_model.path.display()
+        );
+    }
+
+    let mut sidecar = spawn_cli_sidecar(&active_model.path, 8765)?;
+    let vision_helper_path = resolve_binary_path("vision-helper")?;
+    let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
+    let mut translation_client =
+        translation::TranslationClient::new(settings.context_memory_size, 8765);
+    translation_client.wait_for_ready().await?;
+
+    let (width, height) = image::image_dimensions(input)?;
+    #[allow(clippy::cast_precision_loss)]
+    let ocr_results = ocr_engine.recognize(input, width as f32, height as f32, 1.0)?;
+    let texts = ocr_results
+        .iter()
+        .map(|result| result.text.clone())
+        .collect::<Vec<_>>();
+    let translations = translation_client.translate_batch(&texts).await?;
+    let output = CliDebugOutput {
+        input: input.display().to_string(),
+        ocr: texts,
+        translations,
+    };
+    let json = if args.pretty {
+        serde_json::to_string_pretty(&output)?
+    } else {
+        serde_json::to_string(&output)?
+    };
+    println!("{json}");
+    let _ = sidecar.kill();
+    let _ = sidecar.wait();
+    Ok(())
+}
+
+async fn run_test_suite(dir: &std::path::Path) -> anyhow::Result<()> {
+    let mut entries = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("png"))
+        .collect::<Vec<_>>();
+    entries.sort();
+
+    if entries.is_empty() {
+        anyhow::bail!("No PNG files were found in {}", dir.display());
+    }
+
+    let (settings, active_model) = resolve_active_model_for_cli()?;
+    if !active_model.installed {
+        anyhow::bail!(
+            "Active model {} is missing at {}",
+            active_model.entry.display_label(),
+            active_model.path.display()
+        );
+    }
+
+    let mut sidecar = spawn_cli_sidecar(&active_model.path, 8765)?;
+    let vision_helper_path = resolve_binary_path("vision-helper")?;
+    let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
+    let mut translation_client =
+        translation::TranslationClient::new(settings.context_memory_size, 8765);
+    translation_client.wait_for_ready().await?;
+
+    let mut failed = false;
+    for png in entries {
+        let expected_path = png.with_extension("expected.json");
+        let expected =
+            serde_json::from_str::<CorpusExpectation>(&std::fs::read_to_string(&expected_path)?)?;
+        let (width, height) = image::image_dimensions(&png)?;
+        #[allow(clippy::cast_precision_loss)]
+        let ocr_results = ocr_engine.recognize(&png, width as f32, height as f32, 1.0)?;
+        let ocr_text = ocr_results
+            .iter()
+            .map(|result| result.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let translations = translation_client
+            .translate_batch(
+                &ocr_results
+                    .iter()
+                    .map(|result| result.text.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        let translation_text = translations.join("\n");
+
+        let ocr_ok = expected
+            .ocr_must_contain
+            .iter()
+            .all(|fragment| ocr_text.contains(fragment));
+        let translation_ok = expected.translation_must_contain.iter().all(|fragment| {
+            translation_text
+                .to_ascii_lowercase()
+                .contains(&fragment.to_ascii_lowercase())
+        });
+        let passed = ocr_ok && translation_ok;
+        failed |= !passed;
+
+        println!(
+            "[{}] {}",
+            if passed { "PASS" } else { "FAIL" },
+            png.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("<unknown>")
+        );
+        if !passed {
+            println!("  OCR: {ocr_text}");
+            println!("  Translation: {translation_text}");
+        }
+    }
+
+    let _ = sidecar.kill();
+    let _ = sidecar.wait();
+
+    if failed {
+        anyhow::bail!("One or more corpus checks failed");
+    }
+
+    Ok(())
+}
+
+fn run_cli(args: &CliArgs) {
     if args.list_models {
-        match settings::Settings::dir() {
-            Ok(app_dir) => match settings::Settings::load(&app_dir) {
-                Ok(s) => {
-                    println!("Active Model: {}", s.active_model);
-                    println!("Manifest Path: {}/models/manifest.json", app_dir.display());
+        match resolve_active_model_for_cli() {
+            Ok((settings, active_model)) => {
+                let app_dir = settings::Settings::dir().expect("app dir should resolve");
+                let manifest =
+                    ModelManifest::load(&app_dir, &settings).expect("manifest should load");
+                println!("Models:");
+                for status in manifest.statuses(&app_dir) {
+                    println!(
+                        "  {}  {:<10}  {:<9}  {}",
+                        if status.entry.active { "*" } else { " " },
+                        status.entry.tier,
+                        if status.installed {
+                            "installed"
+                        } else {
+                            "missing"
+                        },
+                        status.entry.display_label()
+                    );
                 }
-                Err(e) => println!("Error loading settings: {e}"),
-            },
-            Err(e) => println!("Error getting app directory: {e}"),
+                println!("Active: {}", active_model.entry.display_label());
+            }
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            }
         }
         return;
     }
 
     if args.prune_models {
         println!("Scanning for unused models...");
-        println!("No unused models found.");
+        println!("No automated pruning policy is configured yet.");
         return;
     }
 
-    if let Some(dir) = args.test_suite {
-        println!("Running test suite in {}", dir.display());
-        let all_passed = true;
-        let entries = std::fs::read_dir(&dir).expect("Failed to read test corpus directory");
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("png") {
-                println!("Testing {}...", path.display());
-                println!(
-                    "  OK (Mocked result for {})",
-                    path.file_name().unwrap().to_str().unwrap()
-                );
+    let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime should initialize for CLI");
+
+    if let Some(dir) = args.test_suite.as_deref() {
+        match runtime.block_on(run_test_suite(dir)) {
+            Ok(()) => println!("All corpus checks passed."),
+            Err(error) => {
+                eprintln!("Test suite failed: {error}");
+                std::process::exit(1);
             }
         }
-
-        if all_passed {
-            println!("All tests passed.");
-            std::process::exit(0);
-        } else {
-            println!("Some tests failed.");
-            std::process::exit(1);
-        }
+        return;
     }
 
     if args.debug_cli {
-        println!("Running in headless debug mode");
-        if args.once {
-            println!("Triggering once then exiting");
-            return;
-        }
-        loop {
-            std::thread::park();
+        let Some(input) = args.input.as_deref() else {
+            eprintln!("debug-cli requires --input <PNG> for a real OCR/translation run");
+            std::process::exit(1);
+        };
+
+        match runtime.block_on(run_debug_cli_once(args, input)) {
+            Ok(()) => {}
+            Err(error) => {
+                eprintln!("debug-cli failed: {error}");
+                std::process::exit(1);
+            }
         }
     }
 }

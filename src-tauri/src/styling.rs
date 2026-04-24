@@ -39,7 +39,16 @@ impl StylingEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn sample_rect_ring(rgba_data: &[u8], width: usize, height: usize, rect_x: f32, rect_y: f32, rect_w: f32, rect_h: f32, scale_factor: f32) -> Rgba {
+    pub fn sample_rect_ring(
+        rgba_data: &[u8],
+        width: usize,
+        height: usize,
+        rect_x: f32,
+        rect_y: f32,
+        rect_w: f32,
+        rect_h: f32,
+        scale_factor: f32,
+    ) -> Rgba {
         // Convert logical rect to pixel coordinates
         let px = (rect_x * scale_factor) as i32;
         let py = (rect_y * scale_factor) as i32;
@@ -53,7 +62,7 @@ impl StylingEngine {
 
         // Sample 2px ring outside
         let ring_outer = 2;
-        
+
         for y in (py - ring_outer)..(py + ph + ring_outer) {
             for x in (px - ring_outer)..(px + pw + ring_outer) {
                 // Only sample if in the 2px ring

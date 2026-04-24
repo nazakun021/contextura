@@ -1,7 +1,7 @@
 # SPEC.md — Contextura
 
-**Version:** 1.6.0  
-**Last Updated:** 2026-04-23  
+**Version:** 1.7.0  
+**Last Updated:** 2026-04-25  
 **Target:** macOS 13+ on Apple Silicon
 
 ## Summary
@@ -37,8 +37,13 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Force OCR hotkey | ✅ | `Cmd+Shift+R` |
 | Manual memory reset | ✅ | `Cmd+Shift+M` |
 | Tray primary actions | ✅ | Toggle, translate now, clear context |
+| Model switching | ✅ | `Cmd+Shift+G` cycles to next installed local model |
 | Context invalidation | ✅ | App switch clears memory and overlay |
 | Watchdog | ✅ | Restarts sidecar after repeated health failures |
+| Overlay capture exclusion | ✅ | Capture excludes Contextura app windows |
+| Wizard screens 1–4 | ✅ | Setup flow covers permissions, model, controls, ready state |
+| Real CLI OCR/translation path | ✅ | `--debug-cli --input` and `--test-suite` run OCR + translation |
+| Capture restart handling | ✅ | Stalled capture stream triggers restart path |
 | Thermal + battery awareness | ✅ | Thermal API + `pmset -g batt` |
 | Optional Sentry | ✅ | Enabled only with `CONTEXTURA_SENTRY_DSN` |
 
@@ -47,10 +52,8 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Area | Status | Notes |
 | --- | --- | --- |
 | Manual end-to-end smoke verification | [-] | Not re-run in this workspace |
-| Overlay exclusion from capture | [ ] | Prevent self-capture loops |
-| Model tier switching | [ ] | `Cmd+Shift+G` still stubbed |
-| Wizard screens 2–4 | [ ] | Only initial permission screen exists |
-| Real CLI E2E/test corpus flow | [ ] | Current CLI remains limited |
+| Updater signing pubkey | [ ] | `tauri.conf.json` still has an empty updater pubkey |
+| Quality-tier policy + RAM gate | [ ] | Model switching exists, but no curated tier policy or memory gate |
 | Multi-display support | [ ] | Single-display focus only |
 
 ## Non-Negotiable Model Constraint
@@ -77,6 +80,8 @@ Unsupported in this architecture:
 - Format: `PixelFormat::BGRA`
 - Output: `CaptureFrame { data, width, height, display_id, scale_factor }`
 - Scale factor: derived from the display’s pixel width divided by its point-space frame width
+- Exclusion: Contextura’s own app windows are excluded from display capture
+- Recovery: a stalled capture stream causes the runtime to rebuild the stream automatically
 
 ### Motion Gate
 
@@ -113,13 +118,14 @@ Unsupported in this architecture:
 | `translation-started` | show loading state |
 | `translation-update` | render styled translation boxes |
 | `translation-clear` | clear stale overlay content |
-| `translation-error` | report watchdog restart or runtime errors |
+| `translation-error` | report watchdog restart or runtime errors with title/detail/level metadata |
 
 ## Module Responsibilities
 
 | File | Responsibility |
 | --- | --- |
 | `src-tauri/src/lib.rs` | orchestration, setup, main runtime loop |
+| `src-tauri/src/models.rs` | model manifest loading, active-model resolution, model switching |
 | `src-tauri/src/capture.rs` | ScreenCaptureKit capture and frame extraction |
 | `src-tauri/src/motion.rs` | motion detection and debounce |
 | `src-tauri/src/ocr.rs` | OCR subprocess and post-processing |

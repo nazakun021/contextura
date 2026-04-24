@@ -17,6 +17,10 @@ pub struct CliArgs {
     #[arg(long, requires = "debug_cli")]
     pub once: bool,
 
+    /// PNG input for debug-cli OCR/translation runs
+    #[arg(long, value_name = "PNG", requires = "debug_cli")]
+    pub input: Option<PathBuf>,
+
     /// Run E2E test suite against directory of PNGs + expected JSON
     #[arg(long, value_name = "DIR", requires = "debug_cli")]
     pub test_suite: Option<PathBuf>,

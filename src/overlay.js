@@ -5,6 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const container = document.getElementById('overlay-container');
   const spinner = document.getElementById('status-spinner');
   const errorBanner = document.getElementById('error-banner');
+  const errorTitle = document.getElementById('error-title');
+  const errorDetail = document.getElementById('error-detail');
   let errorTimeout = null;
   let spinnerTimeout = null;
 
@@ -57,17 +59,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   listen('translation-error', (event) => {
     const payload = event.payload;
-    if (payload && payload.message) {
-      errorBanner.textContent = payload.message;
-    } else {
-      errorBanner.textContent = 'Translation engine restarted.';
-    }
-    
+    const title = payload?.title || 'Contextura Notice';
+    const message = payload?.message || 'Translation engine restarted.';
+    const detail = payload?.detail || '';
+    const level = payload?.level || 'warning';
+    const dismissMs = payload?.dismiss_ms || 4000;
+
+    errorTitle.textContent = title;
+    errorDetail.textContent = detail ? `${message} ${detail}` : message;
+    errorBanner.dataset.level = level;
     errorBanner.classList.remove('hidden');
-    
+
     clearTimeout(errorTimeout);
-    errorTimeout = setTimeout(() => {
-      errorBanner.classList.add('hidden');
-    }, 4000); // 4s auto-dismiss per spec
+    if (dismissMs > 0) {
+      errorTimeout = setTimeout(() => {
+        errorBanner.classList.add('hidden');
+      }, dismissMs);
+    }
   });
 });
