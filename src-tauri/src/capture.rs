@@ -1,8 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
 use screencapturekit::prelude::*;
-use std::thread;
 
-/// A stub representation of a pixel buffer from `ScreenCaptureKit`
+/// A copied pixel buffer from `ScreenCaptureKit`.
 #[derive(Clone)]
 pub struct PixelBuffer {
     pub data: Vec<u8>,
@@ -17,7 +16,7 @@ pub struct CaptureFrame {
     pub scale_factor: f32,
 }
 
-pub struct DisplayManager {}
+
 
 struct OutputHandler {
     tx: Sender<CaptureFrame>,
@@ -27,12 +26,27 @@ struct OutputHandler {
 
 impl SCStreamOutputTrait for OutputHandler {
     fn did_output_sample_buffer(&self, sample: CMSampleBuffer, _type: SCStreamOutputType) {
+        log::debug!("[Capture] Raw frame received");
         if let Some(pixel_buffer) = sample.image_buffer()
             && let Ok(guard) = pixel_buffer.lock_read_only()
         {
-            let data = guard.as_slice().to_vec();
             let width = guard.width();
             let height = guard.height();
+            let bytes_per_row = guard.bytes_per_row();
+            
+            let mut data = Vec::with_capacity(width * height * 4);
+            let slice = guard.as_slice();
+            
+            if bytes_per_row == width * 4 {
+                data = slice.to_vec();
+            } else {
+                for row in slice.chunks(bytes_per_row) {
+                    if row.len() >= width * 4 {
+                        data.extend_from_slice(&row[..width * 4]);
+                    }
+                }
+            }
+
             let frame = CaptureFrame {
                 buffer: PixelBuffer {
                     data,
@@ -49,45 +63,66 @@ impl SCStreamOutputTrait for OutputHandler {
     }
 }
 
+pub struct DisplayManager {
+    stream: Option<SCStream>,
+}
+
 impl DisplayManager {
     pub fn new() -> Self {
-        Self {}
+        Self { stream: None }
     }
 
-    #[allow(clippy::unused_self)]
-    pub fn start_capture(&self, display_id: u32) -> Receiver<CaptureFrame> {
+    pub fn start_capture(&mut self, display_id: u32) -> Receiver<CaptureFrame> {
         let (tx, rx) = bounded::<CaptureFrame>(2);
 
-        thread::spawn(move || {
-            let content = SCShareableContent::get().expect("Failed to get shareable content");
+        let content = SCShareableContent::get().expect("Failed to get shareable content");
 
-            let display = content
-                .displays()
-                .into_iter()
-                .find(|d| d.display_id() == display_id)
-                .or_else(|| content.displays().into_iter().next())
-                .expect("No displays found");
+        let display = content
+            .displays()
+            .into_iter()
+            .find(|d| d.display_id() == display_id)
+            .or_else(|| content.displays().into_iter().next())
+            .expect("No displays found");
 
-            let filter = SCContentFilter::create().with_display(&display).build();
-
-            let config = SCStreamConfiguration::new()
-                .with_width(display.width())
-                .with_height(display.height());
-
-            let mut stream = SCStream::new(&filter, &config);
-            let handler = OutputHandler {
-                tx,
-                display_id,
-                scale_factor: 2.0, // TODO: query actual backingScaleFactor from main thread (Phase 7)
-            };
-            stream.add_output_handler(handler, SCStreamOutputType::Screen);
-            stream.start_capture().expect("Failed to start capture");
-
-            // Keep the thread alive
-            loop {
-                thread::sleep(std::time::Duration::from_secs(1));
+        let filter = SCContentFilter::create().with_display(&display).build();
+        let display_frame = display.frame();
+        let scale_factor = if display_frame.width > 0.0 {
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+            {
+                (f64::from(display.width()) / display_frame.width) as f32
             }
-        });
+        } else {
+            1.0
+        };
+        let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+            scale_factor
+        } else {
+            1.0
+        };
+        let actual_display_id = display.display_id();
+
+        let config = SCStreamConfiguration::new()
+            .with_width(display.width())
+            .with_height(display.height())
+            .with_pixel_format(PixelFormat::BGRA);
+
+        let mut stream = SCStream::new(&filter, &config);
+        let handler = OutputHandler {
+            tx,
+            display_id: actual_display_id,
+            scale_factor,
+        };
+        stream.add_output_handler(handler, SCStreamOutputType::Screen);
+        log::info!(
+            "[Capture] Starting stream for display {} at scale factor {:.2} ({:?})",
+            actual_display_id,
+            scale_factor,
+            PixelFormat::BGRA
+        );
+        stream.start_capture().expect("Failed to start capture");
+        log::info!("[Capture] Stream started successfully");
+
+        self.stream = Some(stream);
 
         rx
     }

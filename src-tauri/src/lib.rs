@@ -27,9 +27,44 @@ use image::{ImageBuffer, RgbaImage};
 use rayon::prelude::*;
 use tauri::Emitter;
 
-use crate::ipc::{TranslationBox, TranslationPayload, TranslationStartedPayload};
+use crate::ipc::{
+    TranslationBox,
+    TranslationErrorPayload,
+    TranslationPayload,
+    TranslationStartedPayload,
+};
 use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::styling::StylingEngine;
+
+fn resolve_vision_helper_path(app: &tauri::App) -> anyhow::Result<PathBuf> {
+    use tauri::Manager;
+
+    let mut candidates = Vec::new();
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("binaries").join("vision-helper"));
+        candidates.push(resource_dir.join("binaries").join("vision-helper-aarch64-apple-darwin"));
+        candidates.push(resource_dir.join("vision-helper"));
+        candidates.push(resource_dir.join("vision-helper-aarch64-apple-darwin"));
+    }
+
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        candidates.push(exe_dir.join("vision-helper"));
+        candidates.push(exe_dir.join("vision-helper-aarch64-apple-darwin"));
+        candidates.push(exe_dir.join("binaries").join("vision-helper"));
+        candidates.push(exe_dir.join("binaries").join("vision-helper-aarch64-apple-darwin"));
+    }
+
+    candidates.push(PathBuf::from("src-tauri/binaries/vision-helper"));
+    candidates.push(PathBuf::from("src-tauri/binaries/vision-helper-aarch64-apple-darwin"));
+
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| anyhow::anyhow!("Could not locate vision-helper binary"))
+}
 
 /// Encodes a BGRA `CaptureFrame` pixel buffer to a temporary PNG file.
 ///
@@ -37,6 +72,8 @@ use crate::styling::StylingEngine;
 /// RGBA, so we swap the B and R channels in-place before encoding.
 fn save_frame_as_png(frame: &capture::CaptureFrame, frame_id: u64) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(format!("/tmp/contextura-frame-{frame_id}.png"));
+    let latest_path = PathBuf::from("/tmp/contextura-frame-latest.png");
+
     // BGRA → RGBA: swap index 0 (B) with index 2 (R) for each pixel
     let mut rgba_data = frame.buffer.data.clone();
     for pixel in rgba_data.chunks_exact_mut(4) {
@@ -48,7 +85,11 @@ fn save_frame_as_png(frame: &capture::CaptureFrame, frame_id: u64) -> anyhow::Re
         rgba_data,
     )
     .ok_or_else(|| anyhow::anyhow!("Failed to construct image buffer from frame data"))?;
+
     img.save(&path)?;
+    // Keep the latest captured frame on disk for manual inspection/debugging.
+    let _ = img.save(&latest_path);
+
     Ok(path)
 }
 
@@ -77,6 +118,12 @@ fn complete_wizard(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resul
 pub fn run() {
     // Initialize logging so log::info!/error! actually emit output.
     env_logger::init();
+    let _sentry = std::env::var("CONTEXTURA_SENTRY_DSN")
+        .ok()
+        .map(|dsn| {
+            log::info!("[Sentry] Crash reporting enabled via CONTEXTURA_SENTRY_DSN");
+            sentry::init(dsn)
+        });
 
     let args = CliArgs::parse();
 
@@ -94,15 +141,17 @@ pub fn run() {
 
             let app_dir = settings::Settings::dir().expect("Failed to get app directory");
             let settings = settings::Settings::load(&app_dir).expect("Failed to load settings at startup");
+            let vision_helper_path =
+                resolve_vision_helper_path(app).expect("Failed to resolve vision-helper path");
 
             // --- Subsystem Initialization ---
             let (window_tracker, invalidation_rx) = context::AppWindowTracker::new();
             let mut thermal_monitor = thermal::ThermalMonitor::new();
             let ocr_engine = Arc::new(ocr::OcrEngine::new(
                 settings.furigana_suppression,
-                app.path().resource_dir().unwrap().join("binaries").join("vision-helper"),
+                vision_helper_path,
             ));
-            let display_manager = capture::DisplayManager::new();
+            let mut display_manager = capture::DisplayManager::new();
 
             let (force_trigger_tx, force_trigger_rx) = crossbeam_channel::bounded(1);
 
@@ -212,6 +261,8 @@ pub fn run() {
                             app_dir.join("models").join(format!("{}.gguf", settings_sidecar.active_model))
                         };
 
+                        log::info!("[Pipeline] Resolved model path: {}", model_path.display());
+
                         if !model_path.exists() {
                             log::warn!("[Pipeline] Model not found at {} — waiting for download", model_path.display());
                             sleep(Duration::from_secs(5)).await;
@@ -253,13 +304,29 @@ pub fn run() {
                         let watchdog_app_handle = app_handle_sidecar.clone();
                         let watchdog_model_path = model_path.clone();
                         tokio::spawn(async move {
+                            let mut consecutive_failures = 0u8;
                             loop {
                                 sleep(Duration::from_secs(5)).await;
-                                let guard = watchdog_client.lock().await;
+                                let mut guard = watchdog_client.lock().await;
                                 if guard.wait_for_ready().await.is_err() {
-                                    log::warn!("[Watchdog] Sidecar unresponsive, restarting...");
-                                    let _ = watchdog_app_handle.emit("translation-error", "Sidecar unresponsive, restarting...");
-                                    let _ = guard.start_sidecar(&watchdog_app_handle, &watchdog_model_path);
+                                    consecutive_failures += 1;
+                                    log::warn!(
+                                        "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
+                                    );
+
+                                    if consecutive_failures >= 3 {
+                                        log::warn!("[Watchdog] Sidecar unresponsive, restarting...");
+                                        let _ = watchdog_app_handle.emit(
+                                            "translation-error",
+                                            TranslationErrorPayload {
+                                                message: "Translation engine restarted after repeated health-check failures.".to_string(),
+                                            },
+                                        );
+                                        let _ = guard.start_sidecar(&watchdog_app_handle, &watchdog_model_path);
+                                        consecutive_failures = 0;
+                                    }
+                                } else {
+                                    consecutive_failures = 0;
                                 }
                             }
                         });
@@ -313,6 +380,7 @@ pub fn run() {
                                 }
 
                                 DebounceEvent::Triggered => {
+                                    let current_frame_id = frame_id;
                                     frame_id += 1;
 
                                     // 1. Drain invalidation channel before processing this frame.
@@ -334,7 +402,7 @@ pub fn run() {
                                     }
 
                                     // 2. Save frame buffer as PNG for vision-helper subprocess.
-                                    let png_path = match save_frame_as_png(&frame, frame_id) {
+                                    let png_path = match save_frame_as_png(&frame, current_frame_id) {
                                         Ok(p) => p,
                                         Err(e) => {
                                             log::error!("[OCR] PNG save failed: {e}");
@@ -345,7 +413,9 @@ pub fn run() {
                                     // 3. Emit "translation-started" so the overlay can show a spinner.
                                     let _ = app_handle.emit(
                                         "translation-started",
-                                        TranslationStartedPayload { display_id: 0 },
+                                        TranslationStartedPayload {
+                                            display_id: frame.display_id,
+                                        },
                                     );
 
                                     // 4. Run OCR (synchronous subprocess call).
@@ -368,11 +438,14 @@ pub fn run() {
                                     };
 
                                     if ocr_results.is_empty() {
-                                        log::debug!("[OCR] No CJK text found in frame {frame_id}");
+                                        log::debug!("[OCR] No CJK text found in frame {current_frame_id}");
                                         continue;
                                     }
 
-                                    log::info!("[OCR] Found {} text boxes in frame {frame_id}", ocr_results.len());
+                                    log::info!(
+                                        "[OCR] Found {} text boxes in frame {current_frame_id}",
+                                        ocr_results.len()
+                                    );
 
                                     // 5. Translate (async HTTP to llama-server).
                                     let texts: Vec<String> =
@@ -416,7 +489,7 @@ pub fn run() {
                                             );
                                             let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
                                             TranslationBox {
-                                                id: format!("{frame_id}-{i}"),
+                                                id: format!("{current_frame_id}-{i}"),
                                                 translated: translation.clone(),
                                                 original: ocr.text.clone(),
                                                 x: ocr.bounding_box.x,
@@ -435,8 +508,8 @@ pub fn run() {
                                     let payload = TranslationPayload {
                                         boxes: styled_boxes,
                                         scale_factor: scale,
-                                        display_id: 0,
-                                        frame_id,
+                                        display_id: frame.display_id,
+                                        frame_id: current_frame_id,
                                     };
 
                                     if let Err(e) = app_handle.emit("translation-update", &payload) {

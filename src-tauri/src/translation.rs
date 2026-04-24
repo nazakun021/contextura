@@ -43,6 +43,7 @@ pub struct TranslationClient {
     pub memory: TranslationMemory,
     port: u16,
     client: Client,
+    sidecar_child: Option<tauri_plugin_shell::process::CommandChild>,
 }
 
 impl TranslationClient {
@@ -51,18 +52,28 @@ impl TranslationClient {
             memory: TranslationMemory::new(max_memory_size),
             port,
             client: Client::new(),
+            sidecar_child: None,
         }
     }
 
     pub fn start_sidecar(
-        &self,
+        &mut self,
         app: &tauri::AppHandle,
         model_path: &std::path::Path,
     ) -> anyhow::Result<()> {
+        use tauri::Manager;
         use tauri_plugin_shell::ShellExt;
-        let _sidecar = app
+
+        if let Some(child) = self.sidecar_child.take() {
+            let _ = child.kill();
+        }
+
+        let binaries_dir = app.path().resource_dir().unwrap().join("binaries");
+
+        let (mut rx, child) = app
             .shell()
             .sidecar("llama-server")?
+            .env("DYLD_FALLBACK_LIBRARY_PATH", binaries_dir.to_str().unwrap())
             .args([
                 "--model",
                 model_path.to_str().unwrap(),
@@ -74,10 +85,32 @@ impl TranslationClient {
                 "1024",
                 "--host",
                 "127.0.0.1",
-                "--log-disable", // quiet; Rust handles logging
+                // "--log-disable", // quiet; Rust handles logging
                 "--jinja",       // required for Qwen3 chat template (Jinja2 format)
             ])
             .spawn()?;
+
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
+                        log::info!("SIDECAR OUT: {}", String::from_utf8_lossy(&line));
+                    }
+                    tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
+                        log::info!("SIDECAR ERR: {}", String::from_utf8_lossy(&line));
+                    }
+                    tauri_plugin_shell::process::CommandEvent::Error(err) => {
+                        log::error!("SIDECAR ERROR EVENT: {err}");
+                    }
+                    tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
+                        log::info!("SIDECAR TERMINATED: {:?}", payload.code);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        self.sidecar_child = Some(child);
 
         log::info!("Sidecar started");
         Ok(())

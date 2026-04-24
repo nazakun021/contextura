@@ -2,13 +2,7 @@
 //! `translation-started` events emitted from Rust to the `WebView` frontend.
 //!
 //! These structs are serialised via `serde` across the IPC boundary and are
-//! consumed by `overlay.js`. They will be constructed by the engine emitter
-//! once the capture→OCR→translate pipeline is integrated.
-// These structs are all `pub` — Rust does not fire `dead_code` on pub items,
-// so #[allow] is used here rather than #[expect] (which would fire a warning
-// when the lint is never triggered). They will be constructed by the engine
-// emitter once the pipeline is integrated.
-#![allow(dead_code)]
+//! consumed by `overlay.js`.
 
 use serde::{Deserialize, Serialize};
 
