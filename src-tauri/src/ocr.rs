@@ -1,13 +1,18 @@
+// src-tauri/src/ocr.rs
+
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::ops::Add;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const MIN_CONFIDENCE: f32 = 0.3;
 const FURIGANA_HEIGHT_RATIO: f32 = 0.4;
 const FURIGANA_HORIZONTAL_OVERLAP: f32 = 0.70;
-const MERGE_IOU_THRESHOLD: f32 = 0.3;
+const OCR_HELPER_TIMEOUT: Duration = Duration::from_secs(8);
+const DUPLICATE_IOU_THRESHOLD: f32 = 0.8;
+const DUPLICATE_CONTAINMENT_THRESHOLD: f32 = 0.9;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionHelperResult {
@@ -62,6 +67,34 @@ impl Rect {
 
         (overlap_width / self_width) >= threshold_percent
     }
+
+    fn area(&self) -> f32 {
+        self.width * self.height
+    }
+
+    fn right(&self) -> f32 {
+        self.x + self.width
+    }
+
+    fn bottom(&self) -> f32 {
+        self.y + self.height
+    }
+
+    fn intersection_area(&self, other: &Rect) -> f32 {
+        let x_overlap = 0.0f32.max(self.right().min(other.right()) - self.x.max(other.x));
+        let y_overlap = 0.0f32.max(self.bottom().min(other.bottom()) - self.y.max(other.y));
+        x_overlap * y_overlap
+    }
+
+    fn intersection_ratio(&self, other: &Rect) -> f32 {
+        let intersection = self.intersection_area(other);
+        let smaller_area = self.area().min(other.area());
+        if smaller_area <= 0.0 {
+            0.0
+        } else {
+            intersection / smaller_area
+        }
+    }
 }
 
 pub struct OcrEngine {
@@ -84,15 +117,40 @@ impl OcrEngine {
         screen_height: f32,
         scale_factor: f32,
     ) -> anyhow::Result<Vec<OcrResult>> {
-        let output = Command::new(&self.vision_helper_path)
+        let mut child = Command::new(&self.vision_helper_path)
             .arg(png_path)
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .with_context(|| {
                 format!(
                     "Failed to launch vision-helper at {}",
                     self.vision_helper_path.display()
                 )
             })?;
+
+        let started_at = Instant::now();
+        loop {
+            if child.try_wait()?.is_some() {
+                break;
+            }
+
+            if started_at.elapsed() >= OCR_HELPER_TIMEOUT {
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!(
+                    "vision-helper timed out after {}s while reading {}",
+                    OCR_HELPER_TIMEOUT.as_secs(),
+                    png_path.display()
+                );
+            }
+
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        let output = child
+            .wait_with_output()
+            .with_context(|| "Failed to collect vision-helper output".to_string())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -108,16 +166,21 @@ impl OcrEngine {
 
         let results: Vec<OcrResult> = raw
             .into_iter()
-            .map(|r| {
+            .filter_map(|r| {
+                let text = Self::sanitize_text(&r.text);
+                if text.is_empty() {
+                    return None;
+                }
+
                 let is_vertical = r.text_angle.abs() > std::f32::consts::PI / 4.0;
-                OcrResult {
-                    text: r.text,
+                Some(OcrResult {
+                    text,
                     confidence: r.confidence,
                     bounding_box: Rect::new(r.x, r.y, r.width, r.height),
                     text_angle: r.text_angle,
                     is_vertical,
                     is_furigana: false,
-                }
+                })
             })
             .collect();
 
@@ -142,10 +205,6 @@ impl OcrEngine {
             y /= scale_factor;
             width /= scale_factor;
             height /= scale_factor;
-
-            if result.is_vertical {
-                std::mem::swap(&mut width, &mut height);
-            }
 
             result.bounding_box = Rect::new(x, y, width, height);
         }
@@ -179,46 +238,33 @@ impl OcrEngine {
             }
         }
 
-        // 3. Merging overlapping boxes (IoU > 0.3)
-        let mut merged_results: Vec<OcrResult> = Vec::new();
-        for res in results {
-            if res.is_furigana
-                || res.confidence < MIN_CONFIDENCE
-                || !Self::contains_cjk(&res.text)
-                || res.text.trim().is_empty()
+        let mut filtered_results = results
+            .into_iter()
+            .filter(|res| {
+                !res.is_furigana
+                    && res.confidence >= MIN_CONFIDENCE
+                    && Self::contains_cjk(&res.text)
+            })
+            .collect::<Vec<_>>();
+
+        filtered_results.sort_by(Self::reading_order_cmp);
+
+        let mut deduped_results: Vec<OcrResult> = Vec::new();
+        for res in filtered_results {
+            if let Some(existing) = deduped_results
+                .iter_mut()
+                .find(|existing| Self::is_duplicate_detection(existing, &res))
             {
+                if res.confidence > existing.confidence {
+                    *existing = res;
+                }
                 continue;
             }
 
-            let mut merged = false;
-            for existing in &mut merged_results {
-                if Self::calculate_iou(&res.bounding_box, &existing.bounding_box)
-                    > MERGE_IOU_THRESHOLD
-                {
-                    // Simple merge: take the union of boxes and the text with higher confidence
-                    let x = res.bounding_box.x.min(existing.bounding_box.x);
-                    let y = res.bounding_box.y.min(existing.bounding_box.y);
-                    let r = (res.bounding_box.x + res.bounding_box.width)
-                        .max(existing.bounding_box.x + existing.bounding_box.width);
-                    let b = (res.bounding_box.y + res.bounding_box.height)
-                        .max(existing.bounding_box.y + existing.bounding_box.height);
-
-                    existing.bounding_box = Rect::new(x, y, r - x, b - y);
-                    if res.confidence > existing.confidence {
-                        existing.text.clone_from(&res.text);
-                        existing.confidence = res.confidence;
-                    }
-                    merged = true;
-                    break;
-                }
-            }
-
-            if !merged {
-                merged_results.push(res);
-            }
+            deduped_results.push(res);
         }
 
-        merged_results
+        deduped_results
     }
 
     fn contains_cjk(text: &str) -> bool {
@@ -228,17 +274,64 @@ impl OcrEngine {
     }
 
     fn calculate_iou(a: &Rect, b: &Rect) -> f32 {
-        let x_overlap = 0.0f32.max(a.x.add(a.width).min(b.x.add(b.width)) - a.x.max(b.x));
-        let y_overlap = 0.0f32.max(a.y.add(a.height).min(b.y.add(b.height)) - a.y.max(b.y));
-        let intersection = x_overlap * y_overlap;
-        let area_a = a.width * a.height;
-        let area_b = b.width * b.height;
+        let intersection = a.intersection_area(b);
+        let area_a = a.area();
+        let area_b = b.area();
         let union = area_a + area_b - intersection;
         if union <= 0.0 {
             0.0
         } else {
             intersection / union
         }
+    }
+
+    fn sanitize_text(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn is_duplicate_detection(existing: &OcrResult, candidate: &OcrResult) -> bool {
+        existing.text == candidate.text
+            && (Self::calculate_iou(&existing.bounding_box, &candidate.bounding_box)
+                >= DUPLICATE_IOU_THRESHOLD
+                || existing
+                    .bounding_box
+                    .intersection_ratio(&candidate.bounding_box)
+                    >= DUPLICATE_CONTAINMENT_THRESHOLD)
+    }
+
+    fn reading_order_cmp(a: &OcrResult, b: &OcrResult) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        const EPSILON: f32 = 4.0;
+
+        if a.is_vertical && b.is_vertical {
+            if (a.bounding_box.x - b.bounding_box.x).abs() > EPSILON {
+                return b
+                    .bounding_box
+                    .x
+                    .partial_cmp(&a.bounding_box.x)
+                    .unwrap_or(Ordering::Equal);
+            }
+
+            return a
+                .bounding_box
+                .y
+                .partial_cmp(&b.bounding_box.y)
+                .unwrap_or(Ordering::Equal);
+        }
+
+        if (a.bounding_box.y - b.bounding_box.y).abs() > EPSILON {
+            return a
+                .bounding_box
+                .y
+                .partial_cmp(&b.bounding_box.y)
+                .unwrap_or(Ordering::Equal);
+        }
+
+        a.bounding_box
+            .x
+            .partial_cmp(&b.bounding_box.x)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -316,12 +409,40 @@ mod tests {
     fn process_vision_results_should_merge_overlapping_boxes_and_keep_higher_confidence_text() {
         let results = vec![
             result("日本", 0.6, 0.10, 0.10, 0.20, 0.10),
-            result("日本語", 0.9, 0.12, 0.12, 0.20, 0.10),
+            result("日本", 0.9, 0.10, 0.10, 0.20, 0.10),
         ];
 
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
 
         assert_eq!(processed.len(), 1);
-        assert_eq!(processed[0].text, "日本語");
+        assert_eq!(processed[0].text, "日本");
+        assert_close(processed[0].confidence, 0.9);
+    }
+
+    #[test]
+    fn process_vision_results_should_keep_distinct_overlapping_text() {
+        let results = vec![
+            result("日本", 0.9, 0.10, 0.10, 0.30, 0.12),
+            result("日本語", 0.8, 0.12, 0.11, 0.31, 0.12),
+        ];
+
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+
+        assert_eq!(processed.len(), 2);
+        assert_eq!(processed[0].text, "日本");
+        assert_eq!(processed[1].text, "日本語");
+    }
+
+    #[test]
+    fn process_vision_results_should_keep_vertical_box_geometry() {
+        let mut vertical = result("縦書き", 0.9, 0.20, 0.10, 0.10, 0.30);
+        vertical.text_angle = std::f32::consts::PI / 2.0;
+        vertical.is_vertical = true;
+
+        let processed = engine(false).process_vision_results(vec![vertical], 100.0, 100.0, 1.0);
+
+        assert_eq!(processed.len(), 1);
+        assert_close(processed[0].bounding_box.width, 10.0);
+        assert_close(processed[0].bounding_box.height, 30.0);
     }
 }

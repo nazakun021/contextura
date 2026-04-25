@@ -1,3 +1,5 @@
+// src-tauri/src/motion.rs
+
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
@@ -59,7 +61,8 @@ impl DebounceStateMachine {
                 }
             }
             DebounceState::Settling(start_time) => {
-                if has_motion {
+                let settling_threshold = self.motion_threshold * 3.0;
+                if motion_ratio > settling_threshold {
                     // False stop, back to scrolling
                     self.state = DebounceState::Scrolling;
                     DebounceEvent::MotionDetected
@@ -267,5 +270,17 @@ mod tests {
         // Should trigger after duration
         assert_eq!(state_machine.update(0.0), DebounceEvent::Triggered);
         assert_eq!(state_machine.state, DebounceState::Idle);
+    }
+
+    #[test]
+    fn debounce_should_ignore_small_settling_motion() {
+        let mut state_machine = DebounceStateMachine::new(50, 0.05);
+
+        assert_eq!(state_machine.update(0.1), DebounceEvent::MotionDetected);
+        assert_eq!(state_machine.update(0.0), DebounceEvent::None);
+        assert!(matches!(state_machine.state, DebounceState::Settling(_)));
+
+        assert_eq!(state_machine.update(0.1), DebounceEvent::None);
+        assert!(matches!(state_machine.state, DebounceState::Settling(_)));
     }
 }

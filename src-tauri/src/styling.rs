@@ -1,3 +1,5 @@
+// src-tauri/src/styling.rs
+
 // Background Color Sampling & Contrast Calculation
 
 #[derive(Debug, Clone, Copy)]

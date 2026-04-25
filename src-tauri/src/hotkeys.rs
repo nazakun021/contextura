@@ -1,3 +1,5 @@
+// src-tauri/src/hotkeys.rs
+
 use crossbeam_channel::Sender;
 use std::process;
 use tauri::Manager;

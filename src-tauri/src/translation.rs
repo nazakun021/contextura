@@ -1,9 +1,17 @@
+// src-tauri/src/translation.rs
+
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fmt::Write;
 use std::time::Duration;
 use tokio::time::sleep;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TranslationMode {
+    NumberedBatchQwen,
+    StructuredTranslateGemma,
+}
 
 #[derive(Debug)]
 pub struct TranslationMemory {
@@ -44,6 +52,7 @@ pub struct TranslationClient {
     port: u16,
     client: Client,
     sidecar_child: Option<tauri_plugin_shell::process::CommandChild>,
+    mode: TranslationMode,
 }
 
 impl TranslationClient {
@@ -53,13 +62,47 @@ impl TranslationClient {
             port,
             client: Client::new(),
             sidecar_child: None,
+            mode: TranslationMode::NumberedBatchQwen,
         }
+    }
+
+    fn mode_for_model(model_id: &str) -> TranslationMode {
+        if model_id.to_ascii_lowercase().contains("translategemma") {
+            TranslationMode::StructuredTranslateGemma
+        } else {
+            TranslationMode::NumberedBatchQwen
+        }
+    }
+
+    pub fn start_sidecar_mode_for_cli(&mut self, model_id: &str) {
+        self.mode = Self::mode_for_model(model_id);
+    }
+
+    fn response_text(content: &Value) -> String {
+        if let Some(text) = content.as_str() {
+            return text.trim().to_string();
+        }
+
+        content
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|part| {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| part.get("content").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("")
+            .trim()
+            .to_string()
     }
 
     pub fn start_sidecar(
         &mut self,
         app: &tauri::AppHandle,
         model_path: &std::path::Path,
+        model_id: &str,
     ) -> anyhow::Result<()> {
         use tauri::Manager;
         use tauri_plugin_shell::ShellExt;
@@ -67,6 +110,8 @@ impl TranslationClient {
         if let Some(child) = self.sidecar_child.take() {
             let _ = child.kill();
         }
+
+        self.mode = Self::mode_for_model(model_id);
 
         let binaries_dir = app.path().resource_dir().unwrap().join("binaries");
 
@@ -144,57 +189,106 @@ impl TranslationClient {
         // Sub-batch at 15 strings to avoid hitting token limits or context window issues
         for (chunk_idx, chunk_strings) in strings.chunks(15).enumerate() {
             let offset = chunk_idx * 15;
+            match self.mode {
+                TranslationMode::NumberedBatchQwen => {
+                    let mut prompt = String::new();
+                    let context = self.memory.as_context_slice();
+                    if !context.is_empty() {
+                        prompt.push_str(
+                            "Previous context (do not retranslate, for reference only):\n",
+                        );
+                        for (ja, en) in context {
+                            let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
+                        }
+                        prompt.push('\n');
+                    }
 
-            let mut prompt = String::new();
-            let context = self.memory.as_context_slice();
-            if !context.is_empty() {
-                prompt.push_str("Previous context (do not retranslate, for reference only):\n");
-                for (ja, en) in context {
-                    let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
+                    prompt.push_str("Translate each numbered Japanese string to English.\n");
+                    prompt.push_str(
+                        "Output only translations, one per line, same numbered format.\n\n",
+                    );
+
+                    for (i, s) in chunk_strings.iter().enumerate() {
+                        let _ = writeln!(prompt, "{}: {}", i + 1, s);
+                    }
+
+                    let payload = json!({
+                        "model": "local",
+                        "messages": [
+                            // /no_think disables Qwen3 thinking mode — without it, the model outputs
+                            // <think>...</think> tokens before the response, breaking our ^(\d+): parser.
+                            { "role": "system", "content": "You are a Japanese-to-English translator. /no_think" },
+                            { "role": "user", "content": prompt }
+                        ],
+                        "temperature": 0.1,
+                        "max_tokens": 512
+                    });
+
+                    let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
+                    let res: Value = self
+                        .client
+                        .post(&url)
+                        .json(&payload)
+                        .send()
+                        .await?
+                        .json()
+                        .await?;
+
+                    let response_content =
+                        Self::response_text(&res["choices"][0]["message"]["content"]);
+
+                    for line in response_content.lines() {
+                        if let Some((num, text)) = line.split_once(':')
+                            && let Ok(idx) = num.trim().parse::<usize>()
+                            && idx > 0
+                            && idx <= chunk_strings.len()
+                        {
+                            final_results[offset + idx - 1] = text.trim().to_string();
+                        }
+                    }
                 }
-                prompt.push('\n');
-            }
+                TranslationMode::StructuredTranslateGemma => {
+                    let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
+                    let mut conversation = Vec::with_capacity(chunk_strings.len() * 2);
 
-            prompt.push_str("Translate each numbered Japanese string to English.\n");
-            prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
+                    for (chunk_offset, input_text) in chunk_strings.iter().enumerate() {
+                        conversation.push(json!({
+                            "role": "user",
+                            "content": [{
+                                "type": "text",
+                                "text": input_text
+                            }],
+                            "source_lang_code": "ja",
+                            "target_lang_code": "en"
+                        }));
 
-            for (i, s) in chunk_strings.iter().enumerate() {
-                let _ = writeln!(prompt, "{}: {}", i + 1, s);
-            }
+                        let payload = json!({
+                            "model": "local",
+                            "messages": conversation.clone(),
+                            "temperature": 0.1,
+                            "max_tokens": 256
+                        });
 
-            let payload = json!({
-                "model": "local",
-                "messages": [
-                    // /no_think disables Qwen3 thinking mode — without it, the model outputs
-                    // <think>...</think> tokens before the response, breaking our ^(\d+): parser.
-                    { "role": "system", "content": "You are a Japanese-to-English translator. /no_think" },
-                    { "role": "user", "content": prompt }
-                ],
-                "temperature": 0.1,
-                "max_tokens": 512
-            });
+                        let res: Value = self
+                            .client
+                            .post(&url)
+                            .json(&payload)
+                            .send()
+                            .await?
+                            .json()
+                            .await?;
 
-            let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
-            let res: Value = self
-                .client
-                .post(&url)
-                .json(&payload)
-                .send()
-                .await?
-                .json()
-                .await?;
-
-            let response_content = res["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("");
-
-            for line in response_content.lines() {
-                if let Some((num, text)) = line.split_once(':')
-                    && let Ok(idx) = num.trim().parse::<usize>()
-                    && idx > 0
-                    && idx <= chunk_strings.len()
-                {
-                    final_results[offset + idx - 1] = text.trim().to_string();
+                        let translation =
+                            Self::response_text(&res["choices"][0]["message"]["content"]);
+                        final_results[offset + chunk_offset] = translation.clone();
+                        conversation.push(json!({
+                            "role": "assistant",
+                            "content": [{
+                                "type": "text",
+                                "text": translation
+                            }]
+                        }));
+                    }
                 }
             }
         }
@@ -206,5 +300,25 @@ impl TranslationClient {
         }
 
         Ok(final_results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TranslationClient;
+    use serde_json::json;
+
+    #[test]
+    fn response_text_should_accept_plain_string_content() {
+        assert_eq!(TranslationClient::response_text(&json!("Hello")), "Hello");
+    }
+
+    #[test]
+    fn response_text_should_join_structured_text_segments() {
+        let content = json!([
+            { "type": "text", "text": "Hello" },
+            { "type": "text", "text": " world" }
+        ]);
+        assert_eq!(TranslationClient::response_text(&content), "Hello world");
     }
 }

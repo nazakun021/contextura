@@ -4,18 +4,18 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 **Platform:** macOS 13+ on Apple Silicon  
 **Stack:** Rust, Tauri v2, ScreenCaptureKit, Swift Vision helper, `llama-server`, vanilla HTML/CSS/JS  
-**Status:** The single-display capture, translation, and overlay pipeline is wired in code. The bundled OCR helper now builds from source and was re-verified on `/tmp/contextura-frame-latest.png` in this workspace. On 2026-04-25, the force-scan path was updated to reuse the latest cached frame and capture exclusion was hardened to exclude matching app windows directly, but both still need live app verification.
+**Status:** The single-display OCR-overlay pipeline is wired in code and remains the intended architecture. As of 2026-04-26, the repo also includes a TranslateGemma-specific translation path, AppKit-level overlay capture protection via `NSWindowSharingType::None`, a shared BGRA→RGBA conversion path for OCR and styling, and a debounce fix for inertial-scroll bleed. Live app verification is still required for end-to-end confirmation.
 
 ## Implemented In Code
 
 - Screen capture through ScreenCaptureKit
 - Motion-gated OCR/translation after debounce
 - OCR subprocess integration through the bundled `vision-helper`
-- Local translation through bundled `llama-server`
+- Local translation through bundled `llama-server`, with model-specific handling for Qwen-style batched prompts and TranslateGemma structured requests
 - Dynamic overlay styling for contrast
 - Overlay toggle, cached-frame force-scan, memory reset, model switching, and quit hotkeys
 - App-switch invalidation, watchdog-based sidecar restart, and capture-stream restart handling
-- Overlay self-capture exclusion using direct window matching plus app-level fallback
+- Overlay self-capture protection using direct window matching plus AppKit `NSWindowSharingType::None`
 - A 4-step first-run wizard
 - `--debug-cli --input` and `--test-suite` code paths routed through the live pipeline
 
@@ -23,7 +23,7 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 - The checked-in `test-corpus/*.png` fixtures are currently empty placeholder files and are not reliable verification assets.
 - Manual runtime smoke verification is still pending with a valid local model.
-- The 2026-04-25 force-scan and overlay-exclusion fixes need live confirmation in the running app.
+- Force scan, context clearing, and overlay-exclusion behavior still need live confirmation in the running app after the latest translation/runtime fixes.
 
 ## Current Limits
 
@@ -44,13 +44,13 @@ The first build is slow because Tauri, ScreenCaptureKit bindings, and llama.cpp 
 
 ### 2. Download a compatible model
 
-Contextura expects a decoder-only GGUF model. The default setup uses **Qwen3-0.6B Q4_K_M**.
+Contextura expects a decoder-only GGUF model. The current repo default uses **TranslateGemma 4B IT Q4_K_M**.
 
 ```bash
 pip install huggingface_hub
 
-huggingface-cli download Qwen/Qwen3-0.6B-GGUF \
-  qwen3-0.6b-q4_k_m.gguf \
+huggingface-cli download mradermacher/translategemma-4b-it-GGUF \
+  translategemma-4b-it.Q4_K_M.gguf \
   --local-dir ~/Library/Application\ Support/contextura/models/
 ```
 
@@ -60,7 +60,7 @@ Encoder-decoder models such as NLLB, MarianMT, T5, and BART do not work with the
 
 ```bash
 ./src-tauri/binaries/llama-server-aarch64-apple-darwin \
-  --model ~/Library/Application\ Support/contextura/models/qwen3-0.6b-q4_k_m.gguf \
+  --model ~/Library/Application\ Support/contextura/models/translategemma-4b-it.Q4_K_M.gguf \
   --port 8765 \
   --n-gpu-layers 99 \
   --ctx-size 1024 \
@@ -98,9 +98,13 @@ On first launch, Contextura shows a 4-step setup wizard covering Screen Recordin
 
 - The app writes numbered snapshots to `/tmp/contextura-frame-{id}.png` during OCR passes.
 - The latest captured frame is also kept at `/tmp/contextura-frame-latest.png` for debugging.
+- OCR now fails explicitly on empty/corrupt PNGs and times out rather than hanging indefinitely.
+- OCR post-processing keeps distinct overlapping text boxes and only removes near-duplicate detections.
 - `llama-server` listens only on `127.0.0.1:8765`.
-- Qwen3 uses `--jinja`, and translation requests include `/no_think` in the system prompt.
-- Screen capture now prefers excluding matching Contextura windows directly, with app-level exclusion as fallback, to avoid self-capture loops.
+- TranslateGemma and Qwen3 both use `--jinja`, but only the Qwen path uses `/no_think`.
+- TranslateGemma requests are sent sequentially within each chunk as structured chat messages instead of numbered text batches.
+- Screen capture now also marks the overlay window as non-shareable through AppKit, instead of relying only on capture-filter exclusion.
+- The debounce default is now `200ms`, and the settling phase requires larger motion before aborting.
 - If capture stalls after display sleep/wake or a permission reset, the runtime rebuilds the capture stream.
 
 ## CLI
@@ -142,7 +146,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-The standalone OCR helper was also re-run successfully against `/tmp/contextura-frame-latest.png`. Manual end-to-end app verification with a real model is still pending.
+The standalone OCR helper currently rejects `/tmp/contextura-frame-latest.png` if it is empty or corrupt, which is now the intended behavior. Manual end-to-end app verification with a real model is still pending.
 
 ## Project Layout
 

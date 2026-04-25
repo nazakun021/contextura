@@ -1,7 +1,7 @@
 # SPEC.md — Contextura
 
-**Version:** 1.8.0  
-**Last Updated:** 2026-04-25  
+**Version:** 2.0.0  
+**Last Updated:** 2026-04-26  
 **Target:** macOS 13+ on Apple Silicon
 
 ## Summary
@@ -20,7 +20,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 - `cargo test --manifest-path src-tauri/Cargo.toml` passes
 - `cargo check --manifest-path src-tauri/Cargo.toml` passes
-- Standalone `vision-helper` returns OCR JSON on `/tmp/contextura-frame-latest.png`
+- Standalone `vision-helper` now fails fast on empty/corrupt input instead of returning a misleading empty result
 
 ### Code-integrated features
 
@@ -30,18 +30,18 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Screen capture                | ✅     | Single display, explicit BGRA                                                                             |
 | Motion detection and debounce | ✅     | Wired into frame loop                                                                                     |
 | PNG snapshot writing          | ✅     | Temp file plus persistent latest debug copy                                                               |
-| OCR subprocess                | ✅     | Bundled `vision-helper` builds from source and returns OCR JSON on a saved live frame                     |
-| Translation sidecar           | ✅     | Qwen3-compatible args, health check, restart support                                                      |
+| OCR subprocess                | ✅     | Bundled `vision-helper` builds from source, validates input frames, and returns OCR JSON on valid images  |
+| Translation sidecar           | ✅     | Model-specific Qwen and TranslateGemma request paths, health check, restart support                       |
 | Dynamic styling               | ✅     | WCAG-based foreground/background selection                                                                |
 | IPC to overlay                | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`                     |
 | Overlay toggle hotkey         | ✅     | `Cmd+Shift+T`                                                                                             |
-| Force OCR hotkey              | ✅     | `Cmd+Shift+R`; 2026-04-25 patch now reuses the latest cached frame, live re-check pending                 |
+| Force OCR hotkey              | ✅     | `Cmd+Shift+R`; cached-frame path is implemented, live re-check pending                                    |
 | Manual memory reset           | ✅     | `Cmd+Shift+M`                                                                                             |
 | Tray primary actions          | ✅     | Toggle, translate now, clear context                                                                      |
 | Model switching               | ✅     | `Cmd+Shift+G` cycles to next installed local model                                                        |
 | Context invalidation          | ✅     | App switch clears memory and overlay                                                                      |
 | Watchdog                      | ✅     | Restarts sidecar after repeated health failures                                                           |
-| Overlay capture exclusion     | ✅     | Capture now excludes matching Contextura windows directly, with app-level fallback; live re-check pending |
+| Overlay capture exclusion     | ✅     | Capture excludes matching windows and sets overlay `NSWindowSharingType::None`; live re-check pending     |
 | Wizard screens 1–4            | ✅     | Setup flow covers permissions, model, controls, ready state                                               |
 | Real CLI OCR/translation path | ⚠️     | Code path is live, but end-to-end verification still depends on sidecar readiness and a valid corpus      |
 | Capture restart handling      | ✅     | Stalled capture stream triggers restart path                                                              |
@@ -52,7 +52,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 | Area                                 | Status | Notes                                                             |
 | ------------------------------------ | ------ | ----------------------------------------------------------------- |
-| Manual end-to-end smoke verification | [-]    | Still required after OCR helper stabilization                     |
+| Manual end-to-end smoke verification | [-]    | Still required after the 2026-04-26 OCR hardening pass            |
 | Valid OCR regression corpus          | [ ]    | `test-corpus/*.png` files are currently empty placeholders        |
 | Updater signing pubkey               | [ ]    | `tauri.conf.json` still has an empty updater pubkey               |
 | Quality-tier policy + RAM gate       | [ ]    | Model switching exists, but no curated tier policy or memory gate |
@@ -64,7 +64,8 @@ The translation runtime is `llama-server`, so the active model must be a **decod
 
 Supported family for the default setup:
 
-- `Qwen3-0.6B Q4_K_M`
+- `TranslateGemma 4B IT Q4_K_M`
+- Qwen-style decoder-only GGUF models
 
 Unsupported in this architecture:
 
@@ -82,7 +83,7 @@ Unsupported in this architecture:
 - Format: `PixelFormat::BGRA`
 - Output: `CaptureFrame { data, width, height, display_id, scale_factor }`
 - Scale factor: derived from the display’s pixel width divided by its point-space frame width
-- Exclusion: Contextura’s own app windows are excluded from display capture
+- Exclusion: Contextura’s own app windows are excluded from display capture, and the overlay window is marked non-shareable through AppKit
 - Force scan: manual requests run against the latest cached frame if one is available
 - Recovery: a stalled capture stream causes the runtime to rebuild the stream automatically
 
@@ -92,28 +93,32 @@ Unsupported in this architecture:
 - Compare active region only, excluding edge inset
 - Feed motion ratio into `DebounceStateMachine`
 - Trigger OCR only when the screen has settled past the configured debounce duration
+- Default debounce is `200ms`
+- Settling ignores low-level residual motion unless it exceeds `motion_threshold * 3.0`
 
 ### Snapshotting
 
 - Temp file: `/tmp/contextura-frame-{frame_id}.png`
 - Persistent debug file: `/tmp/contextura-frame-latest.png`
-- Channel order: BGRA input converted to RGBA before PNG encoding
+- Channel order: BGRA input converted to RGBA once before PNG encoding and styling sampling
 
 ### OCR
 
 - Binary: bundled `vision-helper`
 - Input: PNG path
 - Output: JSON array of text boxes with normalized Vision coordinates
-- Failure mode: non-zero helper exit is treated as an OCR error, not as an empty OCR result
-- Post-processing: coordinate conversion, vertical text handling, furigana suppression, confidence filtering, CJK filtering, IoU merge
+- Failure mode: missing, empty, corrupt, timed-out, or non-zero helper runs are treated as OCR errors, not as empty OCR results
+- Candidate selection: helper inspects multiple Vision candidates per observation and favors Japanese/CJK text when available
+- Post-processing: coordinate conversion, text normalization, reading-order sort, furigana suppression, confidence filtering, CJK filtering, duplicate suppression for near-identical detections
 
 ### Translation
 
 - Binary: bundled `llama-server`
 - Bind address: `127.0.0.1:8765`
 - Required launch arg: `--jinja`
-- Required system prompt suffix: `/no_think`
-- Strategy: numbered batched translation with rolling context memory
+- TranslateGemma strategy: sequential structured chat requests per string within each chunk
+- Qwen strategy: numbered batched translation with rolling context memory and `/no_think`
+- Active strategy is selected from the active model ID
 
 ### Overlay IPC
 
@@ -147,7 +152,7 @@ Unsupported in this architecture:
 Rust verification is necessary but not sufficient. A feature is only operationally verified when the app is run with:
 
 1. Screen Recording permission granted
-2. A valid local Qwen3 GGUF model present
+2. A valid local decoder-only GGUF model present
 3. A successful live translation pass over real Japanese content
 
-Those manual checks remain the next required validation step. The OCR helper runtime defect is fixed in this workspace. The latest code changes also patched force-scan behavior and strengthened overlay exclusion, but both still need live verification alongside end-to-end translation with a healthy local sidecar and real corpus assets.
+Those manual checks remain the next required validation step. The 2026-04-26 runtime pass fixed the missing TranslateGemma request formatting, shared the RGBA conversion path between OCR snapshots and styling, hardened overlay capture exclusion with `NSWindowSharingType::None`, and reduced debounce resets from inertial scrolling. Force scan, context clearing, and overlay-exclusion behavior still need live verification alongside end-to-end translation with a healthy local sidecar and real corpus assets.

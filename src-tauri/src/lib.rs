@@ -1,3 +1,5 @@
+// src-tauri/src/lib.rs
+
 mod cli;
 mod downloader;
 mod models;
@@ -25,7 +27,9 @@ use tokio::time::sleep;
 use clap::Parser;
 use cli::CliArgs;
 use crossbeam_channel::{Receiver, Sender};
-use image::{ImageBuffer, RgbaImage};
+use image::ColorType;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowSharingType};
 use rayon::prelude::*;
 use tauri::Emitter;
 
@@ -101,29 +105,39 @@ fn resolve_llama_server_path() -> anyhow::Result<PathBuf> {
     resolve_binary_path("llama-server")
 }
 
-/// Encodes a BGRA `CaptureFrame` pixel buffer to a temporary PNG file.
-///
-/// `ScreenCaptureKit` delivers frames in BGRA order. The `image` crate expects
-/// RGBA, so we swap the B and R channels in-place before encoding.
-fn save_frame_as_png(frame: &capture::CaptureFrame, frame_id: u64) -> anyhow::Result<PathBuf> {
-    let path = PathBuf::from(format!("/tmp/contextura-frame-{frame_id}.png"));
-    let latest_path = PathBuf::from("/tmp/contextura-frame-latest.png");
-
-    // BGRA → RGBA: swap index 0 (B) with index 2 (R) for each pixel
-    let mut rgba_data = frame.buffer.data.clone();
+fn swap_bgra_to_rgba(buffer: &[u8]) -> Vec<u8> {
+    let mut rgba_data = buffer.to_vec();
     for pixel in rgba_data.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
-    let img: RgbaImage = ImageBuffer::from_raw(
-        u32::try_from(frame.buffer.width)?,
-        u32::try_from(frame.buffer.height)?,
-        rgba_data,
-    )
-    .ok_or_else(|| anyhow::anyhow!("Failed to construct image buffer from frame data"))?;
+    rgba_data
+}
 
-    img.save(&path)?;
+/// Encodes an RGBA pixel buffer to a temporary PNG file.
+fn save_frame_as_png(
+    rgba_data: &[u8],
+    width: usize,
+    height: usize,
+    frame_id: u64,
+) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(format!("/tmp/contextura-frame-{frame_id}.png"));
+    let latest_path = PathBuf::from("/tmp/contextura-frame-latest.png");
+
+    image::save_buffer(
+        &path,
+        rgba_data,
+        u32::try_from(width)?,
+        u32::try_from(height)?,
+        ColorType::Rgba8,
+    )?;
     // Keep the latest captured frame on disk for manual inspection/debugging.
-    let _ = img.save(&latest_path);
+    let _ = image::save_buffer(
+        &latest_path,
+        rgba_data,
+        u32::try_from(width)?,
+        u32::try_from(height)?,
+        ColorType::Rgba8,
+    );
 
     Ok(path)
 }
@@ -188,7 +202,13 @@ async fn process_capture_frame(
 ) {
     drain_invalidations(app_handle, client, invalidation_rx).await;
 
-    let png_path = match save_frame_as_png(frame, frame_id) {
+    let rgba_data = swap_bgra_to_rgba(&frame.buffer.data);
+    let png_path = match save_frame_as_png(
+        &rgba_data,
+        frame.buffer.width,
+        frame.buffer.height,
+        frame_id,
+    ) {
         Ok(path) => path,
         Err(error) => {
             log::error!("[OCR] PNG save failed: {error}");
@@ -259,7 +279,7 @@ async fn process_capture_frame(
         }
     };
 
-    let raw_data = &frame.buffer.data;
+    let raw_data = &rgba_data;
     let buf_width = frame.buffer.width;
     let buf_height = frame.buffer.height;
     let scale = frame.scale_factor;
@@ -474,6 +494,11 @@ pub fn run() {
                         }
                     }
                 });
+                #[cfg(target_os = "macos")]
+                if let Ok(ns_window) = overlay.ns_window() {
+                    let ns_window: &NSWindow = unsafe { &*ns_window.cast() };
+                    ns_window.setSharingType(NSWindowSharingType::None);
+                }
 
                 // Only show overlay if wizard is completed
                 if settings.wizard_completed {
@@ -526,6 +551,7 @@ pub fn run() {
                 let client_clone = Arc::clone(&client);
                 let app_handle_sidecar = app_handle.clone();
                 let active_model_path = Arc::new(AsyncMutex::new(PathBuf::new()));
+                let active_model_key = Arc::new(AsyncMutex::new(String::new()));
 
                 // Start Window Tracker on its own thread
                 let mut window_tracker_task = window_tracker;
@@ -537,11 +563,13 @@ pub fn run() {
                     let watchdog_client = Arc::clone(&client);
                     let watchdog_app_handle = app_handle_sidecar.clone();
                     let watchdog_model_path = Arc::clone(&active_model_path);
+                    let watchdog_model_key = Arc::clone(&active_model_key);
                     tokio::spawn(async move {
                         let mut consecutive_failures = 0u8;
                         loop {
                             sleep(Duration::from_secs(5)).await;
                             let model_path = watchdog_model_path.lock().await.clone();
+                            let model_key = watchdog_model_key.lock().await.clone();
                             if model_path.as_os_str().is_empty() {
                                 continue;
                             }
@@ -561,7 +589,11 @@ pub fn run() {
                                         "warning",
                                         5000,
                                     );
-                                    let _ = guard.start_sidecar(&watchdog_app_handle, &model_path);
+                                    let _ = guard.start_sidecar(
+                                        &watchdog_app_handle,
+                                        &model_path,
+                                        &model_key,
+                                    );
                                     consecutive_failures = 0;
                                 }
                             } else {
@@ -602,6 +634,7 @@ pub fn run() {
                         };
 
                         *active_model_path.lock().await = active_model.path.clone();
+                        *active_model_key.lock().await = active_model.entry.id.clone();
 
                         if !active_model.installed {
                             if !warned_missing_model {
@@ -633,7 +666,11 @@ pub fn run() {
                             match client_clone
                                 .lock()
                                 .await
-                                .start_sidecar(&app_handle_sidecar, &active_model.path)
+                                .start_sidecar(
+                                    &app_handle_sidecar,
+                                    &active_model.path,
+                                    &active_model.entry.id,
+                                )
                             {
                                 Ok(()) => {
                                     log::info!(
@@ -873,6 +910,7 @@ async fn run_debug_cli_once(args: &CliArgs, input: &std::path::Path) -> anyhow::
     let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client =
         translation::TranslationClient::new(settings.context_memory_size, 8765);
+    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id);
     translation_client.wait_for_ready().await?;
 
     let (width, height) = image::image_dimensions(input)?;
@@ -934,6 +972,7 @@ async fn run_test_suite(dir: &std::path::Path) -> anyhow::Result<()> {
     let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client =
         translation::TranslationClient::new(settings.context_memory_size, 8765);
+    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id);
     translation_client.wait_for_ready().await?;
 
     let mut failed = false;

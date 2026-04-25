@@ -1,27 +1,28 @@
 # PRODUCTION.md — Road to 10/10
 
-**Document Version:** 4.1.0  
-**Audit Date:** 2026-04-25  
-**Overall Health Score:** 7.0 / 10
+**Document Version:** 4.3.0  
+**Audit Date:** 2026-04-26  
+**Overall Health Score:** 8.0 / 10
 
 ## Overview
 
-The core single-display product path is wired in code, but it is not yet production-ready. Capture, motion gating, OCR, translation, styling, model switching, watchdog recovery, and overlay rendering are present. The standalone OCR helper runtime defect has been fixed in this workspace, but the bundled OCR corpus is still unusable and the end-to-end translation smoke pass still needs to be re-run with a healthy local model.
+The core single-display product path is wired in code, but the overall app is not yet production-ready. Capture, motion gating, OCR, translation, styling, model switching, watchdog recovery, and overlay rendering are present. As of 2026-04-26, the repo also carries the main runtime fixes that were still missing in the last audit: TranslateGemma-specific request formatting, AppKit-level overlay capture protection, shared RGBA styling input, and a debounce fix for inertial-scroll bleed. The bundled OCR corpus is still unusable and the end-to-end translation smoke pass still needs to be re-run with a healthy local model.
 
 ## Current Readiness
 
 | Area                            | Status | Notes                                                          |
 | ------------------------------- | ------ | -------------------------------------------------------------- |
-| Decoder-only model architecture | ✅     | Qwen3 path remains correct for `llama-server`                  |
+| Decoder-only model architecture | ✅     | TranslateGemma and Qwen-style GGUF paths are handled correctly |
 | Shell capabilities for sidecar  | ✅     | `shell:allow-execute` and `shell:allow-spawn` present          |
 | End-to-end pipeline wiring      | ✅     | `lib.rs` drives capture → OCR → translation → overlay          |
-| OCR helper reliability          | ✅     | Standalone `vision-helper` now succeeds on a saved live frame  |
+| OCR helper reliability          | ✅     | Helper now validates input, times out cleanly, and preserves distinct OCR detections |
 | Watchdog + restart              | ✅     | Health failures emit a visible notice and restart the sidecar  |
-| Overlay exclusion from capture  | ✅     | Capture excludes Contextura app windows                        |
+| Overlay exclusion from capture  | ✅     | Capture excludes Contextura windows and marks overlay non-shareable |
 | Model switching                 | ✅     | `Cmd+Shift+G` cycles to the next installed GGUF                |
 | Wizard screens 1–4              | ✅     | Setup now covers permissions, model, controls, and ready state |
 | Real CLI/test corpus flow       | ⚠️     | Code path is live, but the bundled corpus is currently invalid |
 | Sleep/wake capture recovery     | ✅     | Stalled capture stream triggers restart logic                  |
+| Debounce behavior in code       | ✅     | Settling now tolerates low-level inertial scroll bleed         |
 | Manual live smoke verification  | [-]    | Still required with a healthy local model                      |
 | Updater signing pubkey          | [ ]    | `tauri.conf.json` still has an empty pubkey                    |
 | Curated quality-tier policy     | [ ]    | Switching exists, but no RAM gate or curated tier contract     |
@@ -31,13 +32,15 @@ The core single-display product path is wired in code, but it is not yet product
 
 - Removed the old stale blocker list that still claimed the pipeline was unwired.
 - Promoted the implemented work now present in code: capture exclusion, visible runtime notices, live model switching, wizard expansion, CLI wiring, and capture restart handling.
+- Hardened OCR for production use in code by removing destructive overlap merges, preserving Vision geometry, normalizing output text, and validating helper input/timeouts.
+- Added the missing runtime fixes for current translation quality and overlay correctness: TranslateGemma structured requests, AppKit capture blocking, shared RGBA styling input, and improved settling thresholds.
 - Kept only blockers that are still real after this code pass.
 
 ## Remaining Blockers
 
 ### 1. Manual smoke verification
 
-Rust tests and clippy pass, but the app still needs live validation against real Japanese content with:
+Rust tests and `cargo check` pass, but the app still needs live validation against real Japanese content with:
 
 - Screen Recording permission granted
 - A valid GGUF model installed

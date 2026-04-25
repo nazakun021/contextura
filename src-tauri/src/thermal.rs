@@ -1,3 +1,5 @@
+// src-tauri/src/thermal.rs
+
 //! Thermal and power source monitoring.
 //!
 //! Uses `NSProcessInfo` for thermal state (real data) and `pmset -g batt`

@@ -1,3 +1,5 @@
+// src-tauri/src/settings.rs
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -20,7 +22,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            debounce_ms: 300,
+            debounce_ms: 200,
             motion_threshold: 0.05,
             pixel_diff_threshold: 15,
             capture_fps: 30,
@@ -28,7 +30,7 @@ impl Default for Settings {
             furigana_suppression: true,
             show_original_text: false,
             context_memory_size: 6,
-            active_model: "qwen3-0.6b-q4".to_string(),
+            active_model: "translategemma-4b-it.Q4_K_M".to_string(),
             wizard_completed: false,
         }
     }

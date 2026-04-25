@@ -1,3 +1,5 @@
+// src-tauri/src/bin/gen_icon.rs
+
 use image::{Rgba, RgbaImage};
 use std::fs;
 

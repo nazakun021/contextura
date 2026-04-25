@@ -1,3 +1,5 @@
+// src-tauri/src/context.rs
+
 use crossbeam_channel::{Receiver, Sender, bounded};
 use objc2_app_kit::NSWorkspace;
 use std::thread;

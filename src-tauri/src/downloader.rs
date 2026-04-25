@@ -1,3 +1,5 @@
+// src-tauri/src/downloader.rs
+
 use anyhow::Result;
 use reqwest::Client;
 use sha2::{Digest, Sha256};

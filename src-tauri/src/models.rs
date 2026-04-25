@@ -1,10 +1,13 @@
+// src-tauri/src/models.rs
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::settings::Settings;
 
-const DEFAULT_MODEL_FILENAME: &str = "qwen3-0.6b-q4_k_m.gguf";
+#[cfg_attr(not(test), allow(dead_code))]
+const DEFAULT_MODEL_FILENAME: &str = "translategemma-4b-it.Q4_K_M.gguf";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelEntry {
@@ -238,9 +241,6 @@ fn gguf_files(models_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
 }
 
 fn file_stem_id(file_name: &str) -> String {
-    if file_name == DEFAULT_MODEL_FILENAME {
-        return "qwen3-0.6b-q4".to_string();
-    }
     file_name
         .strip_suffix(".gguf")
         .unwrap_or(file_name)
@@ -248,7 +248,7 @@ fn file_stem_id(file_name: &str) -> String {
 }
 
 fn prettify_label(id: &str) -> String {
-    id.replace(['_', '-'], " ")
+    id.replace(['_', '-', '.'], " ")
         .split_whitespace()
         .map(|part| {
             let mut chars = part.chars();
@@ -334,7 +334,7 @@ mod tests {
         let result =
             cycle_active_model(&app_dir, &mut settings).expect("model switch should succeed");
 
-        assert_eq!(result.previous.entry.id, "qwen3-0.6b-q4");
+        assert_eq!(result.previous.entry.id, "translategemma-4b-it.Q4_K_M");
         assert_eq!(result.current.entry.id, "qwen3-4b-q4");
         assert_eq!(settings.active_model, "qwen3-4b-q4");
     }

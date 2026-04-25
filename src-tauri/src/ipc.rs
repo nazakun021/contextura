@@ -1,3 +1,5 @@
+// src-tauri/src/ipc.rs
+
 //! IPC payload types for `translation-update`, `translation-error`, and
 //! `translation-started` events emitted from Rust to the `WebView` frontend.
 //!

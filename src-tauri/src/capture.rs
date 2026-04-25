@@ -1,3 +1,5 @@
+// src-tauri/src/capture.rs
+
 use crossbeam_channel::{Receiver, Sender, bounded};
 use screencapturekit::prelude::*;
 use screencapturekit::shareable_content::{SCShareableContentOptions, SCWindow};

@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Contextura
 
-**Last Updated:** 2026-04-25
+**Last Updated:** 2026-04-26
 
 ## Topology
 
@@ -24,23 +24,25 @@ The backend runtime lives in `src-tauri/src/lib.rs`. `src-tauri/src/main.rs` is 
 2. Frames are copied out of the pixel buffer as BGRA bytes.
 3. `motion.rs` downsamples frames and computes motion ratio.
 4. `DebounceStateMachine` decides whether to clear, wait, or trigger work.
-5. On trigger, or on an explicit force-scan request, `lib.rs` writes `/tmp/contextura-frame-{id}.png` and updates `/tmp/contextura-frame-latest.png`.
-6. `ocr.rs` invokes the bundled Swift `vision-helper`, validates helper exit status, and converts Vision coordinates to overlay coordinates.
-7. `translation.rs` sends numbered translation batches to the local `llama-server` sidecar.
-8. `styling.rs` samples background colors and computes readable foreground colors.
+5. On trigger, or on an explicit force-scan request, `lib.rs` swaps BGRA→RGBA once, writes `/tmp/contextura-frame-{id}.png`, and updates `/tmp/contextura-frame-latest.png`.
+6. `ocr.rs` invokes the bundled Swift `vision-helper`, enforces helper timeouts/failure handling, and converts Vision coordinates to overlay coordinates without mutating Vision box geometry.
+7. `translation.rs` selects a translation mode by active model: numbered batches for Qwen-style models, structured sequential requests for TranslateGemma.
+8. `styling.rs` samples background colors from the same RGBA buffer used to write the OCR snapshot and computes readable foreground colors.
 9. `ipc.rs` payloads are emitted to the overlay window.
 10. `src/overlay.js` renders translated boxes into the transparent overlay DOM.
 
 ## Key Runtime Decisions
 
 - Capture pixel format is explicitly `BGRA`.
-- Snapshot encoding converts BGRA to RGBA before PNG save.
+- Snapshot encoding converts BGRA to RGBA once and reuses that RGBA buffer for styling.
 - Display scale factor is derived from ScreenCaptureKit display metadata, not hardcoded.
-- Translation uses Qwen3-compatible `--jinja` plus `/no_think`.
+- Translation uses model-specific prompting: Qwen-style numbered batches with `/no_think`, or TranslateGemma structured chat requests without `/no_think`.
 - Force scan reuses the latest cached capture frame instead of waiting for another stream tick.
 - A watchdog restarts `llama-server` after repeated failed health checks.
 - Context memory is cleared on app switch and manual reset.
-- Capture exclusion now prefers direct window exclusion for Contextura-owned windows, with app-level exclusion as fallback.
+- Capture exclusion now prefers direct window exclusion for Contextura-owned windows, and the overlay window is also marked `NSWindowSharingType::None`.
+- OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
+- Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
 
 ## Modules
 
@@ -83,20 +85,21 @@ The overlay listens for:
 
 - Swift binary in `src-tauri/src/bin/vision-helper.swift`
 - Uses Apple Vision OCR
-- Accepts an image path and returns JSON OCR boxes on success
-- Re-verified on `/tmp/contextura-frame-latest.png` in this workspace
+- Accepts an image path, validates that the file is readable/non-empty, and returns JSON OCR boxes on success
+- Chooses among multiple Vision candidates per observation, favoring Japanese/CJK text when present
 
 ### `llama-server`
 
 - Local translation server
 - Runs on `127.0.0.1:8765`
 - Requires a decoder-only GGUF model
+- Default repo model target is `translategemma-4b-it.Q4_K_M.gguf`
 - Restarted by watchdog on repeated health-check failures
 
 ## Remaining Architectural Gaps
 
 - Live verification is still needed for the cached-frame force scan path
-- Live verification is still needed to confirm overlay self-capture is fully gone
+- Live verification is still needed to confirm overlay self-capture is fully gone in dev and packaged builds
 - `test-corpus/` fixtures need to be replaced with real images
 - Updater signing still needs a real public key
 - Multi-display routing is not implemented
