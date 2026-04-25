@@ -24,7 +24,7 @@ The backend runtime lives in `src-tauri/src/lib.rs`. `src-tauri/src/main.rs` is 
 2. Frames are copied out of the pixel buffer as BGRA bytes.
 3. `motion.rs` downsamples frames and computes motion ratio.
 4. `DebounceStateMachine` decides whether to clear, wait, or trigger work.
-5. On trigger, `lib.rs` writes `/tmp/contextura-frame-{id}.png` and updates `/tmp/contextura-frame-latest.png`.
+5. On trigger, or on an explicit force-scan request, `lib.rs` writes `/tmp/contextura-frame-{id}.png` and updates `/tmp/contextura-frame-latest.png`.
 6. `ocr.rs` invokes the bundled Swift `vision-helper`, validates helper exit status, and converts Vision coordinates to overlay coordinates.
 7. `translation.rs` sends numbered translation batches to the local `llama-server` sidecar.
 8. `styling.rs` samples background colors and computes readable foreground colors.
@@ -37,8 +37,10 @@ The backend runtime lives in `src-tauri/src/lib.rs`. `src-tauri/src/main.rs` is 
 - Snapshot encoding converts BGRA to RGBA before PNG save.
 - Display scale factor is derived from ScreenCaptureKit display metadata, not hardcoded.
 - Translation uses Qwen3-compatible `--jinja` plus `/no_think`.
+- Force scan reuses the latest cached capture frame instead of waiting for another stream tick.
 - A watchdog restarts `llama-server` after repeated failed health checks.
 - Context memory is cleared on app switch and manual reset.
+- Capture exclusion now prefers direct window exclusion for Contextura-owned windows, with app-level exclusion as fallback.
 
 ## Modules
 
@@ -82,7 +84,7 @@ The overlay listens for:
 - Swift binary in `src-tauri/src/bin/vision-helper.swift`
 - Uses Apple Vision OCR
 - Accepts an image path and returns JSON OCR boxes on success
-- Current known issue: the standalone bundled binary is still failing on real images in this workspace, even though direct Swift Vision probes succeed
+- Re-verified on `/tmp/contextura-frame-latest.png` in this workspace
 
 ### `llama-server`
 
@@ -93,7 +95,8 @@ The overlay listens for:
 
 ## Remaining Architectural Gaps
 
-- Standalone `vision-helper` runtime behavior still needs to be stabilized
+- Live verification is still needed for the cached-frame force scan path
+- Live verification is still needed to confirm overlay self-capture is fully gone
 - `test-corpus/` fixtures need to be replaced with real images
 - Updater signing still needs a real public key
 - Multi-display routing is not implemented

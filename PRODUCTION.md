@@ -15,7 +15,7 @@ The core single-display product path is wired in code, but it is not yet product
 | Decoder-only model architecture | ✅     | Qwen3 path remains correct for `llama-server`                  |
 | Shell capabilities for sidecar  | ✅     | `shell:allow-execute` and `shell:allow-spawn` present          |
 | End-to-end pipeline wiring      | ✅     | `lib.rs` drives capture → OCR → translation → overlay          |
-| OCR helper reliability          | ✅     | Standalone `vision-helper` now succeeds on a saved live frame |
+| OCR helper reliability          | ✅     | Standalone `vision-helper` now succeeds on a saved live frame  |
 | Watchdog + restart              | ✅     | Health failures emit a visible notice and restart the sidecar  |
 | Overlay exclusion from capture  | ✅     | Capture excludes Contextura app windows                        |
 | Model switching                 | ✅     | `Cmd+Shift+G` cycles to the next installed GGUF                |
@@ -75,6 +75,7 @@ Not yet verified in this workspace:
 - live runtime translation pass
 - model switching during a running GUI session
 - capture restart behavior after real sleep/wake
+
 ## Ship Criteria
 
 To move from this state to a production-ready 1.0:

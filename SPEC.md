@@ -24,29 +24,29 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 ### Code-integrated features
 
-| Area                          | Status | Notes                                                                                       |
-| ----------------------------- | ------ | ------------------------------------------------------------------------------------------- |
-| Tauri app bootstrap           | ✅     | `main.rs` stays thin; `lib.rs` owns runtime                                                 |
-| Screen capture                | ✅     | Single display, explicit BGRA                                                               |
-| Motion detection and debounce | ✅     | Wired into frame loop                                                                       |
-| PNG snapshot writing          | ✅     | Temp file plus persistent latest debug copy                                                 |
-| OCR subprocess                | ✅     | Bundled `vision-helper` builds from source and returns OCR JSON on a saved live frame        |
-| Translation sidecar           | ✅     | Qwen3-compatible args, health check, restart support                                        |
-| Dynamic styling               | ✅     | WCAG-based foreground/background selection                                                  |
-| IPC to overlay                | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`       |
-| Overlay toggle hotkey         | ✅     | `Cmd+Shift+T`                                                                               |
-| Force OCR hotkey              | ✅     | `Cmd+Shift+R`                                                                               |
-| Manual memory reset           | ✅     | `Cmd+Shift+M`                                                                               |
-| Tray primary actions          | ✅     | Toggle, translate now, clear context                                                        |
-| Model switching               | ✅     | `Cmd+Shift+G` cycles to next installed local model                                          |
-| Context invalidation          | ✅     | App switch clears memory and overlay                                                        |
-| Watchdog                      | ✅     | Restarts sidecar after repeated health failures                                             |
-| Overlay capture exclusion     | ✅     | Capture excludes Contextura app windows                                                     |
-| Wizard screens 1–4            | ✅     | Setup flow covers permissions, model, controls, ready state                                 |
-| Real CLI OCR/translation path | ⚠️     | Code path is live, but end-to-end verification still depends on sidecar readiness and a valid corpus |
-| Capture restart handling      | ✅     | Stalled capture stream triggers restart path                                                |
-| Thermal + battery awareness   | ✅     | Thermal API + `pmset -g batt`                                                               |
-| Optional Sentry               | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                   |
+| Area                          | Status | Notes                                                                                                     |
+| ----------------------------- | ------ | --------------------------------------------------------------------------------------------------------- |
+| Tauri app bootstrap           | ✅     | `main.rs` stays thin; `lib.rs` owns runtime                                                               |
+| Screen capture                | ✅     | Single display, explicit BGRA                                                                             |
+| Motion detection and debounce | ✅     | Wired into frame loop                                                                                     |
+| PNG snapshot writing          | ✅     | Temp file plus persistent latest debug copy                                                               |
+| OCR subprocess                | ✅     | Bundled `vision-helper` builds from source and returns OCR JSON on a saved live frame                     |
+| Translation sidecar           | ✅     | Qwen3-compatible args, health check, restart support                                                      |
+| Dynamic styling               | ✅     | WCAG-based foreground/background selection                                                                |
+| IPC to overlay                | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`                     |
+| Overlay toggle hotkey         | ✅     | `Cmd+Shift+T`                                                                                             |
+| Force OCR hotkey              | ✅     | `Cmd+Shift+R`; 2026-04-25 patch now reuses the latest cached frame, live re-check pending                 |
+| Manual memory reset           | ✅     | `Cmd+Shift+M`                                                                                             |
+| Tray primary actions          | ✅     | Toggle, translate now, clear context                                                                      |
+| Model switching               | ✅     | `Cmd+Shift+G` cycles to next installed local model                                                        |
+| Context invalidation          | ✅     | App switch clears memory and overlay                                                                      |
+| Watchdog                      | ✅     | Restarts sidecar after repeated health failures                                                           |
+| Overlay capture exclusion     | ✅     | Capture now excludes matching Contextura windows directly, with app-level fallback; live re-check pending |
+| Wizard screens 1–4            | ✅     | Setup flow covers permissions, model, controls, ready state                                               |
+| Real CLI OCR/translation path | ⚠️     | Code path is live, but end-to-end verification still depends on sidecar readiness and a valid corpus      |
+| Capture restart handling      | ✅     | Stalled capture stream triggers restart path                                                              |
+| Thermal + battery awareness   | ✅     | Thermal API + `pmset -g batt`                                                                             |
+| Optional Sentry               | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                 |
 
 ### Still pending
 
@@ -83,6 +83,7 @@ Unsupported in this architecture:
 - Output: `CaptureFrame { data, width, height, display_id, scale_factor }`
 - Scale factor: derived from the display’s pixel width divided by its point-space frame width
 - Exclusion: Contextura’s own app windows are excluded from display capture
+- Force scan: manual requests run against the latest cached frame if one is available
 - Recovery: a stalled capture stream causes the runtime to rebuild the stream automatically
 
 ### Motion Gate
@@ -149,4 +150,4 @@ Rust verification is necessary but not sufficient. A feature is only operational
 2. A valid local Qwen3 GGUF model present
 3. A successful live translation pass over real Japanese content
 
-Those manual checks remain the next required validation step. The OCR helper runtime defect is fixed in this workspace; the remaining verification gap is end-to-end translation with a healthy local sidecar and real corpus assets.
+Those manual checks remain the next required validation step. The OCR helper runtime defect is fixed in this workspace. The latest code changes also patched force-scan behavior and strengthened overlay exclusion, but both still need live verification alongside end-to-end translation with a healthy local sidecar and real corpus assets.

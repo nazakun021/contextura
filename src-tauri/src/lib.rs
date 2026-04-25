@@ -24,7 +24,7 @@ use tokio::time::sleep;
 
 use clap::Parser;
 use cli::CliArgs;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use image::{ImageBuffer, RgbaImage};
 use rayon::prelude::*;
 use tauri::Emitter;
@@ -147,6 +147,164 @@ pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>
             message,
         },
     );
+}
+
+async fn drain_invalidations(
+    app_handle: &tauri::AppHandle,
+    client: &Arc<AsyncMutex<translation::TranslationClient>>,
+    invalidation_rx: &Receiver<context::InvalidationReason>,
+) {
+    while let Ok(reason) = invalidation_rx.try_recv() {
+        log::info!("[Context] Invalidation: {reason:?}");
+        match reason {
+            context::InvalidationReason::AppSwitch { from, to } => {
+                log::info!("[Context] App switch: {from} -> {to} — clearing memory");
+                client.lock().await.memory.clear();
+                let _ = app_handle.emit("translation-clear", ());
+            }
+            context::InvalidationReason::ManualReset => {
+                client.lock().await.memory.clear();
+                emit_runtime_notice(
+                    app_handle,
+                    "Context Cleared",
+                    "Translation memory was cleared.",
+                    "New translations will start without prior context.",
+                    "info",
+                    2500,
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn process_capture_frame(
+    app_handle: &tauri::AppHandle,
+    client: &Arc<AsyncMutex<translation::TranslationClient>>,
+    ocr_engine: &ocr::OcrEngine,
+    invalidation_rx: &Receiver<context::InvalidationReason>,
+    frame: &capture::CaptureFrame,
+    frame_id: u64,
+) {
+    drain_invalidations(app_handle, client, invalidation_rx).await;
+
+    let png_path = match save_frame_as_png(frame, frame_id) {
+        Ok(path) => path,
+        Err(error) => {
+            log::error!("[OCR] PNG save failed: {error}");
+            return;
+        }
+    };
+
+    let _ = app_handle.emit(
+        "translation-started",
+        TranslationStartedPayload {
+            display_id: frame.display_id,
+        },
+    );
+
+    #[allow(clippy::cast_precision_loss)]
+    let ocr_results = ocr_engine.recognize(
+        &png_path,
+        frame.buffer.width as f32,
+        frame.buffer.height as f32,
+        frame.scale_factor,
+    );
+    let _ = std::fs::remove_file(&png_path);
+
+    let ocr_results = match ocr_results {
+        Ok(results) => results,
+        Err(error) => {
+            log::error!("[OCR] Recognition failed: {error}");
+            emit_runtime_notice(
+                app_handle,
+                "OCR Failed",
+                "The Vision helper could not read the current frame.",
+                error.to_string(),
+                "warning",
+                4000,
+            );
+            return;
+        }
+    };
+
+    if ocr_results.is_empty() {
+        log::debug!("[OCR] No CJK text found in frame {frame_id}");
+        return;
+    }
+
+    let texts = ocr_results
+        .iter()
+        .map(|result| result.text.clone())
+        .collect::<Vec<_>>();
+
+    let translations = {
+        let mut guard = client.lock().await;
+        guard.translate_batch(&texts).await
+    };
+
+    let translations = match translations {
+        Ok(translations) => translations,
+        Err(error) => {
+            log::error!("[Translation] Batch failed: {error}");
+            emit_runtime_notice(
+                app_handle,
+                "Translation Failed",
+                "The local model did not return a valid translation batch.",
+                error.to_string(),
+                "warning",
+                5000,
+            );
+            return;
+        }
+    };
+
+    let raw_data = &frame.buffer.data;
+    let buf_width = frame.buffer.width;
+    let buf_height = frame.buffer.height;
+    let scale = frame.scale_factor;
+    let styled_boxes = ocr_results
+        .par_iter()
+        .zip(translations.par_iter())
+        .enumerate()
+        .map(|(index, (ocr, translation))| {
+            let bg = StylingEngine::sample_rect_ring(
+                raw_data,
+                buf_width,
+                buf_height,
+                ocr.bounding_box.x,
+                ocr.bounding_box.y,
+                ocr.bounding_box.width,
+                ocr.bounding_box.height,
+                scale,
+            );
+            let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
+            TranslationBox {
+                id: format!("{frame_id}-{index}"),
+                translated: translation.clone(),
+                original: ocr.text.clone(),
+                x: ocr.bounding_box.x,
+                y: ocr.bounding_box.y,
+                width: ocr.bounding_box.width,
+                height: ocr.bounding_box.height,
+                is_vertical: ocr.is_vertical,
+                bg_color: bg.to_css_color(),
+                fg_color: fg_color.to_string(),
+                confidence: ocr.confidence,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let payload = TranslationPayload {
+        boxes: styled_boxes,
+        scale_factor: scale,
+        display_id: frame.display_id,
+        frame_id,
+    };
+
+    if let Err(error) = app_handle.emit("translation-update", &payload) {
+        log::error!("[IPC] Failed to emit translation-update: {error}");
+    }
 }
 
 fn open_models_folder() -> Result<(), String> {
@@ -282,6 +440,8 @@ pub fn run() {
             let vision_helper_path =
                 resolve_vision_helper_path(app).expect("Failed to resolve vision-helper path");
             let app_bundle_id = app.config().identifier.clone();
+            let app_process_id = i32::try_from(std::process::id()).unwrap_or_default();
+            let app_name_hint = app.package_info().name.clone();
 
             // --- Subsystem Initialization ---
             let (window_tracker, invalidation_rx) = context::AppWindowTracker::new();
@@ -525,8 +685,12 @@ pub fn run() {
                         }
 
                         let ocr_engine_loop = Arc::clone(&ocr_engine);
-                        let frame_rx =
-                            display_manager.start_capture(0, &[app_bundle_id_sidecar.as_str()]);
+                        let frame_rx = display_manager.start_capture(
+                            0,
+                            &[app_bundle_id_sidecar.as_str()],
+                            &[app_process_id],
+                            &[app_name_hint.as_str()],
+                        );
                         let mut motion_detector = MotionDetector::new(
                             runtime_settings.pixel_diff_threshold,
                             runtime_settings.edge_inset_percent,
@@ -536,6 +700,7 @@ pub fn run() {
                             runtime_settings.motion_threshold,
                         );
                         let mut pending_force_scan = false;
+                        let mut latest_frame: Option<capture::CaptureFrame> = None;
                         let mut last_frame_at = Instant::now();
 
                         log::info!("[Pipeline] Entering capture loop");
@@ -545,7 +710,30 @@ pub fn run() {
 
                             while let Ok(command) = pipeline_rx.try_recv() {
                                 match command {
-                                    PipelineCommand::ForceScan => pending_force_scan = true,
+                                    PipelineCommand::ForceScan => {
+                                        if let Some(frame) = latest_frame.clone() {
+                                            log::info!(
+                                                "[Pipeline] Force scan requested on cached frame"
+                                            );
+                                            let current_frame_id = frame_id;
+                                            frame_id += 1;
+                                            process_capture_frame(
+                                                &app_handle_sidecar,
+                                                &client_clone,
+                                                &ocr_engine_loop,
+                                                &invalidation_rx,
+                                                &frame,
+                                                current_frame_id,
+                                            )
+                                            .await;
+                                            pending_force_scan = false;
+                                        } else {
+                                            log::info!(
+                                                "[Pipeline] Force scan queued until the first frame arrives"
+                                            );
+                                            pending_force_scan = true;
+                                        }
+                                    }
                                     PipelineCommand::ReloadRuntime { reason } => {
                                         log::info!("[Pipeline] Reload requested: {reason}");
                                         sidecar_started = false;
@@ -570,6 +758,7 @@ pub fn run() {
                                 continue;
                             };
                             last_frame_at = Instant::now();
+                            latest_frame = Some(frame.clone());
 
                             let is_forced = std::mem::take(&mut pending_force_scan);
                             let thumbnail = motion_detector.downsample(
@@ -591,144 +780,15 @@ pub fn run() {
                                 DebounceEvent::Triggered => {
                                     let current_frame_id = frame_id;
                                     frame_id += 1;
-
-                                    while let Ok(reason) = invalidation_rx.try_recv() {
-                                        log::info!("[Context] Invalidation: {reason:?}");
-                                        match reason {
-                                            context::InvalidationReason::AppSwitch { from, to } => {
-                                                log::info!(
-                                                    "[Context] App switch: {from} -> {to} — clearing memory"
-                                                );
-                                                client_clone.lock().await.memory.clear();
-                                                let _ = app_handle_sidecar.emit("translation-clear", ());
-                                            }
-                                            context::InvalidationReason::ManualReset => {
-                                                client_clone.lock().await.memory.clear();
-                                            }
-                                        }
-                                    }
-
-                                    let png_path = match save_frame_as_png(&frame, current_frame_id) {
-                                        Ok(path) => path,
-                                        Err(error) => {
-                                            log::error!("[OCR] PNG save failed: {error}");
-                                            continue;
-                                        }
-                                    };
-
-                                    let _ = app_handle_sidecar.emit(
-                                        "translation-started",
-                                        TranslationStartedPayload {
-                                            display_id: frame.display_id,
-                                        },
-                                    );
-
-                                    let ocr_results = ocr_engine_loop.recognize(
-                                        &png_path,
-                                        frame.buffer.width as f32,
-                                        frame.buffer.height as f32,
-                                        frame.scale_factor,
-                                    );
-                                    let _ = std::fs::remove_file(&png_path);
-
-                                    let ocr_results = match ocr_results {
-                                        Ok(results) => results,
-                                        Err(error) => {
-                                            log::error!("[OCR] Recognition failed: {error}");
-                                            emit_runtime_notice(
-                                                &app_handle_sidecar,
-                                                "OCR Failed",
-                                                "The Vision helper could not read the current frame.",
-                                                error.to_string(),
-                                                "warning",
-                                                4000,
-                                            );
-                                            continue;
-                                        }
-                                    };
-
-                                    if ocr_results.is_empty() {
-                                        log::debug!("[OCR] No CJK text found in frame {current_frame_id}");
-                                        continue;
-                                    }
-
-                                    let texts = ocr_results
-                                        .iter()
-                                        .map(|result| result.text.clone())
-                                        .collect::<Vec<_>>();
-
-                                    let translations = {
-                                        let mut guard = client_clone.lock().await;
-                                        guard.translate_batch(&texts).await
-                                    };
-
-                                    let translations = match translations {
-                                        Ok(translations) => translations,
-                                        Err(error) => {
-                                            log::error!("[Translation] Batch failed: {error}");
-                                            emit_runtime_notice(
-                                                &app_handle_sidecar,
-                                                "Translation Failed",
-                                                "The local model did not return a valid translation batch.",
-                                                error.to_string(),
-                                                "warning",
-                                                5000,
-                                            );
-                                            continue;
-                                        }
-                                    };
-
-                                    let raw_data = &frame.buffer.data;
-                                    let buf_width = frame.buffer.width;
-                                    let buf_height = frame.buffer.height;
-                                    let scale = frame.scale_factor;
-                                    let styled_boxes = ocr_results
-                                        .par_iter()
-                                        .zip(translations.par_iter())
-                                        .enumerate()
-                                        .map(|(index, (ocr, translation))| {
-                                            let bg = StylingEngine::sample_rect_ring(
-                                                raw_data,
-                                                buf_width,
-                                                buf_height,
-                                                ocr.bounding_box.x,
-                                                ocr.bounding_box.y,
-                                                ocr.bounding_box.width,
-                                                ocr.bounding_box.height,
-                                                scale,
-                                            );
-                                            let fg_color =
-                                                StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
-                                            TranslationBox {
-                                                id: format!("{current_frame_id}-{index}"),
-                                                translated: translation.clone(),
-                                                original: ocr.text.clone(),
-                                                x: ocr.bounding_box.x,
-                                                y: ocr.bounding_box.y,
-                                                width: ocr.bounding_box.width,
-                                                height: ocr.bounding_box.height,
-                                                is_vertical: ocr.is_vertical,
-                                                bg_color: bg.to_css_color(),
-                                                fg_color: fg_color.to_string(),
-                                                confidence: ocr.confidence,
-                                            }
-                                        })
-                                        .collect::<Vec<_>>();
-
-                                    let payload = TranslationPayload {
-                                        boxes: styled_boxes,
-                                        scale_factor: scale,
-                                        display_id: frame.display_id,
-                                        frame_id: current_frame_id,
-                                    };
-
-                                    if let Err(error) =
-                                        app_handle_sidecar.emit("translation-update", &payload)
-                                    {
-                                        log::error!(
-                                            "[IPC] Failed to emit translation-update: {error}"
-                                        );
-                                    }
+                                    process_capture_frame(
+                                        &app_handle_sidecar,
+                                        &client_clone,
+                                        &ocr_engine_loop,
+                                        &invalidation_rx,
+                                        &frame,
+                                        current_frame_id,
+                                    )
+                                    .await;
                                 }
                                 DebounceEvent::None => {}
                             }

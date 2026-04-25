@@ -4,7 +4,7 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 **Platform:** macOS 13+ on Apple Silicon  
 **Stack:** Rust, Tauri v2, ScreenCaptureKit, Swift Vision helper, `llama-server`, vanilla HTML/CSS/JS  
-**Status:** The single-display capture, translation, and overlay pipeline is wired in code. The bundled OCR helper now builds from source and was re-verified on `/tmp/contextura-frame-latest.png` in this workspace, but a full live translation smoke pass is still pending.
+**Status:** The single-display capture, translation, and overlay pipeline is wired in code. The bundled OCR helper now builds from source and was re-verified on `/tmp/contextura-frame-latest.png` in this workspace. On 2026-04-25, the force-scan path was updated to reuse the latest cached frame and capture exclusion was hardened to exclude matching app windows directly, but both still need live app verification.
 
 ## Implemented In Code
 
@@ -13,9 +13,9 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 - OCR subprocess integration through the bundled `vision-helper`
 - Local translation through bundled `llama-server`
 - Dynamic overlay styling for contrast
-- Overlay toggle, force-scan, memory reset, model switching, and quit hotkeys
+- Overlay toggle, cached-frame force-scan, memory reset, model switching, and quit hotkeys
 - App-switch invalidation, watchdog-based sidecar restart, and capture-stream restart handling
-- Overlay self-capture exclusion for Contextura windows
+- Overlay self-capture exclusion using direct window matching plus app-level fallback
 - A 4-step first-run wizard
 - `--debug-cli --input` and `--test-suite` code paths routed through the live pipeline
 
@@ -23,7 +23,7 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 - The checked-in `test-corpus/*.png` fixtures are currently empty placeholder files and are not reliable verification assets.
 - Manual runtime smoke verification is still pending with a valid local model.
-- The translation sidecar still needs a valid local model and successful live health checks for end-to-end verification.
+- The 2026-04-25 force-scan and overlay-exclusion fixes need live confirmation in the running app.
 
 ## Current Limits
 
@@ -86,13 +86,13 @@ On first launch, Contextura shows a 4-step setup wizard covering Screen Recordin
 
 ## Hotkeys
 
-| Shortcut      | Action                                   | Status |
-| ------------- | ---------------------------------------- | ------ |
-| `Cmd+Shift+T` | Toggle overlay visibility                | Live   |
-| `Cmd+Shift+R` | Force immediate OCR/translation          | Live   |
-| `Cmd+Shift+M` | Clear translation memory                 | Live   |
-| `Cmd+Shift+Q` | Quit                                     | Live   |
-| `Cmd+Shift+G` | Switch to the next installed local model | Live   |
+| Shortcut      | Action                                   | Status          |
+| ------------- | ---------------------------------------- | --------------- |
+| `Cmd+Shift+T` | Toggle overlay visibility                | Live            |
+| `Cmd+Shift+R` | Force immediate OCR/translation          | Re-test pending |
+| `Cmd+Shift+M` | Clear translation memory                 | Live            |
+| `Cmd+Shift+Q` | Quit                                     | Live            |
+| `Cmd+Shift+G` | Switch to the next installed local model | Live            |
 
 ## Runtime Notes
 
@@ -100,7 +100,7 @@ On first launch, Contextura shows a 4-step setup wizard covering Screen Recordin
 - The latest captured frame is also kept at `/tmp/contextura-frame-latest.png` for debugging.
 - `llama-server` listens only on `127.0.0.1:8765`.
 - Qwen3 uses `--jinja`, and translation requests include `/no_think` in the system prompt.
-- Screen capture excludes Contextura’s own app windows to avoid self-capture loops.
+- Screen capture now prefers excluding matching Contextura windows directly, with app-level exclusion as fallback, to avoid self-capture loops.
 - If capture stalls after display sleep/wake or a permission reset, the runtime rebuilds the capture stream.
 
 ## CLI
