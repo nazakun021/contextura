@@ -72,8 +72,8 @@ fn sync_if_changed(source: &Path, destination: &Path) {
     let source_bytes = std::fs::read(source)
         .unwrap_or_else(|error| panic!("Failed to read compiled vision-helper: {error}"));
 
-    let destination_matches = std::fs::read(destination)
-        .is_ok_and(|existing| existing == source_bytes);
+    let destination_matches =
+        std::fs::read(destination).is_ok_and(|existing| existing == source_bytes);
 
     if destination_matches {
         return;
