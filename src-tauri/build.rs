@@ -18,7 +18,10 @@ fn compile_vision_helper() {
         std::env::var("CARGO_MANIFEST_DIR")
             .unwrap_or_else(|error| panic!("CARGO_MANIFEST_DIR was not set: {error}")),
     );
-    let helper_source = manifest_dir.join("src").join("bin").join("vision-helper.swift");
+    let helper_source = manifest_dir
+        .join("src")
+        .join("bin")
+        .join("vision-helper.swift");
     let binaries_dir = manifest_dir.join("binaries");
     let helper_binary = binaries_dir.join("vision-helper-aarch64-apple-darwin");
     let helper_alias = binaries_dir.join("vision-helper");

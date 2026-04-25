@@ -163,12 +163,10 @@ impl OcrEngine {
                     // Box height < 40% of overlapping box height -> furigana
                     if candidate.bounding_box.height
                         < (parent.bounding_box.height * FURIGANA_HEIGHT_RATIO)
-                        && candidate
-                            .bounding_box
-                            .overlaps_horizontally(
-                                &parent.bounding_box,
-                                FURIGANA_HORIZONTAL_OVERLAP,
-                            )
+                        && candidate.bounding_box.overlaps_horizontally(
+                            &parent.bounding_box,
+                            FURIGANA_HORIZONTAL_OVERLAP,
+                        )
                     {
                         to_mark_furigana.push(i);
                         break;
@@ -250,7 +248,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn assert_close(actual: f32, expected: f32) {
-        assert!((actual - expected).abs() < 0.001, "expected {expected}, got {actual}");
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "expected {expected}, got {actual}"
+        );
     }
 
     fn engine(furigana_suppression: bool) -> OcrEngine {

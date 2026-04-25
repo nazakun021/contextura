@@ -776,7 +776,11 @@ fn spawn_cli_sidecar(
 ) -> anyhow::Result<std::process::Child> {
     use std::process::{Command, Stdio};
 
-    let child = Command::new(resolve_llama_server_path()?)
+    let llama_path = resolve_llama_server_path()?;
+    let binaries_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+
+    let child = Command::new(&llama_path)
+        .env("DYLD_FALLBACK_LIBRARY_PATH", binaries_dir)
         .arg("--model")
         .arg(model_path)
         .arg("--port")
@@ -788,8 +792,8 @@ fn spawn_cli_sidecar(
         .arg("--host")
         .arg("127.0.0.1")
         .arg("--jinja")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .spawn()?;
     Ok(child)
 }
@@ -964,7 +968,7 @@ fn run_cli(args: &CliArgs) {
         match runtime.block_on(run_test_suite(dir)) {
             Ok(()) => println!("All corpus checks passed."),
             Err(error) => {
-                eprintln!("Test suite failed: {error}");
+                eprintln!("Test suite failed: {error:?}");
                 std::process::exit(1);
             }
         }

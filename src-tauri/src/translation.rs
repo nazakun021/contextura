@@ -127,7 +127,7 @@ impl TranslationClient {
                 return Ok(());
             }
             attempts += 1;
-            if attempts > 30 {
+            if attempts > 120 {
                 return Err(anyhow::anyhow!("Llama-server health check timed out"));
             }
             sleep(Duration::from_millis(500)).await;
