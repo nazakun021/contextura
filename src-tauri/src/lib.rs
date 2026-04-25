@@ -836,10 +836,19 @@ async fn run_debug_cli_once(args: &CliArgs, input: &std::path::Path) -> anyhow::
     println!("{json}");
     let _ = sidecar.kill();
     let _ = sidecar.wait();
+
     Ok(())
 }
 
 async fn run_test_suite(dir: &std::path::Path) -> anyhow::Result<()> {
+    struct SidecarGuard(std::process::Child);
+    impl Drop for SidecarGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     let mut entries = std::fs::read_dir(dir)?
         .flatten()
         .map(|entry| entry.path())
@@ -860,7 +869,7 @@ async fn run_test_suite(dir: &std::path::Path) -> anyhow::Result<()> {
         );
     }
 
-    let mut sidecar = spawn_cli_sidecar(&active_model.path, 8765)?;
+    let sidecar = SidecarGuard(spawn_cli_sidecar(&active_model.path, 8765)?);
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client =
@@ -915,8 +924,8 @@ async fn run_test_suite(dir: &std::path::Path) -> anyhow::Result<()> {
         }
     }
 
-    let _ = sidecar.kill();
-    let _ = sidecar.wait();
+    // Guard will automatically kill the sidecar when dropped.
+    drop(sidecar);
 
     if failed {
         anyhow::bail!("One or more corpus checks failed");

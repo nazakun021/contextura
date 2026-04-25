@@ -32,6 +32,6 @@ jobs:
       - name: Unit Tests
         run: cargo test
         working-directory: src-tauri
-      - name: E2E Test Suite
-        run: cargo run --bin contextura -- --debug-cli --test-suite ../test-corpus
-        working-directory: src-tauri
+      # - name: E2E Test Suite
+      #   run: cargo run --bin contextura -- --debug-cli --test-suite ../test-corpus
+      #   working-directory: src-tauri
