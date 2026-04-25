@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Contextura
 
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-04-25
 
 ## Topology
 
@@ -25,7 +25,7 @@ The backend runtime lives in `src-tauri/src/lib.rs`. `src-tauri/src/main.rs` is 
 3. `motion.rs` downsamples frames and computes motion ratio.
 4. `DebounceStateMachine` decides whether to clear, wait, or trigger work.
 5. On trigger, `lib.rs` writes `/tmp/contextura-frame-{id}.png` and updates `/tmp/contextura-frame-latest.png`.
-6. `ocr.rs` invokes the bundled Swift `vision-helper` and converts Vision coordinates to overlay coordinates.
+6. `ocr.rs` invokes the bundled Swift `vision-helper`, validates helper exit status, and converts Vision coordinates to overlay coordinates.
 7. `translation.rs` sends numbered translation batches to the local `llama-server` sidecar.
 8. `styling.rs` samples background colors and computes readable foreground colors.
 9. `ipc.rs` payloads are emitted to the overlay window.
@@ -42,21 +42,21 @@ The backend runtime lives in `src-tauri/src/lib.rs`. `src-tauri/src/main.rs` is 
 
 ## Modules
 
-| Module | Role | Status |
-| --- | --- | --- |
-| `lib.rs` | Tauri setup and orchestration | Active |
-| `capture.rs` | Screen frame capture | Active |
-| `motion.rs` | Motion detection and debounce | Active |
-| `ocr.rs` | OCR subprocess integration | Active |
-| `translation.rs` | Sidecar lifecycle and translation batching | Active |
-| `styling.rs` | Overlay contrast logic | Active |
-| `context.rs` | App-switch invalidation | Active |
-| `thermal.rs` | Thermal and battery throttling signals | Active |
-| `hotkeys.rs` | Global shortcuts | Active |
-| `tray.rs` | Tray controls | Active |
-| `ipc.rs` | IPC payload contracts | Active |
-| `downloader.rs` | Model download helper | Present but not integrated |
-| `cli.rs` | CLI surface | Present but still limited |
+| Module           | Role                                       | Status                     |
+| ---------------- | ------------------------------------------ | -------------------------- |
+| `lib.rs`         | Tauri setup and orchestration              | Active                     |
+| `capture.rs`     | Screen frame capture                       | Active                     |
+| `motion.rs`      | Motion detection and debounce              | Active                     |
+| `ocr.rs`         | OCR subprocess integration and filtering   | Active                     |
+| `translation.rs` | Sidecar lifecycle and translation batching | Active                     |
+| `styling.rs`     | Overlay contrast logic                     | Active                     |
+| `context.rs`     | App-switch invalidation                    | Active                     |
+| `thermal.rs`     | Thermal and battery throttling signals     | Active                     |
+| `hotkeys.rs`     | Global shortcuts                           | Active                     |
+| `tray.rs`        | Tray controls                              | Active                     |
+| `ipc.rs`         | IPC payload contracts                      | Active                     |
+| `downloader.rs`  | Model download helper                      | Present but not integrated |
+| `cli.rs`         | CLI surface                                | Active                     |
 
 ## Frontend
 
@@ -79,9 +79,10 @@ The overlay listens for:
 
 ### `vision-helper`
 
-- Swift binary
+- Swift binary in `src-tauri/src/bin/vision-helper.swift`
 - Uses Apple Vision OCR
-- Accepts a PNG path and returns JSON
+- Accepts an image path and returns JSON OCR boxes on success
+- Current known issue: the standalone bundled binary is still failing on real images in this workspace, even though direct Swift Vision probes succeed
 
 ### `llama-server`
 
@@ -92,8 +93,7 @@ The overlay listens for:
 
 ## Remaining Architectural Gaps
 
-- Overlay window is not yet excluded from capture
-- Model switching does not exist yet
-- Wizard flow is still minimal
+- Standalone `vision-helper` runtime behavior still needs to be stabilized
+- `test-corpus/` fixtures need to be replaced with real images
+- Updater signing still needs a real public key
 - Multi-display routing is not implemented
-- CLI and test corpus flows are not yet full pipeline drivers

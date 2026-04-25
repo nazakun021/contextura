@@ -4,27 +4,33 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 **Platform:** macOS 13+ on Apple Silicon  
 **Stack:** Rust, Tauri v2, ScreenCaptureKit, Swift Vision helper, `llama-server`, vanilla HTML/CSS/JS  
-**Status:** Single-display pipeline is implemented and Rust-verified. Manual end-to-end smoke verification is still required with a valid local model.
+**Status:** The single-display capture, translation, and overlay pipeline is wired in code. The bundled OCR helper now builds from source and was re-verified on `/tmp/contextura-frame-latest.png` in this workspace, but a full live translation smoke pass is still pending.
 
-## What Works
+## Implemented In Code
 
 - Screen capture through ScreenCaptureKit
 - Motion-gated OCR/translation after debounce
-- Local OCR through the bundled `vision-helper`
+- OCR subprocess integration through the bundled `vision-helper`
 - Local translation through bundled `llama-server`
 - Dynamic overlay styling for contrast
 - Overlay toggle, force-scan, memory reset, model switching, and quit hotkeys
 - App-switch invalidation, watchdog-based sidecar restart, and capture-stream restart handling
 - Overlay self-capture exclusion for Contextura windows
 - A 4-step first-run wizard
-- Real `--debug-cli --input` and `--test-suite` OCR/translation flows
+- `--debug-cli --input` and `--test-suite` code paths routed through the live pipeline
+
+## Known Active Issues
+
+- The checked-in `test-corpus/*.png` fixtures are currently empty placeholder files and are not reliable verification assets.
+- Manual runtime smoke verification is still pending with a valid local model.
+- The translation sidecar still needs a valid local model and successful live health checks for end-to-end verification.
 
 ## Current Limits
 
 - Single-display only
 - Updater signing still needs a real public key
 - Quality-tier policy and RAM gating are still incomplete
-- Manual runtime smoke verification is still pending
+- End-to-end translation verification is still pending
 
 ## Setup
 
@@ -104,7 +110,7 @@ Run one real OCR/translation pass against a PNG:
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml -- \
   --debug-cli \
-  --input test-corpus/test_1.png \
+  --input /tmp/contextura-frame-latest.png \
   --pretty
 ```
 
@@ -115,6 +121,8 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
   --debug-cli \
   --test-suite test-corpus
 ```
+
+The current `test-corpus/` PNG fixtures are placeholders, so this command path is wired but not yet a trustworthy regression suite.
 
 ## Optional Crash Reporting
 
@@ -127,14 +135,14 @@ cargo tauri dev
 
 ## Verification
 
-Rust-side verification completed in this workspace:
+Most recent verification in this workspace:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Manual end-to-end app verification with a real model is still pending.
+The standalone OCR helper was also re-run successfully against `/tmp/contextura-frame-latest.png`. Manual end-to-end app verification with a real model is still pending.
 
 ## Project Layout
 

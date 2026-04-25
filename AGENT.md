@@ -23,10 +23,13 @@ Read this file before changing code or project docs.
 - Sentry is optional and enabled only when `CONTEXTURA_SENTRY_DSN` is set.
 - Wizard screens 1–4 now exist in `src/wizard.html`.
 - `--debug-cli --input <png>` and `--test-suite <dir>` run the real OCR/translation path.
+- `ocr.rs` now treats helper process failure as a real OCR error instead of silent empty output.
 
 ## Still Open
 
 - End-to-end manual smoke verification is still required after major pipeline changes.
+- The standalone `vision-helper` binary is still unstable on real images in this workspace.
+- The checked-in `test-corpus/*.png` files are empty placeholders and should not be treated as valid OCR fixtures yet.
 - `downloader.rs`, richer CLI flows, curated `test-corpus/`, updater signing, and multi-display support are still future work.
 - Quality-tier policy, RAM gating, and updater signing with a real production pubkey are still pending.
 
@@ -53,6 +56,7 @@ If any of those files disagree with the code, update the docs in the same change
 
 - At minimum, run `cargo test --manifest-path src-tauri/Cargo.toml`.
 - Prefer also running `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings` after Rust changes.
+- If OCR behavior is relevant, also run the standalone helper directly on `/tmp/contextura-frame-latest.png`.
 - Do not mark manual runtime checks as done unless you actually performed them.
 
 ## Avoid

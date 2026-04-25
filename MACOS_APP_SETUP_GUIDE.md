@@ -1,6 +1,6 @@
 # Contextura macOS Setup Guide
 
-This guide is the shortest path from "I cloned the repo" to "the app captures my screen and shows translations."
+This guide is the shortest path from "I cloned the repo" to "the app captures my screen and gets as far as the current OCR helper allows."
 
 It is written for your current stack:
 
@@ -22,7 +22,7 @@ For Contextura to work end-to-end, all of these must be true:
 3. A compatible local GGUF model exists on disk.
 4. `llama-server` starts and responds on `127.0.0.1:8765`.
 5. The app captures a frame.
-6. OCR finds Japanese text.
+6. OCR helper runs successfully on the saved frame.
 7. Translation runs.
 8. The overlay receives IPC events and renders boxes.
 
@@ -103,7 +103,7 @@ What a successful first run means:
 What it does not guarantee:
 
 - screen capture permission works
-- OCR works
+- OCR helper works
 - translation works
 
 ## 5. Grant macOS Permission
@@ -228,6 +228,11 @@ If the image is black, empty, or wrong:
 
 If a PNG exists but nothing translates, the next suspect is `vision-helper`.
 
+Current known issue in this workspace:
+
+- direct Swift Vision probes can see text on `/tmp/contextura-frame-latest.png`
+- the standalone bundled `vision-helper` binary is still failing on real images
+
 Likely area:
 
 - [src-tauri/src/ocr.rs](/Users/infinite/Programming/contextura/src-tauri/src/ocr.rs:58)
@@ -259,7 +264,16 @@ See:
 
 If backend logs look fine but nothing appears onscreen, the bug is probably in event delivery or DOM rendering.
 
-## 10. Hotkeys You Can Use Right Now
+## 10. Current Reality Check
+
+As of 2026-04-25, the codebase is beyond the original wiring phase:
+
+- capture, motion gating, styling, IPC, hotkeys, model switching, and watchdog recovery are all present
+- `/tmp/contextura-frame-latest.png` is produced for debugging
+- the main unresolved blocker is the standalone OCR helper runtime path
+- the bundled `test-corpus/` PNG files are placeholders and should not be treated as a real OCR regression suite yet
+
+## 11. Hotkeys You Can Use Right Now
 
 Implemented:
 
@@ -270,7 +284,7 @@ Implemented:
 
 Not implemented yet:
 
-- `Cmd+Shift+G`: model switching stub only
+- none
 
 Source:
 
@@ -296,9 +310,9 @@ You can see:
 /tmp/contextura-frame-latest.png
 ```
 
-### Stage 3: OCR works
+### Stage 3: OCR helper works
 
-Japanese text on the saved frame produces OCR boxes internally.
+The standalone helper succeeds on the saved frame and returns OCR boxes.
 
 ### Stage 4: Translation works
 

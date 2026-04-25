@@ -12,20 +12,21 @@
 
 ## Current Milestone
 
-The single-display translation pipeline is now wired:
+The single-display translation pipeline is wired, and the standalone OCR helper now works on saved live frames:
 
 `capture -> motion debounce -> PNG snapshot -> OCR -> translation -> styling -> IPC overlay`
 
-Rust verification completed in this workspace:
+Most recent verification in this workspace:
 
 - [x] `cargo test --manifest-path src-tauri/Cargo.toml`
-- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings`
+- [x] `cargo check --manifest-path src-tauri/Cargo.toml`
 
 Manual app-level smoke testing is still pending:
 
 - [ ] Launch app with a valid local model and confirm live translations appear over Japanese text
 - [ ] Confirm app-switch invalidation clears overlay and translation memory
 - [ ] Confirm force OCR and overlay toggle hotkeys behave correctly in a live session
+- [x] Confirm the standalone `vision-helper` succeeds on `/tmp/contextura-frame-latest.png`
 
 ## Phase P.Complete
 
@@ -51,7 +52,9 @@ Manual app-level smoke testing is still pending:
 - [x] OCR uses the real saved PNG path
 - [x] Temp PNG cleanup runs after OCR returns
 - [x] Empty OCR results short-circuit the branch
+- [x] Helper non-zero exit now surfaces as an OCR error instead of masquerading as empty OCR output
 - [x] `translate_batch()` uses live OCR text
+- [x] Manual check: the standalone helper returns OCR JSON on a real saved frame
 - [ ] Manual check: a Japanese page produces OCR text and English translations
 
 ### Step 4 — Styling and IPC
@@ -100,6 +103,8 @@ Manual app-level smoke testing is still pending:
 ### High priority
 
 - [x] Exclude the overlay window from capture to avoid self-capture loops
+- [x] Stabilize the standalone `vision-helper` runtime path on saved live frames
+- [ ] Replace placeholder `test-corpus/*.png` files with real screenshots
 - [ ] Run a full manual smoke pass with a real Qwen3 model and update verification checkboxes above
 - [x] Make `translation-error` handling visible and user-friendly during sidecar restarts
 
@@ -127,7 +132,7 @@ Manual app-level smoke testing is still pending:
 - `src-tauri/src/models.rs`: model manifest loading and active-model switching
 - `src-tauri/src/capture.rs`: ScreenCaptureKit capture, explicit BGRA, real scale factor, app-window exclusion
 - `src-tauri/src/motion.rs`: motion detection and debounce, wired
-- `src-tauri/src/ocr.rs`: `vision-helper` wrapper, wired
+- `src-tauri/src/ocr.rs`: `vision-helper` wrapper, wired, now surfaces helper failures explicitly
 - `src-tauri/src/translation.rs`: sidecar management, batching, watchdog-ready
 - `src-tauri/src/context.rs`: app-switch invalidation, wired
 - `src-tauri/src/thermal.rs`: thermal plus battery detection
@@ -136,3 +141,4 @@ Manual app-level smoke testing is still pending:
 - `src-tauri/src/hotkeys.rs`: T/R/M/G/Q live
 - `src-tauri/src/tray.rs`: primary tray actions plus model switch live
 - `src/wizard.html`: 4-step setup flow live
+- `src-tauri/src/bin/vision-helper.swift`: standalone OCR helper source, Cocoa-initialized and build-integrated

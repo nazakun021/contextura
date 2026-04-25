@@ -1,7 +1,13 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const MIN_CONFIDENCE: f32 = 0.3;
+const FURIGANA_HEIGHT_RATIO: f32 = 0.4;
+const FURIGANA_HORIZONTAL_OVERLAP: f32 = 0.70;
+const MERGE_IOU_THRESHOLD: f32 = 0.3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionHelperResult {
@@ -80,9 +86,25 @@ impl OcrEngine {
     ) -> anyhow::Result<Vec<OcrResult>> {
         let output = Command::new(&self.vision_helper_path)
             .arg(png_path)
-            .output()?;
+            .output()
+            .with_context(|| {
+                format!(
+                    "Failed to launch vision-helper at {}",
+                    self.vision_helper_path.display()
+                )
+            })?;
 
-        let raw: Vec<VisionHelperResult> = serde_json::from_slice(&output.stdout)?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "vision-helper failed with status {}: {}",
+                output.status,
+                stderr.trim()
+            );
+        }
+
+        let raw: Vec<VisionHelperResult> = serde_json::from_slice(&output.stdout)
+            .with_context(|| "vision-helper returned invalid JSON".to_string())?;
 
         let results: Vec<OcrResult> = raw
             .into_iter()
@@ -139,10 +161,14 @@ impl OcrEngine {
                     }
 
                     // Box height < 40% of overlapping box height -> furigana
-                    if candidate.bounding_box.height < (parent.bounding_box.height * 0.4)
+                    if candidate.bounding_box.height
+                        < (parent.bounding_box.height * FURIGANA_HEIGHT_RATIO)
                         && candidate
                             .bounding_box
-                            .overlaps_horizontally(&parent.bounding_box, 0.70)
+                            .overlaps_horizontally(
+                                &parent.bounding_box,
+                                FURIGANA_HORIZONTAL_OVERLAP,
+                            )
                     {
                         to_mark_furigana.push(i);
                         break;
@@ -158,13 +184,19 @@ impl OcrEngine {
         // 3. Merging overlapping boxes (IoU > 0.3)
         let mut merged_results: Vec<OcrResult> = Vec::new();
         for res in results {
-            if res.is_furigana || res.confidence < 0.4 || !Self::contains_cjk(&res.text) {
+            if res.is_furigana
+                || res.confidence < MIN_CONFIDENCE
+                || !Self::contains_cjk(&res.text)
+                || res.text.trim().is_empty()
+            {
                 continue;
             }
 
             let mut merged = false;
             for existing in &mut merged_results {
-                if Self::calculate_iou(&res.bounding_box, &existing.bounding_box) > 0.3 {
+                if Self::calculate_iou(&res.bounding_box, &existing.bounding_box)
+                    > MERGE_IOU_THRESHOLD
+                {
                     // Simple merge: take the union of boxes and the text with higher confidence
                     let x = res.bounding_box.x.min(existing.bounding_box.x);
                     let y = res.bounding_box.y.min(existing.bounding_box.y);
@@ -209,5 +241,86 @@ impl OcrEngine {
         } else {
             intersection / union
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OcrEngine, OcrResult, Rect};
+    use std::path::PathBuf;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < 0.001, "expected {expected}, got {actual}");
+    }
+
+    fn engine(furigana_suppression: bool) -> OcrEngine {
+        OcrEngine::new(furigana_suppression, PathBuf::from("vision-helper"))
+    }
+
+    fn result(text: &str, confidence: f32, x: f32, y: f32, width: f32, height: f32) -> OcrResult {
+        OcrResult {
+            text: text.to_string(),
+            confidence,
+            bounding_box: Rect::new(x, y, width, height),
+            text_angle: 0.0,
+            is_vertical: false,
+            is_furigana: false,
+        }
+    }
+
+    #[test]
+    fn process_vision_results_should_convert_coordinates_to_logical_space() {
+        let results = vec![result("日本語", 0.9, 0.25, 0.10, 0.50, 0.20)];
+
+        let processed = engine(false).process_vision_results(results, 200.0, 100.0, 2.0);
+
+        assert_close(processed[0].bounding_box.x, 25.0);
+        assert_close(processed[0].bounding_box.y, 35.0);
+        assert_close(processed[0].bounding_box.width, 50.0);
+        assert_close(processed[0].bounding_box.height, 10.0);
+    }
+
+    #[test]
+    fn process_vision_results_should_keep_mixed_language_text_when_it_contains_cjk() {
+        let results = vec![result("生成AI (ChatGPT)", 0.9, 0.10, 0.10, 0.30, 0.10)];
+
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn process_vision_results_should_filter_non_cjk_text() {
+        let results = vec![result("ChatGPT", 0.9, 0.10, 0.10, 0.30, 0.10)];
+
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+
+        assert!(processed.is_empty());
+    }
+
+    #[test]
+    fn process_vision_results_should_mark_small_overlapping_text_as_furigana() {
+        let results = vec![
+            result("漢字", 0.9, 0.10, 0.10, 0.30, 0.20),
+            result("かんじ", 0.9, 0.10, 0.12, 0.30, 0.05),
+        ];
+
+        let processed = engine(true).process_vision_results(results, 100.0, 100.0, 1.0);
+
+        assert_eq!(processed.len(), 1);
+        assert_eq!(processed[0].text, "漢字");
+    }
+
+    #[test]
+    fn process_vision_results_should_merge_overlapping_boxes_and_keep_higher_confidence_text() {
+        let results = vec![
+            result("日本", 0.6, 0.10, 0.10, 0.20, 0.10),
+            result("日本語", 0.9, 0.12, 0.12, 0.20, 0.10),
+        ];
+
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+
+        assert_eq!(processed.len(), 1);
+        assert_eq!(processed[0].text, "日本語");
     }
 }
