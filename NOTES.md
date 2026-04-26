@@ -53,3 +53,41 @@ If you want, I can next:
 
 - instrument the OCR path so we can see exactly which Japanese lines are being dropped, or
 - switch the app’s translation sidecar target from Qwen3 to a better local model plan.
+
+---
+
+Your project architecture is exceptionally robust for a macOS desktop application, but it is not yet distribution-ready. You have a solid core pipeline that follows high-quality platform
+standards, but several critical "last-mile" items for a production product are still missing.
+
+Production-Ready Strengths
+
+- Native macOS Integration: Your use of ScreenCaptureKit for high-performance capture, Vision for OCR, and NSWorkspace/NSProcessInfo for context and thermal monitoring is "10/10" engineering
+  for the Mac platform.
+- Pipeline Robustness: The implementation of a watchdog for llama-server, health check retries, and explicit thermal/battery-aware throttling shows a high level of concern for long-running
+  stability and user experience.
+- Privacy & Context: Automatically clearing translation memory on app switches is a sophisticated touch that protects both LLM context quality and user privacy.
+- Error Handling: You are using structured error reporting (anyhow) and a visible UI notification system (emit_runtime_notice) rather than letting the app fail silently.
+
+Production Blockers (The "Missing 20%")
+
+1.  Updater Security: tauri.conf.json contains an empty pubkey. You cannot securely distribute or update the app without a valid signing keypair.
+2.  Frontend Security: There is no Content Security Policy (CSP) in index.html. For a production app, a restrictive CSP is mandatory to mitigate potential injection risks, even in a local-only
+    app.
+3.  Validation Debt: Your test-corpus consists of placeholder files. Without real regression fixtures, you cannot confidently guarantee that a change to your prompt or model doesn't break
+    OCR/Translation quality for Japanese text.
+4.  Distribution Infrastructure: The updater endpoint points to a placeholder URL. You need a real release pipeline for latest.json and .app.tar.gz files.
+5.  Multi-Display Support: The current runtime targets display 0. On a production machine with multiple monitors, the app's behavior will be inconsistent or broken.
+6.  Temporary File Handling: Storing frames in /tmp/contextura-frame-latest.png is functional but insecure on a shared system. Production apps should use a private App Data or Cache directory.
+
+Summary of Readiness
+┌───────────────┬───────────┬─────────────────────────────────────────────────────────────┐
+│ Category │ Readiness │ Note │
+├───────────────┼───────────┼─────────────────────────────────────────────────────────────┤
+│ Architecture │ 9 / 10 │ Extremely well-decoupled and platform-native. │
+│ Stability │ 8 / 10 │ Great watchdog/health check logic; needs more load testing. │
+│ Security │ 4 / 10 │ Missing CSP and Updater signing keys. │
+│ Testing │ 3 / 10 │ Code is testable, but actual regression data is missing. │
+│ UX/Onboarding │ 7 / 10 │ Wizard is present, but model management is still manual. │
+└───────────────┴───────────┴─────────────────────────────────────────────────────────────┘
+
+Verdict: Your Architecture is production-ready, but your Configuration and Distribution setup is not. I recommend prioritizing the Updater Signing and CSP before any public release.

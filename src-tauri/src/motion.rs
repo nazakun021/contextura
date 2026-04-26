@@ -31,8 +31,8 @@ impl Default for DebounceStateMachine {
     fn default() -> Self {
         Self {
             state: DebounceState::Idle,
-            debounce_duration: Duration::from_millis(300),
-            motion_threshold: 0.05,
+            debounce_duration: Duration::from_millis(200),
+            motion_threshold: 0.01,
         }
     }
 }
@@ -61,7 +61,9 @@ impl DebounceStateMachine {
                 }
             }
             DebounceState::Settling(start_time) => {
-                let settling_threshold = self.motion_threshold * 3.0;
+                // We allow a small amount of "jitter" (1.5x threshold) during settling
+                // to account for sub-pixel text rendering or inertial scroll bleed.
+                let settling_threshold = self.motion_threshold * 1.5;
                 if motion_ratio > settling_threshold {
                     // False stop, back to scrolling
                     self.state = DebounceState::Scrolling;

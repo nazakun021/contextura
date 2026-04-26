@@ -1,6 +1,7 @@
 // src-tauri/src/translation.rs
 
 use anyhow::Context;
+use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -200,12 +201,12 @@ impl TranslationClient {
         })
     }
 
-    async fn post_chat_completion(&self, payload: &Value) -> anyhow::Result<Value> {
+    async fn post_chat_completion(&self, payload: Value) -> anyhow::Result<Value> {
         let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
         let mut last_error = String::from("unknown error");
 
         for attempt in 1..=2 {
-            let response = self.client.post(&url).json(payload).send().await;
+            let response = self.client.post(&url).json(&payload).send().await;
             match response {
                 Ok(response) => {
                     let status = response.status();
@@ -296,6 +297,8 @@ impl TranslationClient {
                 "1024",
                 "--host",
                 "127.0.0.1",
+                "--parallel",
+                "4", // Support up to 4 parallel requests for Gemma mode
             ]);
 
         if self.mode == TranslationMode::StructuredTranslateGemma {
@@ -459,7 +462,7 @@ impl TranslationClient {
 
     async fn translate_single_qwen(&self, input_text: &str) -> anyhow::Result<String> {
         let payload = Self::build_qwen_single_payload(input_text);
-        let res = self.post_chat_completion(&payload).await?;
+        let res = self.post_chat_completion(payload).await?;
         Self::response_text_from_completion(&res)
     }
 
@@ -468,7 +471,7 @@ impl TranslationClient {
         chunk_strings: &[String],
     ) -> anyhow::Result<Vec<String>> {
         let payload = self.build_qwen_batch_payload(chunk_strings);
-        let res = self.post_chat_completion(&payload).await?;
+        let res = self.post_chat_completion(payload).await?;
         let response_content = Self::response_text_from_completion(&res)?;
         let mut results = vec![String::new(); chunk_strings.len()];
 
@@ -558,27 +561,48 @@ impl TranslationClient {
                     }
                 }
                 TranslationMode::StructuredTranslateGemma => {
-                    let mut conversation_history =
-                        VecDeque::from(self.translategemma_seed_history());
+                    let conversation_history = self.translategemma_seed_history();
+                    let mut request_futures = Vec::with_capacity(chunk_strings.len());
 
-                    for (chunk_offset, input_text) in chunk_strings.iter().enumerate() {
+                    for input_text in chunk_strings {
                         let payload = json!({
                             "model": "local",
                             "messages": Self::build_translategemma_messages(
-                                conversation_history.make_contiguous(),
+                                &conversation_history,
                                 input_text,
                             ),
                             "temperature": 0.1,
                             "max_tokens": 256
                         });
+                        request_futures.push(self.post_chat_completion(payload));
+                    }
 
-                        let res = self.post_chat_completion(&payload).await?;
-                        let translation = Self::response_text_from_completion(&res)?;
-                        final_results[offset + chunk_offset] = translation.clone();
-                        conversation_history.push_back((input_text.clone(), translation));
-                        if conversation_history.len() > TRANSLATEGEMMA_HISTORY_LIMIT {
-                            conversation_history.pop_front();
+                    // Process all requests in the chunk in parallel
+                    let chunk_responses = join_all(request_futures).await;
+
+                    for (chunk_offset, res_result) in chunk_responses.into_iter().enumerate() {
+                        let result_idx = offset + chunk_offset;
+                        match res_result {
+                            Ok(res) => {
+                                match Self::response_text_from_completion(&res) {
+                                    Ok(translation) => {
+                                        final_results[result_idx] = translation;
+                                    }
+                                    Err(error) => {
+                                        log::error!("[Translation] Gemma completion parsing failed for index {}: {error}", result_idx);
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("[Translation] Gemma parallel request failed for index {}: {error}", result_idx);
+                            }
                         }
+                    }
+
+                    // Check if any translations in this chunk are missing
+                    let missing = chunk_strings.iter().enumerate().filter(|(i, _)| final_results[offset + i].is_empty()).map(|(i, _)| i + offset + 1).collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        anyhow::bail!("Gemma parallel batch failed for slots {:?}", missing);
                     }
                 }
             }

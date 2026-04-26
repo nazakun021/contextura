@@ -155,7 +155,8 @@ impl DisplayManager {
         let config = SCStreamConfiguration::new()
             .with_width(display.width())
             .with_height(display.height())
-            .with_pixel_format(PixelFormat::BGRA);
+            .with_pixel_format(PixelFormat::BGRA)
+            .with_minimum_frame_interval(&CMTime::new(1, 10)); // Max 10 FPS
 
         let mut stream = SCStream::new(&filter, &config);
         let handler = OutputHandler {

@@ -22,8 +22,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            debounce_ms: 200,
-            motion_threshold: 0.05,
+            debounce_ms: 150,
+            motion_threshold: 0.01,
             pixel_diff_threshold: 15,
             capture_fps: 30,
             edge_inset_percent: 5,

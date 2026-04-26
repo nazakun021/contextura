@@ -210,6 +210,7 @@ async fn drain_invalidations(
                 client.lock().await.memory.clear();
                 let _ = app_handle.emit("translation-clear", ());
             }
+
             context::InvalidationReason::ManualReset => {
                 client.lock().await.memory.clear();
                 emit_runtime_notice(
@@ -929,8 +930,9 @@ pub fn run() {
                                 }
                             }
 
-                            let Ok(frame) = frame_rx.try_recv() else {
-                                if last_frame_at.elapsed() > Duration::from_secs(10) {
+                            let frame_res = frame_rx.try_recv();
+                            if frame_res.is_err() {
+                                if last_frame_at.elapsed() > Duration::from_secs(30) {
                                     emit_runtime_notice(
                                         &app_handle_sidecar,
                                         "Capture Restarting",
@@ -942,8 +944,34 @@ pub fn run() {
                                     );
                                     break 'capture;
                                 }
+
+                                // BUG FIX: If we are settling but no frames are arriving (screen is static),
+                                // we must still tick the debounce machine so it can eventually Trigger.
+                                if matches!(debounce.state, motion::DebounceState::Settling(_)) {
+                                    if let DebounceEvent::Triggered = debounce.update(0.0) {
+                                        if let Some(frame) = latest_frame.as_ref() {
+                                            log::info!("[Pipeline] Debounce triggered on static screen");
+                                            let current_frame_id = frame_id;
+                                            frame_id += 1;
+                                            if let Some(payload) = process_capture_frame(
+                                                &app_handle_sidecar,
+                                                &client_clone,
+                                                &ocr_engine_loop,
+                                                &invalidation_rx,
+                                                &pipeline_tx,
+                                                &frame,
+                                                current_frame_id,
+                                            )
+                                            .await
+                                            {
+                                                last_payload = Some(payload);
+                                            }
+                                        }
+                                    }
+                                }
                                 continue;
-                            };
+                            }
+                            let frame = frame_res.unwrap();
                             last_frame_at = Instant::now();
                             latest_frame = Some(frame.clone());
 

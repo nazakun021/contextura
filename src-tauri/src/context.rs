@@ -31,17 +31,17 @@ impl AppWindowTracker {
 
         thread::spawn(move || {
             let mut last_bundle: Option<String> = None;
-            // NSWorkspace must be accessed from the main thread marker or a thread that can safely interact with it.
-            // Since we are just polling properties, we'll use a loop.
+
             loop {
-                thread::sleep(Duration::from_millis(500));
+                // Polling at 200ms is snappier for tab/window switches
+                thread::sleep(Duration::from_millis(200));
 
                 autoreleasepool(|_| {
                     let workspace = NSWorkspace::sharedWorkspace();
                     let front_app = workspace.frontmostApplication();
 
                     let active_bundle =
-                        front_app.and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
+                        front_app.as_ref().and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
 
                     if active_bundle != last_bundle {
                         if let (Some(from), Some(to)) = (&last_bundle, &active_bundle) {
@@ -52,6 +52,11 @@ impl AppWindowTracker {
                         }
                         last_bundle = active_bundle;
                     }
+
+                    // For tab-switch detection within the same app, we'd ideally poll the window title.
+                    // Since full CGWindowList/Accessibility polling is heavy, we rely on the 
+                    // ScreenCaptureKit motion detector for sub-app switches, but we still emit 
+                    // the switch event if the bundle ID changed to ensure memory isolation.
                 });
             }
         });

@@ -30,8 +30,11 @@ document.addEventListener('DOMContentLoaded', () => {
           
           div.style.left = `${box.x}px`;
           div.style.top = `${box.y}px`;
-          div.style.width = `${box.width}px`;
-          div.style.height = `${box.height}px`;
+          
+          // Use min dimensions so the box can grow if text is longer
+          div.style.minWidth = `${box.width}px`;
+          div.style.minHeight = `${box.height}px`;
+          
           div.style.backgroundColor = box.bg_color;
           div.style.color = box.fg_color;
           
