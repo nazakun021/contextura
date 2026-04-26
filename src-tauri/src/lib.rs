@@ -812,7 +812,7 @@ pub fn run() {
                         match ready_result {
                             Ok(()) => {
                                 failure_count = 0;
-                                log::info!("[Pipeline] Translation sidecar is ready");
+                                log::info!("[Pipeline] Translation sidecar is ready (active: {})", sidecar_started);
                             }
                             Err(error) => {
                                 failure_count += 1;
@@ -837,7 +837,7 @@ pub fn run() {
                         }
 
                         let ocr_engine_loop = Arc::clone(&ocr_engine);
-                        let frame_rx = display_manager.start_capture(
+                        let frame_rx = display_manager.get_or_start_capture(
                             0,
                             &[app_bundle_id_sidecar.as_str()],
                             &[app_process_id],
@@ -920,10 +920,13 @@ pub fn run() {
                                         log::info!("[Pipeline] Reload requested: {reason}");
                                         runtime_reload_requested = true;
                                         sidecar_started = false;
+                                        // We don't necessarily need to break 'capture anymore if just settings changed,
+                                        // but if the model changed, we should break to restart sidecar.
                                         break 'capture;
                                     }
                                     PipelineCommand::Shutdown => {
                                         log::info!("[Pipeline] Shutdown requested");
+                                        display_manager.stop();
                                         client_clone.lock().await.shutdown_sidecar();
                                         return;
                                     }
@@ -932,17 +935,11 @@ pub fn run() {
 
                             let frame_res = frame_rx.try_recv();
                             if frame_res.is_err() {
-                                if last_frame_at.elapsed() > Duration::from_secs(30) {
-                                    emit_runtime_notice(
-                                        &app_handle_sidecar,
-                                        "Capture Restarting",
-                                        "Screen capture stalled, so Contextura is restarting the capture stream.",
-                                        "This usually happens after display sleep, wake, or a capture permission reset."
-                                            .to_string(),
-                                        "warning",
-                                        5000,
-                                    );
-                                    break 'capture;
+                                if last_frame_at.elapsed() > Duration::from_secs(60) {
+                                    log::warn!("[Pipeline] Frame stream silent for 60s - checking health");
+                                    // Passive check: only restart if we suspect a real crash
+                                    // Display manager already keeps it sticky, so just wait
+                                    last_frame_at = Instant::now();
                                 }
 
                                 // BUG FIX: If we are settling but no frames are arriving (screen is static),

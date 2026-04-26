@@ -15,10 +15,10 @@ pub struct PixelBuffer {
 #[derive(Clone)]
 pub struct CaptureFrame {
     pub buffer: PixelBuffer,
-    #[allow(dead_code)] // used by future multi-display routing (Phase 8)
     pub display_id: u32,
     pub scale_factor: f32,
 }
+
 struct OutputHandler {
     tx: Sender<CaptureFrame>,
     display_id: u32,
@@ -27,7 +27,6 @@ struct OutputHandler {
 
 impl SCStreamOutputTrait for OutputHandler {
     fn did_output_sample_buffer(&self, sample: CMSampleBuffer, _type: SCStreamOutputType) {
-        log::debug!("[Capture] Raw frame received");
         if let Some(pixel_buffer) = sample.image_buffer()
             && let Ok(guard) = pixel_buffer.lock_read_only()
         {
@@ -66,24 +65,39 @@ impl SCStreamOutputTrait for OutputHandler {
 
 pub struct DisplayManager {
     stream: Option<SCStream>,
+    active_display_id: Option<u32>,
+    frame_rx: Option<Receiver<CaptureFrame>>,
 }
 
 impl DisplayManager {
     pub fn new() -> Self {
-        Self { stream: None }
+        Self { 
+            stream: None,
+            active_display_id: None,
+            frame_rx: None,
+        }
     }
 
-    pub fn start_capture(
+    pub fn get_or_start_capture(
         &mut self,
         display_id: u32,
         excluded_bundle_ids: &[&str],
         excluded_process_ids: &[i32],
         excluded_name_hints: &[&str],
     ) -> Receiver<CaptureFrame> {
+        // If we already have a healthy stream for this display, just return the existing receiver.
+        if let Some(ref mut _stream) = self.stream {
+            if self.active_display_id == Some(display_id) && self.frame_rx.is_some() {
+                return self.frame_rx.as_ref().unwrap().clone();
+            }
+        }
+
+        // Otherwise, perform a (re)start
+        log::info!("[Capture] Initializing persistent stream for display {}", display_id);
         let (tx, rx) = bounded::<CaptureFrame>(2);
 
-        if let Some(stream) = self.stream.take() {
-            let _ = stream.stop_capture();
+        if let Some(old_stream) = self.stream.take() {
+            let _ = old_stream.stop_capture();
         }
 
         let content = SCShareableContentOptions::default()
@@ -110,6 +124,7 @@ impl DisplayManager {
                     || name_matches(&app.application_name(), excluded_name_hints)
             })
             .collect::<Vec<_>>();
+        
         let excluded_app_refs = excluded_apps.iter().collect::<Vec<_>>();
         let excluded_windows = content
             .windows()
@@ -123,6 +138,7 @@ impl DisplayManager {
                 )
             })
             .collect::<Vec<_>>();
+        
         let excluded_window_refs = excluded_windows.iter().collect::<Vec<_>>();
         let filter_builder = SCContentFilter::create().with_display(&display);
         let filter = if !excluded_window_refs.is_empty() {
@@ -136,6 +152,7 @@ impl DisplayManager {
                 .with_excluding_applications(&excluded_app_refs, &[])
                 .build()
         };
+
         let display_frame = display.frame();
         let scale_factor = if display_frame.width > 0.0 {
             #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
@@ -145,18 +162,14 @@ impl DisplayManager {
         } else {
             1.0
         };
-        let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
-            scale_factor
-        } else {
-            1.0
-        };
+
         let actual_display_id = display.display_id();
 
         let config = SCStreamConfiguration::new()
             .with_width(display.width())
             .with_height(display.height())
             .with_pixel_format(PixelFormat::BGRA)
-            .with_minimum_frame_interval(&CMTime::new(1, 10)); // Max 10 FPS
+            .with_minimum_frame_interval(&CMTime::new(1, 10));
 
         let mut stream = SCStream::new(&filter, &config);
         let handler = OutputHandler {
@@ -164,24 +177,24 @@ impl DisplayManager {
             display_id: actual_display_id,
             scale_factor,
         };
+        
         stream.add_output_handler(handler, SCStreamOutputType::Screen);
-        log::info!(
-            "[Capture] Starting stream for display {} at scale factor {:.2} ({:?}); excluded apps: {:?}; excluded windows: {:?}",
-            actual_display_id,
-            scale_factor,
-            PixelFormat::BGRA,
-            excluded_bundle_ids,
-            excluded_windows
-                .iter()
-                .map(|window| format!("{}:{:?}", window.window_id(), window.title()))
-                .collect::<Vec<_>>()
-        );
         stream.start_capture().expect("Failed to start capture");
-        log::info!("[Capture] Stream started successfully");
-
+        
         self.stream = Some(stream);
+        self.active_display_id = Some(actual_display_id);
+        self.frame_rx = Some(rx.clone());
 
         rx
+    }
+
+    /// Stops the current capture stream and clears the state.
+    pub fn stop(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.stop_capture();
+        }
+        self.active_display_id = None;
+        self.frame_rx = None;
     }
 }
 

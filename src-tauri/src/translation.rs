@@ -293,8 +293,8 @@ impl TranslationClient {
                 &self.port.to_string(),
                 "--n-gpu-layers",
                 "99", // full Metal offload
-                "--ctx-size",
-                "1024",
+                "-c",
+                "8192",
                 "--host",
                 "127.0.0.1",
                 "--parallel",
@@ -599,10 +599,53 @@ impl TranslationClient {
                         }
                     }
 
-                    // Check if any translations in this chunk are missing
-                    let missing = chunk_strings.iter().enumerate().filter(|(i, _)| final_results[offset + i].is_empty()).map(|(i, _)| i + offset + 1).collect::<Vec<_>>();
-                    if !missing.is_empty() {
-                        anyhow::bail!("Gemma parallel batch failed for slots {:?}", missing);
+                    // Check if any translations in this chunk are missing and retry individually
+                    let missing_indices: Vec<usize> = chunk_strings
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, _)| {
+                            if final_results[offset + i].is_empty() {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    if !missing_indices.is_empty() {
+                        log::warn!(
+                            "[Translation] {} Gemma slots empty after parallel batch, retrying individually",
+                            missing_indices.len()
+                        );
+                        for i in missing_indices {
+                            let result_idx = offset + i;
+                            let input_text = &chunk_strings[i];
+                            let payload = json!({
+                                "model": "local",
+                                "messages": Self::build_translategemma_messages(
+                                    &conversation_history,
+                                    input_text,
+                                ),
+                                "temperature": 0.1,
+                                "max_tokens": 256
+                            });
+                            if let Ok(res) = self.post_chat_completion(payload).await {
+                                if let Ok(translation) = Self::response_text_from_completion(&res) {
+                                    final_results[result_idx] = translation;
+                                }
+                            }
+                        }
+                    }
+
+                    let still_missing = chunk_strings
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| final_results[offset + i].is_empty())
+                        .map(|(i, _)| i + offset + 1)
+                        .collect::<Vec<_>>();
+
+                    if !still_missing.is_empty() {
+                        anyhow::bail!("Gemma parallel batch failed for slots {:?}", still_missing);
                     }
                 }
             }
