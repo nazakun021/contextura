@@ -12,6 +12,7 @@ Read this file before changing code or project docs.
 ## Current Status
 
 - The main capture → motion → OCR → translation → styling → IPC pipeline is wired in `src-tauri/src/lib.rs`.
+- The default local model path is now `translategemma-4b-it.Q4_K_M`, with Qwen-style GGUF models still supported as alternates.
 - `Cmd+Shift+T` toggles the overlay.
 - `Cmd+Shift+R` forces an OCR/translation pass by bypassing debounce.
 - `Cmd+Shift+M` clears translation memory.
@@ -28,7 +29,6 @@ Read this file before changing code or project docs.
 ## Still Open
 
 - End-to-end manual smoke verification is still required after major pipeline changes.
-- The standalone `vision-helper` binary is still unstable on real images in this workspace.
 - The checked-in `test-corpus/*.png` files are empty placeholders and should not be treated as valid OCR fixtures yet.
 - `downloader.rs`, richer CLI flows, curated `test-corpus/`, updater signing, and multi-display support are still future work.
 - Quality-tier policy, RAM gating, and updater signing with a real production pubkey are still pending.
@@ -56,7 +56,7 @@ If any of those files disagree with the code, update the docs in the same change
 
 - At minimum, run `cargo test --manifest-path src-tauri/Cargo.toml`.
 - Prefer also running `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings` after Rust changes.
-- If OCR behavior is relevant, also run the standalone helper directly on `/tmp/contextura-frame-latest.png`.
+- If OCR or translation behavior is relevant, prefer the checks documented in `TEST.md`, including the debug CLI path and one live GUI smoke pass.
 - Do not mark manual runtime checks as done unless you actually performed them.
 
 ## Avoid

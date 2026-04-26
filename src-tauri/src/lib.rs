@@ -575,7 +575,7 @@ pub fn run() {
                             }
 
                             let mut guard = watchdog_client.lock().await;
-                            if guard.wait_for_ready().await.is_err() {
+                            if guard.wait_for_runtime_ready().await.is_err() {
                                 consecutive_failures += 1;
                                 log::warn!(
                                     "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"

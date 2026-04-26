@@ -8,9 +8,9 @@
 
 ### Required setup
 
-- [ ] Download `translategemma-4b-it.Q4_K_M.gguf` into `~/Library/Application Support/contextura/models/`
-- [ ] Make sure the active model in `~/Library/Application Support/contextura/settings.json` is `translategemma-4b-it.Q4_K_M` if you want to exercise the new default path
-- [ ] Grant Screen Recording permission to Contextura if macOS has not already allowed it
+- [x] Download `translategemma-4b-it.Q4_K_M.gguf` into `~/Library/Application Support/contextura/models/`
+- [x] Make sure the active model in `~/Library/Application Support/contextura/settings.json` is `translategemma-4b-it.Q4_K_M` if you want to exercise the new default path
+- [x] Grant Screen Recording permission to Contextura if macOS has not already allowed it
 
 ### Live app verification
 

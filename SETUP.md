@@ -1,8 +1,10 @@
 # Contextura macOS Setup Guide
 
-This guide is the shortest path from "I cloned the repo" to "the app captures my screen and gets as far as the current OCR helper allows."
+**Last Updated:** 2026-04-26
 
-It is written for your current stack:
+This is the full setup checklist for getting Contextura from a fresh clone to a meaningful local smoke test.
+
+Current stack:
 
 - macOS app shell: Tauri v2
 - backend/runtime: Rust
@@ -11,7 +13,7 @@ It is written for your current stack:
 - translation: bundled `llama-server`
 - frontend overlay: vanilla HTML/CSS/JS
 
-Use this document as your working checklist.
+The default model path in the current repo is **TranslateGemma 4B IT Q4_K_M**. Qwen-style GGUF models are still supported as alternates, but this guide uses the default path that matches `settings.rs`, `models.rs`, and `README.md`.
 
 ## 1. What Has To Work
 
@@ -126,8 +128,8 @@ This app uses `llama-server`, so the model must be a decoder-only GGUF model.
 
 Use the current default:
 
-- `Qwen/Qwen3-0.6B-GGUF`
-- file: `qwen3-0.6b-q4_k_m.gguf`
+- repo: `mradermacher/translategemma-4b-it-GGUF`
+- file: `translategemma-4b-it.Q4_K_M.gguf`
 
 Install the Python helper if needed:
 
@@ -138,15 +140,15 @@ python3 -m pip install huggingface_hub
 Download the model:
 
 ```bash
-huggingface-cli download Qwen/Qwen3-0.6B-GGUF \
-  qwen3-0.6b-q4_k_m.gguf \
+huggingface-cli download mradermacher/translategemma-4b-it-GGUF \
+  translategemma-4b-it.Q4_K_M.gguf \
   --local-dir ~/Library/Application\ Support/contextura/models/
 ```
 
 After download, you should have a file roughly here:
 
 ```text
-~/Library/Application Support/contextura/models/qwen3-0.6b-q4_k_m.gguf
+~/Library/Application Support/contextura/models/translategemma-4b-it.Q4_K_M.gguf
 ```
 
 ## 7. Verify The Translation Sidecar Alone
@@ -157,7 +159,7 @@ Run:
 
 ```bash
 ./src-tauri/binaries/llama-server-aarch64-apple-darwin \
-  --model ~/Library/Application\ Support/contextura/models/qwen3-0.6b-q4_k_m.gguf \
+  --model ~/Library/Application\ Support/contextura/models/translategemma-4b-it.Q4_K_M.gguf \
   --port 8765 \
   --n-gpu-layers 99 \
   --ctx-size 1024 \
@@ -230,8 +232,8 @@ If a PNG exists but nothing translates, the next suspect is `vision-helper`.
 
 Current known issue in this workspace:
 
-- direct Swift Vision probes can see text on `/tmp/contextura-frame-latest.png`
-- the standalone bundled `vision-helper` binary is still failing on real images
+- the checked-in `test-corpus/*.png` files are placeholders and do not validate OCR quality
+- live GUI verification is still required after the latest runtime fixes
 
 Likely area:
 
@@ -266,11 +268,11 @@ If backend logs look fine but nothing appears onscreen, the bug is probably in e
 
 ## 10. Current Reality Check
 
-As of 2026-04-25, the codebase is beyond the original wiring phase:
+As of 2026-04-26, the codebase is beyond the original wiring phase:
 
 - capture, motion gating, styling, IPC, hotkeys, model switching, and watchdog recovery are all present
 - `/tmp/contextura-frame-latest.png` is produced for debugging
-- the main unresolved blocker is the standalone OCR helper runtime path
+- TranslateGemma-specific request formatting, AppKit capture protection, shared RGBA styling input, and the inertial-scroll debounce fix are in code
 - the bundled `test-corpus/` PNG files are placeholders and should not be treated as a real OCR regression suite yet
 
 ## 11. Hotkeys You Can Use Right Now
@@ -370,17 +372,17 @@ Follow these in order.
 
 ### Immediate
 
-1. Run the app with a real Qwen3 model.
+1. Run the app with the default TranslateGemma model.
 2. Confirm `/tmp/contextura-frame-latest.png` is generated.
 3. Confirm a real Japanese screen produces overlay translations.
 4. Confirm `Cmd+Shift+R` works during a live session.
 
 ### After That
 
-1. Fix overlay exclusion from capture.
+1. Re-verify overlay exclusion from capture in a live session.
 2. Improve startup error handling instead of relying on `expect` and `unwrap`.
-3. Replace the mocked CLI E2E flow with real checks.
-4. Add a better wizard for permissions and model setup.
+3. Replace the placeholder `test-corpus/` assets with real checks.
+4. Keep the wizard copy aligned with the default model path and supported hotkeys.
 
 ## 15. Common Mistakes To Avoid
 

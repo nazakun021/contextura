@@ -10,23 +10,23 @@ The core single-display product path is wired in code, but the overall app is no
 
 ## Current Readiness
 
-| Area                            | Status | Notes                                                          |
-| ------------------------------- | ------ | -------------------------------------------------------------- |
-| Decoder-only model architecture | ✅     | TranslateGemma and Qwen-style GGUF paths are handled correctly |
-| Shell capabilities for sidecar  | ✅     | `shell:allow-execute` and `shell:allow-spawn` present          |
-| End-to-end pipeline wiring      | ✅     | `lib.rs` drives capture → OCR → translation → overlay          |
+| Area                            | Status | Notes                                                                                |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------------ |
+| Decoder-only model architecture | ✅     | TranslateGemma and Qwen-style GGUF paths are handled correctly                       |
+| Shell capabilities for sidecar  | ✅     | `shell:allow-execute` and `shell:allow-spawn` present                                |
+| End-to-end pipeline wiring      | ✅     | `lib.rs` drives capture → OCR → translation → overlay                                |
 | OCR helper reliability          | ✅     | Helper now validates input, times out cleanly, and preserves distinct OCR detections |
-| Watchdog + restart              | ✅     | Health failures emit a visible notice and restart the sidecar  |
-| Overlay exclusion from capture  | ✅     | Capture excludes Contextura windows and marks overlay non-shareable |
-| Model switching                 | ✅     | `Cmd+Shift+G` cycles to the next installed GGUF                |
-| Wizard screens 1–4              | ✅     | Setup now covers permissions, model, controls, and ready state |
-| Real CLI/test corpus flow       | ⚠️     | Code path is live, but the bundled corpus is currently invalid |
-| Sleep/wake capture recovery     | ✅     | Stalled capture stream triggers restart logic                  |
-| Debounce behavior in code       | ✅     | Settling now tolerates low-level inertial scroll bleed         |
-| Manual live smoke verification  | [-]    | Still required with a healthy local model                      |
-| Updater signing pubkey          | [ ]    | `tauri.conf.json` still has an empty pubkey                    |
-| Curated quality-tier policy     | [ ]    | Switching exists, but no RAM gate or curated tier contract     |
-| Multi-display support           | [ ]    | Runtime still targets display 0                                |
+| Watchdog + restart              | ✅     | Health failures emit a visible notice and restart the sidecar                        |
+| Overlay exclusion from capture  | ✅     | Capture excludes Contextura windows and marks overlay non-shareable                  |
+| Model switching                 | ✅     | `Cmd+Shift+G` cycles to the next installed GGUF                                      |
+| Wizard screens 1–4              | ✅     | Setup now covers permissions, model, controls, and ready state                       |
+| Real CLI/test corpus flow       | ⚠️     | Code path is live, but the bundled corpus is currently invalid                       |
+| Sleep/wake capture recovery     | ✅     | Stalled capture stream triggers restart logic                                        |
+| Debounce behavior in code       | ✅     | Settling now tolerates low-level inertial scroll bleed                               |
+| Manual live smoke verification  | [-]    | Still required with a healthy local model                                            |
+| Updater signing pubkey          | [ ]    | `tauri.conf.json` still has an empty pubkey                                          |
+| Curated quality-tier policy     | [ ]    | Switching exists, but no RAM gate or curated tier contract                           |
+| Multi-display support           | [ ]    | Runtime still targets display 0                                                      |
 
 ## What Changed in This Audit
 

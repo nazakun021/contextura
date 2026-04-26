@@ -34,7 +34,26 @@ Contextura is a macOS overlay that captures the screen, waits for motion to sett
 
 ## Setup
 
-### 1. Build the app
+### 1. Install prerequisites
+
+You need:
+
+- Xcode
+- Xcode Command Line Tools
+- Rust
+- Python 3
+
+Quick check:
+
+```bash
+xcodebuild -version
+xcode-select -p
+rustc --version
+cargo --version
+python3 --version
+```
+
+### 2. Build the app
 
 ```bash
 cargo tauri dev
@@ -42,12 +61,12 @@ cargo tauri dev
 
 The first build is slow because Tauri, ScreenCaptureKit bindings, and llama.cpp dependencies compile.
 
-### 2. Download a compatible model
+### 3. Download a compatible model
 
-Contextura expects a decoder-only GGUF model. The current repo default uses **TranslateGemma 4B IT Q4_K_M**.
+Contextura expects a decoder-only GGUF model. The current repo default uses **TranslateGemma 4B IT Q4_K_M**. Qwen-style GGUF models also work, but the docs and default settings are now centered on TranslateGemma.
 
 ```bash
-pip install huggingface_hub
+python3 -m pip install huggingface_hub
 
 huggingface-cli download mradermacher/translategemma-4b-it-GGUF \
   translategemma-4b-it.Q4_K_M.gguf \
@@ -56,7 +75,7 @@ huggingface-cli download mradermacher/translategemma-4b-it-GGUF \
 
 Encoder-decoder models such as NLLB, MarianMT, T5, and BART do not work with the bundled `llama-server`.
 
-### 3. Verify the sidecar manually
+### 4. Verify the sidecar manually
 
 ```bash
 ./src-tauri/binaries/llama-server-aarch64-apple-darwin \
@@ -80,9 +99,27 @@ Expected:
 { "status": "ok" }
 ```
 
-### 4. Grant Screen Recording permission
+### 5. Grant Screen Recording permission
 
 On first launch, Contextura shows a 4-step setup wizard covering Screen Recording permission, model placement, core shortcuts, and final readiness.
+
+## Quick Verify
+
+Run compile-time checks:
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+Then perform one live smoke pass:
+
+1. Launch `cargo tauri dev`.
+2. Open Japanese text on screen.
+3. Stop moving for about `200ms`.
+4. Confirm `/tmp/contextura-frame-latest.png` appears.
+5. Confirm overlay translations render.
+6. Confirm `Cmd+Shift+R` forces an immediate scan.
 
 ## Hotkeys
 
@@ -127,6 +164,8 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
 ```
 
 The current `test-corpus/` PNG fixtures are placeholders, so this command path is wired but not yet a trustworthy regression suite.
+
+See `TEST.md` for the focused verification workflow.
 
 ## Optional Crash Reporting
 
@@ -173,6 +212,7 @@ src-tauri/src/
   settings.rs
   ipc.rs
   cli.rs
+  downloader.rs
 ```
 
-See `SPEC.md` for current contracts and `ARCHITECTURE.md` for data flow.
+See `SETUP.md` for the full environment checklist, `TEST.md` for verification, `SPEC.md` for current contracts, and `ARCHITECTURE.md` for data flow.

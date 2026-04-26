@@ -24,29 +24,29 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 ### Code-integrated features
 
-| Area                          | Status | Notes                                                                                                     |
-| ----------------------------- | ------ | --------------------------------------------------------------------------------------------------------- |
-| Tauri app bootstrap           | ✅     | `main.rs` stays thin; `lib.rs` owns runtime                                                               |
-| Screen capture                | ✅     | Single display, explicit BGRA                                                                             |
-| Motion detection and debounce | ✅     | Wired into frame loop                                                                                     |
-| PNG snapshot writing          | ✅     | Temp file plus persistent latest debug copy                                                               |
-| OCR subprocess                | ✅     | Bundled `vision-helper` builds from source, validates input frames, and returns OCR JSON on valid images  |
-| Translation sidecar           | ✅     | Model-specific Qwen and TranslateGemma request paths, health check, restart support                       |
-| Dynamic styling               | ✅     | WCAG-based foreground/background selection                                                                |
-| IPC to overlay                | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`                     |
-| Overlay toggle hotkey         | ✅     | `Cmd+Shift+T`                                                                                             |
-| Force OCR hotkey              | ✅     | `Cmd+Shift+R`; cached-frame path is implemented, live re-check pending                                    |
-| Manual memory reset           | ✅     | `Cmd+Shift+M`                                                                                             |
-| Tray primary actions          | ✅     | Toggle, translate now, clear context                                                                      |
-| Model switching               | ✅     | `Cmd+Shift+G` cycles to next installed local model                                                        |
-| Context invalidation          | ✅     | App switch clears memory and overlay                                                                      |
-| Watchdog                      | ✅     | Restarts sidecar after repeated health failures                                                           |
-| Overlay capture exclusion     | ✅     | Capture excludes matching windows and sets overlay `NSWindowSharingType::None`; live re-check pending     |
-| Wizard screens 1–4            | ✅     | Setup flow covers permissions, model, controls, ready state                                               |
-| Real CLI OCR/translation path | ⚠️     | Code path is live, but end-to-end verification still depends on sidecar readiness and a valid corpus      |
-| Capture restart handling      | ✅     | Stalled capture stream triggers restart path                                                              |
-| Thermal + battery awareness   | ✅     | Thermal API + `pmset -g batt`                                                                             |
-| Optional Sentry               | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                 |
+| Area                          | Status | Notes                                                                                                    |
+| ----------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
+| Tauri app bootstrap           | ✅     | `main.rs` stays thin; `lib.rs` owns runtime                                                              |
+| Screen capture                | ✅     | Single display, explicit BGRA                                                                            |
+| Motion detection and debounce | ✅     | Wired into frame loop                                                                                    |
+| PNG snapshot writing          | ✅     | Temp file plus persistent latest debug copy                                                              |
+| OCR subprocess                | ✅     | Bundled `vision-helper` builds from source, validates input frames, and returns OCR JSON on valid images |
+| Translation sidecar           | ✅     | Model-specific Qwen and TranslateGemma request paths, health check, restart support                      |
+| Dynamic styling               | ✅     | WCAG-based foreground/background selection                                                               |
+| IPC to overlay                | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`                    |
+| Overlay toggle hotkey         | ✅     | `Cmd+Shift+T`                                                                                            |
+| Force OCR hotkey              | ✅     | `Cmd+Shift+R`; cached-frame path is implemented, live re-check pending                                   |
+| Manual memory reset           | ✅     | `Cmd+Shift+M`                                                                                            |
+| Tray primary actions          | ✅     | Toggle, translate now, clear context                                                                     |
+| Model switching               | ✅     | `Cmd+Shift+G` cycles to next installed local model                                                       |
+| Context invalidation          | ✅     | App switch clears memory and overlay                                                                     |
+| Watchdog                      | ✅     | Restarts sidecar after repeated health failures                                                          |
+| Overlay capture exclusion     | ✅     | Capture excludes matching windows and sets overlay `NSWindowSharingType::None`; live re-check pending    |
+| Wizard screens 1–4            | ✅     | Setup flow covers permissions, model, controls, ready state                                              |
+| Real CLI OCR/translation path | ⚠️     | Code path is live, but end-to-end verification still depends on sidecar readiness and a valid corpus     |
+| Capture restart handling      | ✅     | Stalled capture stream triggers restart path                                                             |
+| Thermal + battery awareness   | ✅     | Thermal API + `pmset -g batt`                                                                            |
+| Optional Sentry               | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                |
 
 ### Still pending
 

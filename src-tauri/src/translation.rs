@@ -7,6 +7,12 @@ use std::fmt::Write;
 use std::time::Duration;
 use tokio::time::sleep;
 
+const STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(180);
+const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+const TRANSLATEGEMMA_HISTORY_LIMIT: usize = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TranslationMode {
     NumberedBatchQwen,
@@ -60,7 +66,11 @@ impl TranslationClient {
         Self {
             memory: TranslationMemory::new(max_memory_size),
             port,
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(TRANSLATION_REQUEST_TIMEOUT)
+                .build()
+                .expect("translation HTTP client should build"),
             sidecar_child: None,
             mode: TranslationMode::NumberedBatchQwen,
         }
@@ -96,6 +106,95 @@ impl TranslationClient {
             .join("")
             .trim()
             .to_string()
+    }
+
+    fn build_translategemma_conversation(
+        history: &[(String, String)],
+        input_text: &str,
+    ) -> Vec<Value> {
+        let mut conversation = Vec::with_capacity(history.len() * 2 + 1);
+        for (source_text, translated_text) in history {
+            conversation.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "source_lang_code": "ja",
+                    "target_lang_code": "en",
+                    "text": source_text
+                }]
+            }));
+            conversation.push(json!({
+                "role": "assistant",
+                "content": translated_text
+            }));
+        }
+
+        conversation.push(json!({
+            "role": "user",
+            "content": [{
+                "type": "text",
+                "source_lang_code": "ja",
+                "target_lang_code": "en",
+                "text": input_text
+            }]
+        }));
+
+        conversation
+    }
+
+    async fn post_chat_completion(&self, payload: &Value) -> anyhow::Result<Value> {
+        let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
+        let mut last_error = String::from("unknown error");
+
+        for attempt in 1..=2 {
+            let response = self.client.post(&url).json(payload).send().await;
+            match response {
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await?;
+                    if !status.is_success() {
+                        last_error =
+                            format!("llama-server returned HTTP {status}: {}", body.trim());
+                    } else {
+                        return serde_json::from_str(&body).map_err(|error| {
+                            anyhow::anyhow!(
+                                "llama-server returned invalid JSON: {error}; body: {}",
+                                body.trim()
+                            )
+                        });
+                    }
+                }
+                Err(error) => {
+                    last_error = error.to_string();
+                }
+            }
+
+            if attempt < 2 {
+                sleep(Duration::from_millis(250)).await;
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "translation request failed after retry: {last_error}"
+        ))
+    }
+
+    fn response_text_from_completion(res: &Value) -> anyhow::Result<String> {
+        let content = &res["choices"][0]["message"]["content"];
+        let text = Self::response_text(content);
+        if text.is_empty() {
+            anyhow::bail!("llama-server returned an empty translation");
+        }
+        Ok(text)
+    }
+
+    fn translategemma_seed_history(&mut self, chunk_strings: &[String]) -> Vec<(String, String)> {
+        let history = self.memory.as_context_slice();
+        let keep = history
+            .len()
+            .min(TRANSLATEGEMMA_HISTORY_LIMIT)
+            .min(chunk_strings.len());
+        history[history.len().saturating_sub(keep)..].to_vec()
     }
 
     pub fn start_sidecar(
@@ -161,22 +260,70 @@ impl TranslationClient {
         Ok(())
     }
 
-    pub async fn wait_for_ready(&self) -> anyhow::Result<()> {
+    async fn wait_for_ready_with_timeout(&self, timeout: Duration) -> anyhow::Result<()> {
         let url = format!("http://127.0.0.1:{}/health", self.port);
-        let mut attempts = 0;
+        let started_at = tokio::time::Instant::now();
+        let mut last_error = None::<String>;
+
         loop {
-            if let Ok(res) = self.client.get(&url).send().await
-                && let Ok(json) = res.json::<Value>().await
-                && json.get("status").and_then(|s| s.as_str()) == Some("ok")
-            {
-                return Ok(());
+            if started_at.elapsed() >= timeout {
+                let detail =
+                    last_error.unwrap_or_else(|| "unknown health check failure".to_string());
+                return Err(anyhow::anyhow!(
+                    "Llama-server health check timed out after {}s: {detail}",
+                    timeout.as_secs()
+                ));
             }
-            attempts += 1;
-            if attempts > 120 {
-                return Err(anyhow::anyhow!("Llama-server health check timed out"));
+
+            match self.client.get(&url).send().await {
+                Ok(res) => {
+                    let status = res.status();
+                    let body = res.text().await.unwrap_or_default();
+
+                    if status.is_success() {
+                        match serde_json::from_str::<Value>(&body) {
+                            Ok(json)
+                                if json.get("status").and_then(|value| value.as_str())
+                                    == Some("ok") =>
+                            {
+                                return Ok(());
+                            }
+                            Ok(json) => {
+                                last_error = Some(format!(
+                                    "health endpoint returned unexpected payload: {json}"
+                                ));
+                            }
+                            Err(error) => {
+                                last_error = Some(format!(
+                                    "health endpoint returned invalid JSON: {error}; body: {}",
+                                    body.trim()
+                                ));
+                            }
+                        }
+                    } else {
+                        last_error = Some(format!(
+                            "health endpoint returned HTTP {status}: {}",
+                            body.trim()
+                        ));
+                    }
+                }
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                }
             }
-            sleep(Duration::from_millis(500)).await;
+
+            sleep(HEALTH_POLL_INTERVAL).await;
         }
+    }
+
+    pub async fn wait_for_ready(&self) -> anyhow::Result<()> {
+        self.wait_for_ready_with_timeout(STARTUP_READY_TIMEOUT)
+            .await
+    }
+
+    pub async fn wait_for_runtime_ready(&self) -> anyhow::Result<()> {
+        self.wait_for_ready_with_timeout(RUNTIME_READY_TIMEOUT)
+            .await
     }
 
     pub async fn translate_batch(&mut self, strings: &[String]) -> anyhow::Result<Vec<String>> {
@@ -224,18 +371,8 @@ impl TranslationClient {
                         "max_tokens": 512
                     });
 
-                    let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
-                    let res: Value = self
-                        .client
-                        .post(&url)
-                        .json(&payload)
-                        .send()
-                        .await?
-                        .json()
-                        .await?;
-
-                    let response_content =
-                        Self::response_text(&res["choices"][0]["message"]["content"]);
+                    let res = self.post_chat_completion(&payload).await?;
+                    let response_content = Self::response_text_from_completion(&res)?;
 
                     for line in response_content.lines() {
                         if let Some((num, text)) = line.split_once(':')
@@ -248,46 +385,26 @@ impl TranslationClient {
                     }
                 }
                 TranslationMode::StructuredTranslateGemma => {
-                    let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
-                    let mut conversation = Vec::with_capacity(chunk_strings.len() * 2);
+                    let mut conversation_history = self.translategemma_seed_history(chunk_strings);
 
                     for (chunk_offset, input_text) in chunk_strings.iter().enumerate() {
-                        conversation.push(json!({
-                            "role": "user",
-                            "content": [{
-                                "type": "text",
-                                "text": input_text
-                            }],
-                            "source_lang_code": "ja",
-                            "target_lang_code": "en"
-                        }));
-
                         let payload = json!({
                             "model": "local",
-                            "messages": conversation.clone(),
+                            "messages": Self::build_translategemma_conversation(
+                                &conversation_history,
+                                input_text,
+                            ),
                             "temperature": 0.1,
                             "max_tokens": 256
                         });
 
-                        let res: Value = self
-                            .client
-                            .post(&url)
-                            .json(&payload)
-                            .send()
-                            .await?
-                            .json()
-                            .await?;
-
-                        let translation =
-                            Self::response_text(&res["choices"][0]["message"]["content"]);
+                        let res = self.post_chat_completion(&payload).await?;
+                        let translation = Self::response_text_from_completion(&res)?;
                         final_results[offset + chunk_offset] = translation.clone();
-                        conversation.push(json!({
-                            "role": "assistant",
-                            "content": [{
-                                "type": "text",
-                                "text": translation
-                            }]
-                        }));
+                        conversation_history.push((input_text.clone(), translation));
+                        if conversation_history.len() > TRANSLATEGEMMA_HISTORY_LIMIT {
+                            conversation_history.remove(0);
+                        }
                     }
                 }
             }
@@ -320,5 +437,31 @@ mod tests {
             { "type": "text", "text": " world" }
         ]);
         assert_eq!(TranslationClient::response_text(&content), "Hello world");
+    }
+
+    #[test]
+    fn translategemma_conversation_matches_structured_user_only_format() {
+        let conversation = TranslationClient::build_translategemma_conversation(&[], "はじめに");
+
+        assert_eq!(conversation.len(), 1);
+        assert_eq!(conversation[0]["role"], "user");
+        assert_eq!(conversation[0]["content"][0]["type"], "text");
+        assert_eq!(conversation[0]["content"][0]["source_lang_code"], "ja");
+        assert_eq!(conversation[0]["content"][0]["target_lang_code"], "en");
+        assert_eq!(conversation[0]["content"][0]["text"], "はじめに");
+    }
+
+    #[test]
+    fn translategemma_conversation_preserves_prior_pairs() {
+        let conversation = TranslationClient::build_translategemma_conversation(
+            &[("猫".to_string(), "cat".to_string())],
+            "犬",
+        );
+
+        assert_eq!(conversation.len(), 3);
+        assert_eq!(conversation[0]["content"][0]["text"], "猫");
+        assert_eq!(conversation[1]["role"], "assistant");
+        assert_eq!(conversation[1]["content"], "cat");
+        assert_eq!(conversation[2]["content"][0]["text"], "犬");
     }
 }

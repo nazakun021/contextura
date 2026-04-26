@@ -59,21 +59,27 @@ impl ModelManifest {
         }
 
         let manifest_path = manifest_path(app_dir);
-        if manifest_path.exists() {
-            let manifest = serde_json::from_str::<Self>(&fs::read_to_string(manifest_path)?)?;
-            if !manifest.models.is_empty() {
-                return Ok(manifest.normalized(settings, &models_dir));
-            }
-        }
+        let mut manifest = if manifest_path.exists() {
+            serde_json::from_str::<Self>(&fs::read_to_string(manifest_path)?)?
+        } else {
+            Self::default()
+        };
 
-        let mut models = Vec::new();
         for path in gguf_files(&models_dir)? {
             let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
 
             let id = file_stem_id(file_name);
-            models.push(ModelEntry {
+            let already_known = manifest
+                .models
+                .iter()
+                .any(|model| model.id == id || model.filename == file_name);
+            if already_known {
+                continue;
+            }
+
+            manifest.models.push(ModelEntry {
                 label: prettify_label(&id),
                 tier: infer_tier(&id),
                 active: false,
@@ -82,8 +88,8 @@ impl ModelManifest {
             });
         }
 
-        if models.is_empty() {
-            models.push(ModelEntry {
+        if manifest.models.is_empty() {
+            manifest.models.push(ModelEntry {
                 id: settings.active_model.clone(),
                 filename: format!("{}.gguf", settings.active_model),
                 label: prettify_label(&settings.active_model),
@@ -92,7 +98,6 @@ impl ModelManifest {
             });
         }
 
-        let manifest = Self { models };
         Ok(manifest.normalized(settings, &models_dir))
     }
 
@@ -313,6 +318,56 @@ mod tests {
                 .models
                 .iter()
                 .any(|model| model.id == settings.active_model && model.active)
+        );
+    }
+
+    #[test]
+    fn manifest_load_should_merge_new_disk_models_into_existing_manifest() {
+        let app_dir = temp_app_dir("manifest-merge");
+        let settings = Settings {
+            active_model: "qwen3-0.6b-q4".to_string(),
+            ..Settings::default()
+        };
+
+        fs::write(
+            app_dir.join("models").join("manifest.json"),
+            r#"{
+  "models": [
+    {
+      "id": "qwen3-0.6b-q4",
+      "filename": "qwen3-0.6b-q4_k_m.gguf",
+      "active": true
+    }
+  ]
+}"#,
+        )
+        .expect("manifest should be written");
+        fs::write(
+            app_dir.join("models").join("qwen3-0.6b-q4_k_m.gguf"),
+            b"qwen",
+        )
+        .expect("qwen model should be written");
+        fs::write(
+            app_dir
+                .join("models")
+                .join("translategemma-4b-it.Q4_K_M.gguf"),
+            b"gemma",
+        )
+        .expect("translategemma model should be written");
+
+        let manifest = ModelManifest::load(&app_dir, &settings).expect("manifest should load");
+
+        assert!(
+            manifest
+                .models
+                .iter()
+                .any(|model| model.id == "qwen3-0.6b-q4" && model.active)
+        );
+        assert!(
+            manifest
+                .models
+                .iter()
+                .any(|model| model.id == "translategemma-4b-it.Q4_K_M")
         );
     }
 
