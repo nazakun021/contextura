@@ -1,7 +1,6 @@
 // src-tauri/src/hotkeys.rs
 
 use crossbeam_channel::Sender;
-use std::process;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -54,13 +53,16 @@ pub fn register_shortcuts(
     }
 
     // Cmd+Shift+Q — quit immediately
-    app.global_shortcut()
-        .on_shortcut(quit_shortcut, |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                log::info!("[Hotkey] Quit (Cmd+Shift+Q)");
-                process::exit(0);
-            }
-        })?;
+    {
+        let app_handle = app.handle().clone();
+        app.global_shortcut()
+            .on_shortcut(quit_shortcut, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    log::info!("[Hotkey] Quit (Cmd+Shift+Q)");
+                    app_handle.exit(0);
+                }
+            })?;
+    }
 
     // Cmd+Shift+R — force immediate OCR scan (bypasses debounce)
     {

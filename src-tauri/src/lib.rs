@@ -17,6 +17,7 @@ mod translation;
 mod hotkeys;
 mod tray;
 
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -41,10 +42,20 @@ use crate::models::ModelManifest;
 use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::styling::StylingEngine;
 
+const SETTINGS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
 #[derive(Debug, Clone)]
 pub enum PipelineCommand {
     ForceScan,
     ReloadRuntime { reason: String },
+    Shutdown,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeState {
+    settings: settings::Settings,
+    active_model: models::ModelStatus,
+    loaded_at: Instant,
 }
 
 fn resolve_binary_path(binary_name: &str) -> anyhow::Result<PathBuf> {
@@ -105,6 +116,13 @@ fn resolve_llama_server_path() -> anyhow::Result<PathBuf> {
     resolve_binary_path("llama-server")
 }
 
+fn find_available_local_port() -> anyhow::Result<u16> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
 fn swap_bgra_to_rgba(buffer: &[u8]) -> Vec<u8> {
     let mut rgba_data = buffer.to_vec();
     for pixel in rgba_data.chunks_exact_mut(4) {
@@ -140,6 +158,22 @@ fn save_frame_as_png(
     );
 
     Ok(path)
+}
+
+fn cleanup_stale_temp_frames() {
+    let Ok(entries) = std::fs::read_dir("/tmp") else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_name.starts_with("contextura-frame-") && file_name.ends_with(".png") {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>(
@@ -197,9 +231,10 @@ async fn process_capture_frame(
     client: &Arc<AsyncMutex<translation::TranslationClient>>,
     ocr_engine: &ocr::OcrEngine,
     invalidation_rx: &Receiver<context::InvalidationReason>,
+    pipeline_tx: &Sender<PipelineCommand>,
     frame: &capture::CaptureFrame,
     frame_id: u64,
-) {
+) -> Option<TranslationPayload> {
     drain_invalidations(app_handle, client, invalidation_rx).await;
 
     let rgba_data = swap_bgra_to_rgba(&frame.buffer.data);
@@ -212,7 +247,7 @@ async fn process_capture_frame(
         Ok(path) => path,
         Err(error) => {
             log::error!("[OCR] PNG save failed: {error}");
-            return;
+            return None;
         }
     };
 
@@ -223,6 +258,16 @@ async fn process_capture_frame(
         },
     );
 
+    if client.lock().await.quick_health_check().await.is_err() {
+        log::warn!(
+            "[Translation] Pre-flight health check failed — skipping frame and requesting runtime reload"
+        );
+        let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
+            reason: "health check failed before batch".to_string(),
+        });
+        return None;
+    }
+
     #[allow(clippy::cast_precision_loss)]
     let ocr_results = ocr_engine.recognize(
         &png_path,
@@ -230,6 +275,8 @@ async fn process_capture_frame(
         frame.buffer.height as f32,
         frame.scale_factor,
     );
+    // Styling uses the in-memory RGBA buffer, so the temp OCR PNG can be deleted now while
+    // /tmp/contextura-frame-latest.png remains available for post-mortem debugging.
     let _ = std::fs::remove_file(&png_path);
 
     let ocr_results = match ocr_results {
@@ -244,13 +291,13 @@ async fn process_capture_frame(
                 "warning",
                 4000,
             );
-            return;
+            return None;
         }
     };
 
     if ocr_results.is_empty() {
         log::debug!("[OCR] No CJK text found in frame {frame_id}");
-        return;
+        return None;
     }
 
     let texts = ocr_results
@@ -275,7 +322,7 @@ async fn process_capture_frame(
                 "warning",
                 5000,
             );
-            return;
+            return None;
         }
     };
 
@@ -325,6 +372,31 @@ async fn process_capture_frame(
     if let Err(error) = app_handle.emit("translation-update", &payload) {
         log::error!("[IPC] Failed to emit translation-update: {error}");
     }
+
+    Some(payload)
+}
+
+fn emit_cached_translation_payload(
+    app_handle: &tauri::AppHandle,
+    payload: &TranslationPayload,
+) -> bool {
+    if let Err(error) = app_handle.emit("translation-update", payload) {
+        log::error!("[IPC] Failed to emit cached translation-update: {error}");
+        false
+    } else {
+        true
+    }
+}
+
+fn load_runtime_state() -> anyhow::Result<RuntimeState> {
+    let app_dir = settings::Settings::dir()?;
+    let loaded_settings = settings::Settings::load(&app_dir)?;
+    let active_model = models::active_model_status(&app_dir, &loaded_settings)?;
+    Ok(RuntimeState {
+        settings: loaded_settings,
+        active_model,
+        loaded_at: Instant::now(),
+    })
 }
 
 fn open_models_folder() -> Result<(), String> {
@@ -442,6 +514,11 @@ pub fn run() {
         return;
     }
 
+    cleanup_stale_temp_frames();
+
+    let pipeline_tx_for_exit = Arc::new(std::sync::Mutex::new(None::<Sender<PipelineCommand>>));
+    let pipeline_tx_setup = Arc::clone(&pipeline_tx_for_exit);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -452,11 +529,12 @@ pub fn run() {
             open_models_folder_command,
             open_screen_recording_settings
         ])
-        .setup(|app| {
+        .setup(move |app| {
             use tauri::Manager;
 
             let app_dir = settings::Settings::dir().expect("Failed to get app directory");
-            let settings = settings::Settings::load(&app_dir).expect("Failed to load settings at startup");
+            let startup_settings =
+                settings::Settings::load(&app_dir).expect("Failed to load settings at startup");
             let vision_helper_path =
                 resolve_vision_helper_path(app).expect("Failed to resolve vision-helper path");
             let app_bundle_id = app.config().identifier.clone();
@@ -467,11 +545,13 @@ pub fn run() {
             let (window_tracker, invalidation_rx) = context::AppWindowTracker::new();
             let mut thermal_monitor = thermal::ThermalMonitor::new();
             let ocr_engine = Arc::new(ocr::OcrEngine::new(
-                settings.furigana_suppression,
+                startup_settings.furigana_suppression,
                 vision_helper_path,
             ));
             let mut display_manager = capture::DisplayManager::new();
             let (pipeline_tx, pipeline_rx) = crossbeam_channel::bounded(16);
+            *pipeline_tx_setup.lock().expect("pipeline exit handle lock poisoned") =
+                Some(pipeline_tx.clone());
 
             // Register Hotkeys
             hotkeys::register_shortcuts(app, window_tracker.clone(), pipeline_tx.clone())
@@ -501,13 +581,13 @@ pub fn run() {
                 }
 
                 // Only show overlay if wizard is completed
-                if settings.wizard_completed {
+                if startup_settings.wizard_completed {
                     let _ = overlay.show();
                 }
             }
 
             // Show wizard if not completed
-            if !settings.wizard_completed {
+            if !startup_settings.wizard_completed {
                 if let Some(wizard) = app.get_webview_window("wizard") {
                     let _ = wizard.show();
                 } else {
@@ -524,29 +604,28 @@ pub fn run() {
             }
 
             // Initialize Tray
-            tray::setup_tray(app, pipeline_tx, window_tracker.clone())
+            tray::setup_tray(app, pipeline_tx.clone(), window_tracker.clone())
                 .expect("Failed to setup tray");
 
             // --- Panic Hook (Cleanup Temp Files) ---
             let default_hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |panic_info| {
-                let _ = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg("rm -f /tmp/contextura-frame-*.png")
-                    .output();
+                cleanup_stale_temp_frames();
                 default_hook(panic_info);
             }));
 
             // --- Pipeline Orchestration ---
             let app_handle = app.handle().clone();
             let app_bundle_id_sidecar = app_bundle_id;
-            let initial_memory_size = settings.context_memory_size;
+            let initial_memory_size = startup_settings.context_memory_size;
 
             thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().expect("Tokio runtime should initialize");
+                let sidecar_port =
+                    find_available_local_port().expect("localhost port should be available");
                 let client = Arc::new(AsyncMutex::new(translation::TranslationClient::new(
                     initial_memory_size,
-                    8765,
+                    sidecar_port,
                 )));
                 let client_clone = Arc::clone(&client);
                 let app_handle_sidecar = app_handle.clone();
@@ -607,31 +686,55 @@ pub fn run() {
                     let mut warned_missing_model = false;
                     let mut active_model_id = String::new();
                     let mut frame_id: u64 = 0;
+                    let mut last_thermal_check = Instant::now() - Duration::from_secs(31);
+                    let mut runtime_state: Option<RuntimeState> = None;
+                    let mut runtime_reload_requested = true;
 
                     loop {
-                        let app_dir = settings::Settings::dir().expect("Failed to get app directory");
-                        let runtime_settings =
-                            settings::Settings::load(&app_dir).expect("Failed to load settings");
-                        let active_model = match models::active_model_status(&app_dir, &runtime_settings)
-                        {
-                            Ok(model) => model,
-                            Err(error) => {
-                                if !warned_missing_model {
-                                    emit_runtime_notice(
-                                        &app_handle_sidecar,
-                                        "No Model Available",
-                                        "Add a GGUF model to the Contextura models folder to enable translation.",
-                                        error.to_string(),
-                                        "warning",
-                                        6000,
-                                    );
-                                    warned_missing_model = true;
+                        let should_refresh_runtime = runtime_reload_requested
+                            || runtime_state.as_ref().is_none_or(|state| {
+                                state.loaded_at.elapsed() >= SETTINGS_REFRESH_INTERVAL
+                            });
+
+                        if should_refresh_runtime {
+                            match load_runtime_state() {
+                                Ok(state) => {
+                                    if runtime_state.as_ref().is_none_or(|current| {
+                                        current.active_model.entry.id != state.active_model.entry.id
+                                    }) {
+                                        sidecar_started = false;
+                                    }
+                                    runtime_state = Some(state);
+                                    runtime_reload_requested = false;
                                 }
-                                sleep(Duration::from_secs(5)).await;
-                                thermal_monitor.update();
-                                continue;
+                                Err(error) => {
+                                    if !warned_missing_model {
+                                        emit_runtime_notice(
+                                            &app_handle_sidecar,
+                                            "No Model Available",
+                                            "Add a GGUF model to the Contextura models folder to enable translation.",
+                                            error.to_string(),
+                                            "warning",
+                                            6000,
+                                        );
+                                        warned_missing_model = true;
+                                    }
+                                    sleep(Duration::from_secs(5)).await;
+                                    if last_thermal_check.elapsed() > Duration::from_secs(30) {
+                                        thermal_monitor.update();
+                                        last_thermal_check = Instant::now();
+                                    }
+                                    continue;
+                                }
                             }
+                        }
+
+                        let Some(state) = runtime_state.as_ref() else {
+                            sleep(Duration::from_secs(1)).await;
+                            continue;
                         };
+                        let runtime_settings = state.settings.clone();
+                        let active_model = state.active_model.clone();
 
                         *active_model_path.lock().await = active_model.path.clone();
                         *active_model_key.lock().await = active_model.entry.id.clone();
@@ -652,7 +755,10 @@ pub fn run() {
                                 warned_missing_model = true;
                             }
                             sleep(Duration::from_secs(5)).await;
-                            thermal_monitor.update();
+                            if last_thermal_check.elapsed() > Duration::from_secs(30) {
+                                thermal_monitor.update();
+                                last_thermal_check = Instant::now();
+                            }
                             continue;
                         }
                         warned_missing_model = false;
@@ -663,6 +769,7 @@ pub fn run() {
                         }
 
                         if !sidecar_started {
+                            log::info!("[Pipeline] Starting sidecar on port {sidecar_port}");
                             match client_clone
                                 .lock()
                                 .await
@@ -695,17 +802,24 @@ pub fn run() {
                             }
                         }
 
-                        match client_clone.lock().await.wait_for_ready().await {
+                        let ready_result = if failure_count == 0 {
+                            client_clone.lock().await.wait_for_ready().await
+                        } else {
+                            client_clone.lock().await.wait_for_ready_retry().await
+                        };
+
+                        match ready_result {
                             Ok(()) => {
                                 failure_count = 0;
                                 log::info!("[Pipeline] Translation sidecar is ready");
                             }
                             Err(error) => {
                                 failure_count += 1;
+                                sidecar_started = false;
                                 log::error!(
                                     "[Pipeline] Sidecar not ready (attempt {failure_count}): {error}"
                                 );
-                                if failure_count > 30 {
+                                if failure_count > 5 {
                                     emit_runtime_notice(
                                         &app_handle_sidecar,
                                         "Translation Engine Unavailable",
@@ -716,7 +830,7 @@ pub fn run() {
                                     );
                                     break;
                                 }
-                                sleep(Duration::from_secs(1)).await;
+                                sleep(Duration::from_secs(2)).await;
                                 continue;
                             }
                         }
@@ -739,6 +853,9 @@ pub fn run() {
                         let mut pending_force_scan = false;
                         let mut latest_frame: Option<capture::CaptureFrame> = None;
                         let mut last_frame_at = Instant::now();
+                        let mut was_scrolling = false;
+                        let mut last_processed_hash: Option<u64> = None;
+                        let mut last_payload: Option<TranslationPayload> = None;
 
                         log::info!("[Pipeline] Entering capture loop");
 
@@ -752,17 +869,44 @@ pub fn run() {
                                             log::info!(
                                                 "[Pipeline] Force scan requested on cached frame"
                                             );
-                                            let current_frame_id = frame_id;
-                                            frame_id += 1;
-                                            process_capture_frame(
-                                                &app_handle_sidecar,
-                                                &client_clone,
-                                                &ocr_engine_loop,
-                                                &invalidation_rx,
-                                                &frame,
-                                                current_frame_id,
-                                            )
-                                            .await;
+                                            let cached_rgba = swap_bgra_to_rgba(&frame.buffer.data);
+                                            let cached_thumbnail = motion_detector.downsample(
+                                                &cached_rgba,
+                                                frame.buffer.width,
+                                                frame.buffer.height,
+                                            );
+                                            let frame_hash = cached_thumbnail
+                                                .iter()
+                                                .map(|&pixel| u64::from(pixel))
+                                                .sum::<u64>();
+                                            if last_processed_hash == Some(frame_hash)
+                                                && let Some(payload) = last_payload.as_ref()
+                                            {
+                                                log::debug!(
+                                                    "[Pipeline] Force scan frame identical to last processed, reusing cached payload"
+                                                );
+                                                let _ = emit_cached_translation_payload(
+                                                    &app_handle_sidecar,
+                                                    payload,
+                                                );
+                                            } else {
+                                                let current_frame_id = frame_id;
+                                                frame_id += 1;
+                                                if let Some(payload) = process_capture_frame(
+                                                    &app_handle_sidecar,
+                                                    &client_clone,
+                                                    &ocr_engine_loop,
+                                                    &invalidation_rx,
+                                                    &pipeline_tx,
+                                                    &frame,
+                                                    current_frame_id,
+                                                )
+                                                .await
+                                                {
+                                                    last_processed_hash = Some(frame_hash);
+                                                    last_payload = Some(payload);
+                                                }
+                                            }
                                             pending_force_scan = false;
                                         } else {
                                             log::info!(
@@ -773,8 +917,14 @@ pub fn run() {
                                     }
                                     PipelineCommand::ReloadRuntime { reason } => {
                                         log::info!("[Pipeline] Reload requested: {reason}");
+                                        runtime_reload_requested = true;
                                         sidecar_started = false;
                                         break 'capture;
+                                    }
+                                    PipelineCommand::Shutdown => {
+                                        log::info!("[Pipeline] Shutdown requested");
+                                        client_clone.lock().await.shutdown_sidecar();
+                                        return;
                                     }
                                 }
                             }
@@ -798,8 +948,9 @@ pub fn run() {
                             latest_frame = Some(frame.clone());
 
                             let is_forced = std::mem::take(&mut pending_force_scan);
+                            let rgba_data = swap_bgra_to_rgba(&frame.buffer.data);
                             let thumbnail = motion_detector.downsample(
-                                &frame.buffer.data,
+                                &rgba_data,
                                 frame.buffer.width,
                                 frame.buffer.height,
                             );
@@ -812,25 +963,55 @@ pub fn run() {
 
                             match debounce_event {
                                 DebounceEvent::MotionDetected => {
-                                    let _ = app_handle_sidecar.emit("translation-clear", ());
+                                    if !was_scrolling {
+                                        let _ = app_handle_sidecar.emit("translation-clear", ());
+                                        was_scrolling = true;
+                                    }
                                 }
                                 DebounceEvent::Triggered => {
+                                    was_scrolling = false;
+                                    let frame_hash =
+                                        thumbnail.iter().map(|&pixel| u64::from(pixel)).sum::<u64>();
+                                    if last_processed_hash == Some(frame_hash)
+                                        && let Some(payload) = last_payload.as_ref()
+                                    {
+                                        log::debug!(
+                                            "[Pipeline] Frame identical to last processed, reusing cached payload"
+                                        );
+                                        let _ = emit_cached_translation_payload(
+                                            &app_handle_sidecar,
+                                            payload,
+                                        );
+                                        continue;
+                                    }
                                     let current_frame_id = frame_id;
                                     frame_id += 1;
-                                    process_capture_frame(
+                                    if let Some(payload) = process_capture_frame(
                                         &app_handle_sidecar,
                                         &client_clone,
                                         &ocr_engine_loop,
                                         &invalidation_rx,
+                                        &pipeline_tx,
                                         &frame,
                                         current_frame_id,
                                     )
-                                    .await;
+                                    .await
+                                    {
+                                        last_processed_hash = Some(frame_hash);
+                                        last_payload = Some(payload);
+                                    }
                                 }
-                                DebounceEvent::None => {}
+                                DebounceEvent::None => {
+                                    if !matches!(debounce.state, motion::DebounceState::Scrolling) {
+                                        was_scrolling = false;
+                                    }
+                                }
                             }
 
-                            thermal_monitor.update();
+                            if last_thermal_check.elapsed() > Duration::from_secs(30) {
+                                thermal_monitor.update();
+                                last_thermal_check = Instant::now();
+                            }
                             if thermal_monitor.should_throttle() {
                                 sleep(Duration::from_millis(500)).await;
                             }
@@ -841,8 +1022,19 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |_app_handle, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit)
+                && let Some(tx) = pipeline_tx_for_exit
+                    .lock()
+                    .expect("pipeline exit handle lock poisoned")
+                    .as_ref()
+                    .cloned()
+            {
+                let _ = tx.try_send(PipelineCommand::Shutdown);
+            }
+        });
 }
 
 #[derive(serde::Serialize)]
@@ -905,11 +1097,12 @@ async fn run_debug_cli_once(args: &CliArgs, input: &std::path::Path) -> anyhow::
         );
     }
 
-    let mut sidecar = spawn_cli_sidecar(&active_model.path, 8765)?;
+    let sidecar_port = find_available_local_port()?;
+    let mut sidecar = spawn_cli_sidecar(&active_model.path, sidecar_port)?;
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client =
-        translation::TranslationClient::new(settings.context_memory_size, 8765);
+        translation::TranslationClient::new(settings.context_memory_size, sidecar_port);
     translation_client.start_sidecar_mode_for_cli(&active_model.entry.id);
     translation_client.wait_for_ready().await?;
 
@@ -967,11 +1160,12 @@ async fn run_test_suite(dir: &std::path::Path) -> anyhow::Result<()> {
         );
     }
 
-    let sidecar = SidecarGuard(spawn_cli_sidecar(&active_model.path, 8765)?);
+    let sidecar_port = find_available_local_port()?;
+    let sidecar = SidecarGuard(spawn_cli_sidecar(&active_model.path, sidecar_port)?);
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = ocr::OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client =
-        translation::TranslationClient::new(settings.context_memory_size, 8765);
+        translation::TranslationClient::new(settings.context_memory_size, sidecar_port);
     translation_client.start_sidecar_mode_for_cli(&active_model.entry.id);
     translation_client.wait_for_ready().await?;
 

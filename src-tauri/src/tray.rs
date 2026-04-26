@@ -1,7 +1,6 @@
 // src-tauri/src/tray.rs
 
 use crossbeam_channel::Sender;
-use std::process;
 use tauri::{
     App, Manager,
     menu::{Menu, MenuItem},
@@ -111,7 +110,7 @@ pub fn setup_tray(
                 }
             }
             "quit" => {
-                process::exit(0);
+                app_handle.exit(0);
             }
             _ => {}
         })

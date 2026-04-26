@@ -1,6 +1,7 @@
 // src-tauri/src/context.rs
 
 use crossbeam_channel::{Receiver, Sender, bounded};
+use objc2::rc::autoreleasepool;
 use objc2_app_kit::NSWorkspace;
 use std::thread;
 use std::time::Duration;
@@ -35,21 +36,23 @@ impl AppWindowTracker {
             loop {
                 thread::sleep(Duration::from_millis(500));
 
-                let workspace = NSWorkspace::sharedWorkspace();
-                let front_app = workspace.frontmostApplication();
+                autoreleasepool(|_| {
+                    let workspace = NSWorkspace::sharedWorkspace();
+                    let front_app = workspace.frontmostApplication();
 
-                let active_bundle =
-                    front_app.and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
+                    let active_bundle =
+                        front_app.and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
 
-                if active_bundle != last_bundle {
-                    if let (Some(from), Some(to)) = (&last_bundle, &active_bundle) {
-                        let _ = tx.send(InvalidationReason::AppSwitch {
-                            from: from.clone(),
-                            to: to.clone(),
-                        });
+                    if active_bundle != last_bundle {
+                        if let (Some(from), Some(to)) = (&last_bundle, &active_bundle) {
+                            let _ = tx.send(InvalidationReason::AppSwitch {
+                                from: from.clone(),
+                                to: to.clone(),
+                            });
+                        }
+                        last_bundle = active_bundle;
                     }
-                    last_bundle = active_bundle;
-                }
+                });
             }
         });
     }

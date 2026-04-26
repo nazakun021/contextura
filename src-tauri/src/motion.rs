@@ -206,7 +206,7 @@ impl MotionDetector {
         size
     }
 
-    pub fn downsample(&self, rgba_data: &[u8], full_width: usize, full_height: usize) -> Vec<u8> {
+    pub fn downsample(&self, rgba_pixels: &[u8], full_width: usize, full_height: usize) -> Vec<u8> {
         let mut thumbnail = vec![0u8; self.width * self.height];
 
         let x_step = full_width as f32 / self.width as f32;
@@ -218,10 +218,10 @@ impl MotionDetector {
                 let fy = (ty as f32 * y_step) as usize;
 
                 let rgba_idx = (fy * full_width + fx) * 4;
-                if rgba_idx + 2 < rgba_data.len() {
-                    let r = rgba_data[rgba_idx];
-                    let g = rgba_data[rgba_idx + 1];
-                    let b = rgba_data[rgba_idx + 2];
+                if rgba_idx + 2 < rgba_pixels.len() {
+                    let r = rgba_pixels[rgba_idx];
+                    let g = rgba_pixels[rgba_idx + 1];
+                    let b = rgba_pixels[rgba_idx + 2];
 
                     // Simple grayscale conversion: 0.299R + 0.587G + 0.114B
                     let gray =

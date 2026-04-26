@@ -4,8 +4,9 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const MIN_CONFIDENCE: f32 = 0.3;
 const FURIGANA_HEIGHT_RATIO: f32 = 0.4;
@@ -117,7 +118,7 @@ impl OcrEngine {
         screen_height: f32,
         scale_factor: f32,
     ) -> anyhow::Result<Vec<OcrResult>> {
-        let mut child = Command::new(&self.vision_helper_path)
+        let child = Command::new(&self.vision_helper_path)
             .arg(png_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -129,28 +130,30 @@ impl OcrEngine {
                 )
             })?;
 
-        let started_at = Instant::now();
-        loop {
-            if child.try_wait()?.is_some() {
-                break;
-            }
+        let child_pid = child.id();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
 
-            if started_at.elapsed() >= OCR_HELPER_TIMEOUT {
-                let _ = child.kill();
-                let _ = child.wait();
+        let output = match rx.recv_timeout(OCR_HELPER_TIMEOUT) {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => anyhow::bail!("vision-helper I/O error: {error}"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &child_pid.to_string()])
+                    .status();
                 anyhow::bail!(
                     "vision-helper timed out after {}s while reading {}",
                     OCR_HELPER_TIMEOUT.as_secs(),
                     png_path.display()
                 );
             }
-
-            thread::sleep(Duration::from_millis(25));
-        }
-
-        let output = child
-            .wait_with_output()
-            .with_context(|| "Failed to collect vision-helper output".to_string())?;
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                anyhow::bail!("vision-helper worker disconnected before producing output");
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

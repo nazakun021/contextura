@@ -1,5 +1,6 @@
 // src-tauri/src/translation.rs
 
+use anyhow::Context;
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -8,7 +9,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 const STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(180);
+const RETRY_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const QUICK_HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const TRANSLATEGEMMA_HISTORY_LIMIT: usize = 6;
@@ -142,6 +145,61 @@ impl TranslationClient {
         conversation
     }
 
+    fn build_translategemma_messages(history: &[(String, String)], input_text: &str) -> Vec<Value> {
+        let mut messages = vec![json!({
+            "role": "system",
+            "content": "You are a Japanese-to-English translator. Output only the English translation, nothing else."
+        })];
+        messages.extend(Self::build_translategemma_conversation(history, input_text));
+        messages
+    }
+
+    fn build_qwen_batch_prompt(&mut self, chunk_strings: &[String]) -> String {
+        let mut prompt = String::new();
+        let context = self.memory.as_context_slice();
+        if !context.is_empty() {
+            prompt.push_str("Previous context (do not retranslate, for reference only):\n");
+            for (ja, en) in context {
+                let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
+            }
+            prompt.push('\n');
+        }
+
+        prompt.push_str("Translate each numbered Japanese string to English.\n");
+        prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
+
+        for (i, s) in chunk_strings.iter().enumerate() {
+            let _ = writeln!(prompt, "{}: {}", i + 1, s);
+        }
+
+        prompt
+    }
+
+    fn build_qwen_batch_payload(&mut self, chunk_strings: &[String]) -> Value {
+        let prompt = self.build_qwen_batch_prompt(chunk_strings);
+        json!({
+            "model": "local",
+            "messages": [
+                { "role": "system", "content": "You are a Japanese-to-English translator. /no_think" },
+                { "role": "user", "content": prompt }
+            ],
+            "temperature": 0.1,
+            "max_tokens": (chunk_strings.len() * 80).max(512)
+        })
+    }
+
+    fn build_qwen_single_payload(input_text: &str) -> Value {
+        json!({
+            "model": "local",
+            "messages": [
+                { "role": "system", "content": "You are a Japanese-to-English translator. /no_think Output only the English translation, nothing else." },
+                { "role": "user", "content": input_text }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 256
+        })
+    }
+
     async fn post_chat_completion(&self, payload: &Value) -> anyhow::Result<Value> {
         let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
         let mut last_error = String::from("unknown error");
@@ -188,12 +246,9 @@ impl TranslationClient {
         Ok(text)
     }
 
-    fn translategemma_seed_history(&mut self, chunk_strings: &[String]) -> Vec<(String, String)> {
+    fn translategemma_seed_history(&mut self) -> Vec<(String, String)> {
         let history = self.memory.as_context_slice();
-        let keep = history
-            .len()
-            .min(TRANSLATEGEMMA_HISTORY_LIMIT)
-            .min(chunk_strings.len());
+        let keep = history.len().min(TRANSLATEGEMMA_HISTORY_LIMIT);
         history[history.len().saturating_sub(keep)..].to_vec()
     }
 
@@ -212,15 +267,27 @@ impl TranslationClient {
 
         self.mode = Self::mode_for_model(model_id);
 
-        let binaries_dir = app.path().resource_dir().unwrap().join("binaries");
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .context("resource_dir unavailable")?;
+        let binaries_dir = resource_dir.join("binaries");
+        let binaries_dir_str = binaries_dir
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("binaries dir path is not UTF-8: {binaries_dir:?}"))?
+            .to_string();
+        let model_path_str = model_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("model path is not UTF-8: {model_path:?}"))?
+            .to_string();
 
-        let (mut rx, child) = app
+        let mut command = app
             .shell()
             .sidecar("llama-server")?
-            .env("DYLD_FALLBACK_LIBRARY_PATH", binaries_dir.to_str().unwrap())
+            .env("DYLD_FALLBACK_LIBRARY_PATH", binaries_dir_str)
             .args([
                 "--model",
-                model_path.to_str().unwrap(),
+                &model_path_str,
                 "--port",
                 &self.port.to_string(),
                 "--n-gpu-layers",
@@ -229,10 +296,15 @@ impl TranslationClient {
                 "1024",
                 "--host",
                 "127.0.0.1",
-                // "--log-disable", // quiet; Rust handles logging
-                "--jinja", // required for Qwen3 chat template (Jinja2 format)
-            ])
-            .spawn()?;
+            ]);
+
+        if self.mode == TranslationMode::StructuredTranslateGemma {
+            command = command.arg("--no-jinja");
+        } else {
+            command = command.arg("--jinja"); // required for Qwen3 chat template
+        }
+
+        let (mut rx, child) = command.spawn()?;
 
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
@@ -321,9 +393,137 @@ impl TranslationClient {
             .await
     }
 
+    pub async fn wait_for_ready_retry(&self) -> anyhow::Result<()> {
+        self.wait_for_ready_with_timeout(RETRY_READY_TIMEOUT).await
+    }
+
     pub async fn wait_for_runtime_ready(&self) -> anyhow::Result<()> {
         self.wait_for_ready_with_timeout(RUNTIME_READY_TIMEOUT)
             .await
+    }
+
+    pub async fn quick_health_check(&self) -> anyhow::Result<()> {
+        let url = format!("http://127.0.0.1:{}/health", self.port);
+        let response = tokio::time::timeout(QUICK_HEALTH_TIMEOUT, self.client.get(&url).send())
+            .await
+            .map_err(|_| anyhow::anyhow!("health check timed out after 2s"))??;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            anyhow::bail!("health endpoint returned HTTP {status}: {}", body.trim());
+        }
+
+        let json: Value = serde_json::from_str(&body).map_err(|error| {
+            anyhow::anyhow!(
+                "health endpoint returned invalid JSON: {error}; body: {}",
+                body.trim()
+            )
+        })?;
+
+        if json.get("status").and_then(Value::as_str) == Some("ok") {
+            Ok(())
+        } else {
+            anyhow::bail!("health endpoint returned unexpected payload: {json}");
+        }
+    }
+
+    pub fn shutdown_sidecar(&mut self) {
+        if let Some(child) = self.sidecar_child.take() {
+            let _ = child.kill();
+        }
+    }
+
+    fn parse_numbered_translation_line(line: &str) -> Option<(usize, String)> {
+        let trimmed = line.trim();
+        let trimmed = trimmed
+            .trim_start_matches('*')
+            .trim_end_matches('*')
+            .trim_start();
+        let number_end = trimmed.find(|c: char| !c.is_ascii_digit())?;
+        if number_end == 0 {
+            return None;
+        }
+
+        let idx = trimmed[..number_end].parse::<usize>().ok()?;
+        let remainder = trimmed[number_end..].trim_start();
+        let remainder = remainder
+            .strip_prefix(':')
+            .or_else(|| remainder.strip_prefix('.'))
+            .or_else(|| remainder.strip_prefix(')'))?
+            .trim_start()
+            .trim_start_matches('*')
+            .trim_start();
+        Some((idx, remainder.to_string()))
+    }
+
+    async fn translate_single_qwen(&self, input_text: &str) -> anyhow::Result<String> {
+        let payload = Self::build_qwen_single_payload(input_text);
+        let res = self.post_chat_completion(&payload).await?;
+        Self::response_text_from_completion(&res)
+    }
+
+    async fn translate_qwen_chunk(
+        &mut self,
+        chunk_strings: &[String],
+    ) -> anyhow::Result<Vec<String>> {
+        let payload = self.build_qwen_batch_payload(chunk_strings);
+        let res = self.post_chat_completion(&payload).await?;
+        let response_content = Self::response_text_from_completion(&res)?;
+        let mut results = vec![String::new(); chunk_strings.len()];
+
+        for line in response_content.lines() {
+            if let Some((idx, text)) = Self::parse_numbered_translation_line(line)
+                && idx > 0
+                && idx <= chunk_strings.len()
+            {
+                results[idx - 1] = text.trim().to_string();
+            }
+        }
+
+        if chunk_strings.len() == 1 && results[0].is_empty() {
+            results[0] = response_content.trim().to_string();
+        }
+
+        let empty_indices = results
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, text)| text.is_empty().then_some(idx))
+            .collect::<Vec<_>>();
+
+        if !empty_indices.is_empty() {
+            log::warn!(
+                "[Translation] {} slots empty after batch parse, retrying individually",
+                empty_indices.len()
+            );
+            for idx in empty_indices {
+                if let Ok(single) = self.translate_single_qwen(&chunk_strings[idx]).await {
+                    results[idx] = single;
+                }
+            }
+        }
+
+        let unresolved = results
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, text)| {
+                if text.is_empty() {
+                    log::warn!(
+                        "[Translation] Empty numbered translation slot {} after retries",
+                        idx + 1
+                    );
+                    Some(idx + 1)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if unresolved.is_empty() {
+            Ok(results)
+        } else {
+            anyhow::bail!("missing translations for slots {:?}", unresolved);
+        }
     }
 
     pub async fn translate_batch(&mut self, strings: &[String]) -> anyhow::Result<Vec<String>> {
@@ -338,60 +538,34 @@ impl TranslationClient {
             let offset = chunk_idx * 15;
             match self.mode {
                 TranslationMode::NumberedBatchQwen => {
-                    let mut prompt = String::new();
-                    let context = self.memory.as_context_slice();
-                    if !context.is_empty() {
-                        prompt.push_str(
-                            "Previous context (do not retranslate, for reference only):\n",
-                        );
-                        for (ja, en) in context {
-                            let _ = writeln!(prompt, "- {ja} -> \"{en}\"");
+                    let chunk_translations = match self.translate_qwen_chunk(chunk_strings).await {
+                        Ok(results) => results,
+                        Err(first_error) => {
+                            log::warn!(
+                                "[Translation] Qwen batch failed, retrying once: {first_error}"
+                            );
+                            sleep(Duration::from_millis(500)).await;
+                            self.translate_qwen_chunk(chunk_strings).await.map_err(|retry_error| {
+                                anyhow::anyhow!(
+                                    "qwen batch failed after retry: first={first_error}; retry={retry_error}"
+                                )
+                            })?
                         }
-                        prompt.push('\n');
-                    }
+                    };
 
-                    prompt.push_str("Translate each numbered Japanese string to English.\n");
-                    prompt.push_str(
-                        "Output only translations, one per line, same numbered format.\n\n",
-                    );
-
-                    for (i, s) in chunk_strings.iter().enumerate() {
-                        let _ = writeln!(prompt, "{}: {}", i + 1, s);
-                    }
-
-                    let payload = json!({
-                        "model": "local",
-                        "messages": [
-                            // /no_think disables Qwen3 thinking mode — without it, the model outputs
-                            // <think>...</think> tokens before the response, breaking our ^(\d+): parser.
-                            { "role": "system", "content": "You are a Japanese-to-English translator. /no_think" },
-                            { "role": "user", "content": prompt }
-                        ],
-                        "temperature": 0.1,
-                        "max_tokens": 512
-                    });
-
-                    let res = self.post_chat_completion(&payload).await?;
-                    let response_content = Self::response_text_from_completion(&res)?;
-
-                    for line in response_content.lines() {
-                        if let Some((num, text)) = line.split_once(':')
-                            && let Ok(idx) = num.trim().parse::<usize>()
-                            && idx > 0
-                            && idx <= chunk_strings.len()
-                        {
-                            final_results[offset + idx - 1] = text.trim().to_string();
-                        }
+                    for (chunk_offset, translation) in chunk_translations.into_iter().enumerate() {
+                        final_results[offset + chunk_offset] = translation;
                     }
                 }
                 TranslationMode::StructuredTranslateGemma => {
-                    let mut conversation_history = self.translategemma_seed_history(chunk_strings);
+                    let mut conversation_history =
+                        VecDeque::from(self.translategemma_seed_history());
 
                     for (chunk_offset, input_text) in chunk_strings.iter().enumerate() {
                         let payload = json!({
                             "model": "local",
-                            "messages": Self::build_translategemma_conversation(
-                                &conversation_history,
+                            "messages": Self::build_translategemma_messages(
+                                conversation_history.make_contiguous(),
                                 input_text,
                             ),
                             "temperature": 0.1,
@@ -401,9 +575,9 @@ impl TranslationClient {
                         let res = self.post_chat_completion(&payload).await?;
                         let translation = Self::response_text_from_completion(&res)?;
                         final_results[offset + chunk_offset] = translation.clone();
-                        conversation_history.push((input_text.clone(), translation));
+                        conversation_history.push_back((input_text.clone(), translation));
                         if conversation_history.len() > TRANSLATEGEMMA_HISTORY_LIMIT {
-                            conversation_history.remove(0);
+                            conversation_history.pop_front();
                         }
                     }
                 }
@@ -463,5 +637,38 @@ mod tests {
         assert_eq!(conversation[1]["role"], "assistant");
         assert_eq!(conversation[1]["content"], "cat");
         assert_eq!(conversation[2]["content"][0]["text"], "犬");
+    }
+
+    #[test]
+    fn translategemma_messages_include_system_prompt() {
+        let messages = TranslationClient::build_translategemma_messages(&[], "犬");
+
+        assert_eq!(messages[0]["role"], "system");
+        assert!(
+            messages[0]["content"]
+                .as_str()
+                .is_some_and(|content| { content.contains("Output only the English translation") })
+        );
+        assert_eq!(messages[1]["role"], "user");
+    }
+
+    #[test]
+    fn parse_numbered_translation_line_accepts_multiple_formats() {
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line("1: hello"),
+            Some((1, "hello".to_string()))
+        );
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line("2. world"),
+            Some((2, "world".to_string()))
+        );
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line("**3:** test"),
+            Some((3, "test".to_string()))
+        );
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line("4) sample"),
+            Some((4, "sample".to_string()))
+        );
     }
 }
