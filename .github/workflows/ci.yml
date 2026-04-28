@@ -5,30 +5,91 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# Security: Set minimal permissions for the GITHUB_TOKEN
+permissions:
+  contents: read
+
+# Concurrency: Cancel in-progress runs on the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  lint:
+    name: Lint & Format
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Install macOS Dependencies
-        run: |
-          xcode-select --install || true
+
       - name: Check Formatting
         run: cargo fmt --all -- --check
         working-directory: src-tauri
+
       - name: Clippy Lints
         # Use -D clippy::perf per best practices chapter 3
+        # Deny warnings to ensure CI fails on lint issues
         run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::perf
         working-directory: src-tauri
-      - name: Unit Tests
-        run: cargo test
+
+  test:
+    name: Unit Tests
+    runs-on: macos-14
+    needs: lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Run Unit Tests
+        run: cargo test --all-targets --all-features
         working-directory: src-tauri
+
+  build-check:
+    name: Release Build Check
+    runs-on: macos-14
+    needs: lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo Check Release
+        # Verifies that the production build (release profile) compiles correctly
+        run: cargo check --release --all-targets --all-features
+        working-directory: src-tauri
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Rust Audit
+        uses: actions-rust-lang/audit@v1

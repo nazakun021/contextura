@@ -282,7 +282,8 @@ mod tests {
         assert_eq!(state_machine.update(0.0), DebounceEvent::None);
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
 
-        assert_eq!(state_machine.update(0.1), DebounceEvent::None);
+        // 0.06 is > 0.05 (base) but < 0.075 (settling_threshold)
+        assert_eq!(state_machine.update(0.06), DebounceEvent::None);
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
     }
 }
