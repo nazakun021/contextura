@@ -77,7 +77,6 @@ models/
 /tmp/
 
 # Repomix outputs
-repomix.config.json
-repomix-instruction.md
 repomix-output.xml
 repomix-output.*
+

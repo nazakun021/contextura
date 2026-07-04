@@ -1,0 +1,48 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "headerText": "Contextura - macOS local Japanese OCR & translation overlay project codebase",
+    "instructionFilePath": "repomix-instruction.md",
+    "fileSummary": true,
+    "directoryStructure": true,
+    "showLineNumbers": true,
+    "truncateBase64": true,
+    "copyToClipboard": false,
+    "includeFullDirectoryStructure": true
+  },
+  "include": [
+    "**/*"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDotIgnore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/target/**",
+      "**/dist/**",
+      "src-tauri/binaries/**",
+      "src-tauri/icons/**",
+      "src-tauri/gen/**",
+      "Cargo.lock",
+      "skills-lock.json",
+      "test-corpus/**",
+      "**/*.png",
+      "**/*.jpg",
+      "**/*.jpeg",
+      "**/*.gif",
+      "**/*.ico",
+      "**/*.pdf",
+      "**/*.zip",
+      "**/*.tar.gz",
+      ".agents/**",
+      ".github/**",
+      "models/**",
+      "tmp/**"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}
