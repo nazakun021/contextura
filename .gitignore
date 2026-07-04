@@ -75,3 +75,9 @@ models/
 *.gguf
 /test-corpus/output/
 /tmp/
+
+# Repomix outputs
+repomix.config.json
+repomix-instruction.md
+repomix-output.xml
+repomix-output.*

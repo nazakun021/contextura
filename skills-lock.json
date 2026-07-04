@@ -1,55 +1,41 @@
 {
   "version": 1,
   "skills": {
-    "macos-design-guidelines": {
-      "source": "ehmo/platform-design-skills",
+    "grill-with-docs": {
+      "source": "mattpocock/skills",
       "sourceType": "github",
-      "computedHash": "fdbeb208feb60e5ed08226e4e1e714eade6cfe6530ad27c792992823de63ca0d"
+      "skillPath": "skills/engineering/grill-with-docs/SKILL.md",
+      "computedHash": "e7ef25bbee50cda2eb7b3a8ef541db0a0396dad7d369f7d14fb610671dd1864b"
     },
-    "macos-development": {
-      "source": "rshankras/claude-code-apple-skills",
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
       "sourceType": "github",
-      "computedHash": "e785d476d46a702399d9b688f8a23973f1b9159ba8b8537ddf5ddf15f6e6c565"
+      "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
+      "computedHash": "8bf292143ca93b00276a0de0fc5f84f2381f4690c5b0d32e99fa283a072f392f"
     },
-    "rust-best-practices": {
-      "source": "apollographql/skills",
+    "setup-matt-pocock-skills": {
+      "source": "mattpocock/skills",
       "sourceType": "github",
-      "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
+      "skillPath": "skills/engineering/setup-matt-pocock-skills/SKILL.md",
+      "computedHash": "a7d798f49081ea5b2606e8bcafa3bc2b34177cfaa24d71c2ddf2d433f4006a4a"
     },
-    "swiftui-expert-skill": {
-      "source": "avdlee/swiftui-agent-skill",
+    "tdd": {
+      "source": "mattpocock/skills",
       "sourceType": "github",
-      "computedHash": "84aa533bdca25a02ce35738619121d203d55eb8ff2892535c150bd9ee85fda30"
+      "skillPath": "skills/engineering/tdd/SKILL.md",
+      "computedHash": "c9326b88419cfba1d54dd713b7ddb23020e6a93f4b0d13aea58cebba58cda2ee"
     },
-    "tauri-v2": {
-      "source": "nodnarbnitram/claude-code-extensions",
+    "to-issues": {
+      "source": "mattpocock/skills",
       "sourceType": "github",
-      "computedHash": "377c61c46cf48c35b942042bc8abb9a039049a47f37d7f12b4f491d012777490"
+      "skillPath": "skills/engineering/to-issues/SKILL.md",
+      "computedHash": "4e2a11d35f018490d42a79234432f779d7131b9920373ef24cfbc68229bfef6c"
     },
-    "xcode-build-benchmark": {
-      "source": "avdlee/xcode-build-optimization-agent-skill",
+    "to-prd": {
+      "source": "mattpocock/skills",
       "sourceType": "github",
-      "computedHash": "e132c38adbb8a74e3e0474c0e34566b209fa3bf29532604af97d715b8c721ec8"
-    },
-    "xcode-build-fixer": {
-      "source": "avdlee/xcode-build-optimization-agent-skill",
-      "sourceType": "github",
-      "computedHash": "7d1c68154af030a24b7420c9f9c7805e6009e0012da34b9a16c0cfef3396b608"
-    },
-    "xcode-build-orchestrator": {
-      "source": "avdlee/xcode-build-optimization-agent-skill",
-      "sourceType": "github",
-      "computedHash": "d03e65e314a8fbe0ae0cf7469fa1a4280b5d335a7f163fdc7a7a91dbb0fd1b2b"
-    },
-    "xcode-compilation-analyzer": {
-      "source": "avdlee/xcode-build-optimization-agent-skill",
-      "sourceType": "github",
-      "computedHash": "9857f081cf044a06f93f382ea1a53c3fe9699ac0d0686abbabea67696c2eff6a"
-    },
-    "xcode-project-analyzer": {
-      "source": "avdlee/xcode-build-optimization-agent-skill",
-      "sourceType": "github",
-      "computedHash": "dfe1901df149b68d8869a48143508444605ed8ba20b448d1faec1d6218d58859"
+      "skillPath": "skills/engineering/to-prd/SKILL.md",
+      "computedHash": "5a733e19d825f22e83de52e68b8840c9fd2fa7501282277a122c1aa28a922059"
     }
   }
 }

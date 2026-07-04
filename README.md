@@ -165,7 +165,7 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
 
 The current `test-corpus/` PNG fixtures are placeholders, so this command path is wired but not yet a trustworthy regression suite.
 
-See `TEST.md` for the focused verification workflow.
+See [docs/TEST.md](file:///Users/infinite/Developer/contextura/docs/TEST.md) for the focused verification workflow.
 
 ## Optional Crash Reporting
 
@@ -215,4 +215,4 @@ src-tauri/src/
   downloader.rs
 ```
 
-See `SETUP.md` for the full environment checklist, `TEST.md` for verification, `SPEC.md` for current contracts, and `ARCHITECTURE.md` for data flow.
+See the project constitution documents: [docs/MISSION.md](file:///Users/infinite/Developer/contextura/docs/MISSION.md), [docs/ROADMAP.md](file:///Users/infinite/Developer/contextura/docs/ROADMAP.md), and [docs/TECH-STACK.md](file:///Users/infinite/Developer/contextura/docs/TECH-STACK.md), along with [docs/SETUP.md](file:///Users/infinite/Developer/contextura/docs/SETUP.md) for setup instructions, [docs/TEST.md](file:///Users/infinite/Developer/contextura/docs/TEST.md) for testing, and [docs/SPEC.md](file:///Users/infinite/Developer/contextura/docs/SPEC.md) for technical contracts.
