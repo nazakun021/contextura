@@ -29,8 +29,8 @@ Read this file before changing code or project docs.
 ## Still Open
 
 - End-to-end manual smoke verification is still required after major pipeline changes.
-- The checked-in `test-corpus/*.png` files are empty placeholders and should not be treated as valid OCR fixtures yet.
-- `downloader.rs`, richer CLI flows, curated `test-corpus/`, updater signing, and multi-display support are still future work.
+- `ocr_boxes` coordinates in `test-corpus/*.expected.json` are empty; populate after a live `--debug-cli --input` pass captures real Vision coordinates.
+- `downloader.rs`, richer CLI flows, updater signing, and multi-display support are still future work.
 - Quality-tier policy, RAM gating, and updater signing with a real production pubkey are still pending.
 
 ## Source of Truth
