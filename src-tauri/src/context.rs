@@ -40,8 +40,9 @@ impl AppWindowTracker {
                     let workspace = NSWorkspace::sharedWorkspace();
                     let front_app = workspace.frontmostApplication();
 
-                    let active_bundle =
-                        front_app.as_ref().and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
+                    let active_bundle = front_app
+                        .as_ref()
+                        .and_then(|app| app.bundleIdentifier().map(|id| id.to_string()));
 
                     if active_bundle != last_bundle {
                         if let (Some(from), Some(to)) = (&last_bundle, &active_bundle) {
@@ -54,8 +55,8 @@ impl AppWindowTracker {
                     }
 
                     // For tab-switch detection within the same app, we'd ideally poll the window title.
-                    // Since full CGWindowList/Accessibility polling is heavy, we rely on the 
-                    // ScreenCaptureKit motion detector for sub-app switches, but we still emit 
+                    // Since full CGWindowList/Accessibility polling is heavy, we rely on the
+                    // ScreenCaptureKit motion detector for sub-app switches, but we still emit
                     // the switch event if the bundle ID changed to ensure memory isolation.
                 });
             }
