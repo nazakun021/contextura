@@ -25,15 +25,12 @@ html, body {
 
 .translation-box {
   position: absolute;
-  pointer-events: auto; /* Catch hover for tooltip / manual interactions if needed */
-  transition: opacity 0.15s ease-in;
-  /* Basic styling */
+  pointer-events: auto;
   border-radius: 4px;
   padding: 4px 6px;
   box-sizing: border-box;
   font-size: 14px;
   line-height: 1.2;
-  /* Don't cut off text */
   overflow: visible;
   white-space: normal;
   word-break: break-word;
@@ -43,6 +40,42 @@ html, body {
   justify-content: center;
   text-align: center;
   min-width: fit-content;
+}
+
+/* Fade-in: start invisible, transition to visible */
+.translation-box.fade-in,
+.skeleton-box.fade-in {
+  opacity: 0;
+  transition: opacity 0.18s ease-in;
+}
+
+.translation-box.fade-in.visible,
+.skeleton-box.fade-in.visible {
+  opacity: 1;
+}
+
+/* Fade-out: transition away before DOM removal */
+.translation-box.fade-out,
+.skeleton-box.fade-out {
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+  pointer-events: none;
+}
+
+/* Skeleton loader: pulsing placeholder while translating */
+.skeleton-box {
+  position: absolute;
+  border-radius: 4px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 0.9; }
 }
 
 .translation-box.vertical {
