@@ -113,7 +113,7 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id);
+    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id, active_model.entry.strategy.as_deref());
     translation_client.wait_for_ready().await?;
 
     let (width, height) = image::image_dimensions(input)?;
@@ -175,7 +175,7 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id);
+    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id, active_model.entry.strategy.as_deref());
     translation_client.wait_for_ready().await?;
 
     let mut failed = false;

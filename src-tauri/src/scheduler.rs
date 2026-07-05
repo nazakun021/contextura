@@ -352,6 +352,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
         let app_handle_sidecar = config.app_handle.clone();
         let active_model_path = Arc::new(AsyncMutex::new(PathBuf::new()));
         let active_model_key = Arc::new(AsyncMutex::new(String::new()));
+        let active_model_strategy = Arc::new(AsyncMutex::new(Option::<String>::None));
 
         // Start Window Tracker on its own thread
         let mut window_tracker_task = config.window_tracker;
@@ -364,12 +365,14 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
             let watchdog_app_handle = app_handle_sidecar.clone();
             let watchdog_model_path = Arc::clone(&active_model_path);
             let watchdog_model_key = Arc::clone(&active_model_key);
+            let watchdog_model_strategy = Arc::clone(&active_model_strategy);
             tokio::spawn(async move {
                 let mut consecutive_failures = 0u8;
                 loop {
                     sleep(Duration::from_secs(5)).await;
                     let model_path = watchdog_model_path.lock().await.clone();
                     let model_key = watchdog_model_key.lock().await.clone();
+                    let model_strategy = watchdog_model_strategy.lock().await.clone();
                     if model_path.as_os_str().is_empty() {
                         continue;
                     }
@@ -393,6 +396,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                 &watchdog_app_handle,
                                 &model_path,
                                 &model_key,
+                                model_strategy.as_deref(),
                             );
                             consecutive_failures = 0;
                         }
@@ -460,6 +464,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
 
                 *active_model_path.lock().await = active_model.path.clone();
                 *active_model_key.lock().await = active_model.entry.id.clone();
+                *active_model_strategy.lock().await = active_model.entry.strategy.clone();
 
                 if !active_model.installed {
                     if !warned_missing_model {
@@ -499,6 +504,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             &app_handle_sidecar,
                             &active_model.path,
                             &active_model.entry.id,
+                            active_model.entry.strategy.as_deref(),
                         )
                     {
                         Ok(()) => {

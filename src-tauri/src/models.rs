@@ -19,6 +19,8 @@ pub struct ModelEntry {
     pub tier: String,
     #[serde(default)]
     pub active: bool,
+    #[serde(default)]
+    pub strategy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -85,6 +87,7 @@ impl ModelManifest {
                 active: false,
                 filename: file_name.to_string(),
                 id,
+                strategy: None,
             });
         }
 
@@ -95,6 +98,7 @@ impl ModelManifest {
                 label: prettify_label(&settings.active_model),
                 tier: infer_tier(&settings.active_model),
                 active: true,
+                strategy: None,
             });
         }
 
@@ -115,6 +119,13 @@ impl ModelManifest {
             }
             if model.filename.is_empty() {
                 model.filename = format!("{}.gguf", model.id);
+            }
+            if model.strategy.is_none() {
+                model.strategy = Some(if model.id.to_ascii_lowercase().contains("translategemma") {
+                    "gemma".to_string()
+                } else {
+                    "qwen".to_string()
+                });
             }
         }
 
@@ -392,5 +403,32 @@ mod tests {
         assert_eq!(result.previous.entry.id, "translategemma-4b-it.Q4_K_M");
         assert_eq!(result.current.entry.id, "qwen3-4b-q4");
         assert_eq!(settings.active_model, "qwen3-4b-q4");
+    }
+
+    #[test]
+    fn test_manifest_strategy_normalization() {
+        let app_dir = temp_app_dir("manifest-strategy");
+        let settings = Settings {
+            active_model: "qwen3-0.6b-q4".to_string(),
+            ..Settings::default()
+        };
+        fs::write(
+            app_dir.join("models").join("translategemma-4b-it.Q4_K_M.gguf"),
+            b"gemma",
+        )
+        .expect("gemma model should be written");
+        fs::write(
+            app_dir.join("models").join("qwen3-0.6b-q4.gguf"),
+            b"qwen",
+        )
+        .expect("qwen model should be written");
+
+        let manifest = ModelManifest::load(&app_dir, &settings).expect("manifest should load");
+
+        let gemma_entry = manifest.models.iter().find(|m| m.id.contains("translategemma")).unwrap();
+        let qwen_entry = manifest.models.iter().find(|m| m.id.contains("qwen")).unwrap();
+
+        assert_eq!(gemma_entry.strategy.as_deref(), Some("gemma"));
+        assert_eq!(qwen_entry.strategy.as_deref(), Some("qwen"));
     }
 }
