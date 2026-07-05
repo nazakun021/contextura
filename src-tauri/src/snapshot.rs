@@ -1,15 +1,13 @@
 // src-tauri/src/snapshot.rs
 
 use image::ColorType;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Swaps BGRA channels to RGBA.
-pub fn swap_bgra_to_rgba(buffer: &[u8]) -> Vec<u8> {
-    let mut rgba_data = buffer.to_vec();
-    for pixel in rgba_data.chunks_exact_mut(4) {
+/// Swaps BGRA channels to RGBA in-place.
+pub fn swap_bgra_to_rgba_inplace(buffer: &mut [u8]) {
+    for pixel in buffer.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
-    rgba_data
 }
 
 /// Encodes an RGBA pixel buffer to a temporary PNG file.
@@ -18,9 +16,10 @@ pub fn save_frame_as_png(
     width: usize,
     height: usize,
     frame_id: u64,
+    cache_dir: &Path,
 ) -> anyhow::Result<PathBuf> {
-    let path = PathBuf::from(format!("/tmp/contextura-frame-{frame_id}.png"));
-    let latest_path = PathBuf::from("/tmp/contextura-frame-latest.png");
+    let path = cache_dir.join(format!("contextura-frame-{frame_id}.png"));
+    let latest_path = cache_dir.join("contextura-frame-latest.png");
 
     image::save_buffer(
         &path,
@@ -41,9 +40,9 @@ pub fn save_frame_as_png(
     Ok(path)
 }
 
-/// Deletes stale temporary frame files from /tmp.
-pub fn cleanup_stale_temp_frames() {
-    let Ok(entries) = std::fs::read_dir("/tmp") else {
+/// Deletes stale temporary frame files from the cache directory.
+pub fn cleanup_stale_temp_frames(cache_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
     };
 
@@ -52,10 +51,11 @@ pub fn cleanup_stale_temp_frames() {
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if file_name.starts_with("contextura-frame-")
+        if (file_name.starts_with("contextura-frame-")
             && std::path::Path::new(file_name)
                 .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("png")))
+            || file_name == "contextura-frame-latest.png"
         {
             let _ = std::fs::remove_file(path);
         }
@@ -68,11 +68,30 @@ mod tests {
 
     #[test]
     fn test_swap_bgra_to_rgba() {
-        let bgra = vec![10, 20, 30, 40, 50, 60, 70, 80];
-        let rgba = swap_bgra_to_rgba(&bgra);
+        let mut data = vec![10, 20, 30, 40, 50, 60, 70, 80];
+        swap_bgra_to_rgba_inplace(&mut data);
         // Swaps indices:
         // First pixel: 10 (B) and 30 (R) should swap -> [30, 20, 10, 40]
         // Second pixel: 50 (B) and 70 (R) should swap -> [70, 60, 50, 80]
-        assert_eq!(rgba, vec![30, 20, 10, 40, 70, 60, 50, 80]);
+        assert_eq!(data, vec![30, 20, 10, 40, 70, 60, 50, 80]);
+    }
+
+    #[test]
+    fn test_save_and_cleanup_frames() {
+        let temp_dir = std::env::temp_dir().join("contextura_test_cache");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let rgba_data = vec![0; 400]; // 10x10 RGBA image
+        let path = save_frame_as_png(&rgba_data, 10, 10, 9999, &temp_dir).unwrap();
+        
+        // This will fail because save_frame_as_png is currently hardcoded to /tmp
+        assert!(path.exists(), "Expected snapshot to exist at {path:?}");
+        assert!(temp_dir.join("contextura-frame-latest.png").exists());
+
+        cleanup_stale_temp_frames(&temp_dir);
+        assert!(!path.exists());
+        assert!(!temp_dir.join("contextura-frame-latest.png").exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

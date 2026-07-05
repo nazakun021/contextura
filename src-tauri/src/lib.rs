@@ -84,7 +84,7 @@ pub fn run() {
         return;
     }
 
-    snapshot::cleanup_stale_temp_frames();
+
 
     let pipeline_tx_for_exit = Arc::new(std::sync::Mutex::new(None::<Sender<PipelineCommand>>));
     let pipeline_tx_setup = Arc::clone(&pipeline_tx_for_exit);
@@ -101,6 +101,10 @@ pub fn run() {
         ])
         .setup(move |app| {
             use tauri::Manager;
+
+            let cache_dir = app.path().app_cache_dir().expect("Failed to get cache dir");
+            let _ = std::fs::create_dir_all(&cache_dir);
+            snapshot::cleanup_stale_temp_frames(&cache_dir);
 
             let app_dir = crate::settings::Settings::dir().expect("Failed to get app directory");
             let startup_settings = crate::settings::Settings::load(&app_dir)
@@ -180,7 +184,7 @@ pub fn run() {
             // --- Panic Hook (Cleanup Temp Files) ---
             let default_hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |panic_info| {
-                snapshot::cleanup_stale_temp_frames();
+                snapshot::cleanup_stale_temp_frames(&cache_dir);
                 default_hook(panic_info);
             }));
 

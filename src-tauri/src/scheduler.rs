@@ -9,7 +9,7 @@ use tokio::time::sleep;
 
 use crossbeam_channel::{Receiver, Sender};
 use rayon::prelude::*;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::ipc::{
     TranslationBox, TranslationErrorPayload, TranslationPayload, TranslationStartedPayload,
@@ -18,7 +18,7 @@ use crate::ipc::{
 use crate::models::ModelManifest;
 use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::path_resolver::find_available_local_port;
-use crate::snapshot::{save_frame_as_png, swap_bgra_to_rgba};
+use crate::snapshot::save_frame_as_png;
 use crate::styling::StylingEngine;
 
 const SETTINGS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
@@ -97,14 +97,17 @@ async fn process_capture_frame(
     frame: &crate::capture::CaptureFrame,
     frame_id: u64,
 ) -> Option<TranslationPayload> {
+
     drain_invalidations(app_handle, client, invalidation_rx).await;
 
-    let rgba_data = swap_bgra_to_rgba(&frame.buffer.data);
+    let cache_dir = app_handle.path().app_cache_dir().expect("Failed to get cache dir");
+    let rgba_data = &frame.buffer.data;
     let png_path = match save_frame_as_png(
-        &rgba_data,
+        rgba_data,
         frame.buffer.width,
         frame.buffer.height,
         frame_id,
+        &cache_dir,
     ) {
         Ok(path) => path,
         Err(error) => {
@@ -588,9 +591,9 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                     log::info!(
                                         "[Pipeline] Force scan requested on cached frame"
                                     );
-                                    let cached_rgba = swap_bgra_to_rgba(&frame.buffer.data);
+                                    let cached_rgba = &frame.buffer.data;
                                     let cached_thumbnail = motion_detector.downsample(
-                                        &cached_rgba,
+                                        cached_rgba,
                                         frame.buffer.width,
                                         frame.buffer.height,
                                     );
@@ -641,6 +644,10 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                 log::info!("[Pipeline] Shutdown requested");
                                 config.display_manager.stop();
                                 client_clone.lock().await.shutdown_sidecar();
+
+                                if let Ok(cache_dir) = config.app_handle.path().app_cache_dir() {
+                                    crate::snapshot::cleanup_stale_temp_frames(&cache_dir);
+                                }
                                 return;
                             }
                         }
@@ -681,9 +688,9 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                     latest_frame = Some(frame.clone());
 
                     let is_forced = std::mem::take(&mut pending_force_scan);
-                    let rgba_data = swap_bgra_to_rgba(&frame.buffer.data);
+                    let rgba_data = &frame.buffer.data;
                     let thumbnail = motion_detector.downsample(
-                        &rgba_data,
+                        rgba_data,
                         frame.buffer.width,
                         frame.buffer.height,
                     );

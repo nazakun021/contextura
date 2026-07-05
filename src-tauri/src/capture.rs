@@ -47,6 +47,9 @@ impl SCStreamOutputTrait for OutputHandler {
                 }
             }
 
+            // Convert BGRA to RGBA in-place exactly once at the frame capture boundary
+            crate::snapshot::swap_bgra_to_rgba_inplace(&mut data);
+
             let frame = CaptureFrame {
                 buffer: PixelBuffer {
                     data,
