@@ -161,24 +161,24 @@ async fn process_capture_frame(
         return None;
     }
 
-    let texts = ocr_results
-        .iter()
-        .map(|result| result.text.clone())
-        .collect::<Vec<_>>();
-
-    let translations = {
-        let mut guard = client.lock().await;
-        guard.translate_batch(&texts).await
-    };
-
-    let translations = match translations {
-        Ok(translations) => translations,
+    let styled_boxes = match process_concurrent_translation_and_styling(
+        client,
+        &ocr_results,
+        rgba_data,
+        frame.buffer.width,
+        frame.buffer.height,
+        frame.scale_factor,
+        frame_id,
+    )
+    .await
+    {
+        Ok(boxes) => boxes,
         Err(error) => {
-            log::error!("[Translation] Batch failed: {error}");
+            log::error!("[Pipeline] Concurrent styling and translation failed: {error}");
             emit_runtime_notice(
                 app_handle,
                 "Translation Failed",
-                "The local model did not return a valid translation batch.",
+                "The concurrent styling/translation pipeline failed.",
                 error.to_string(),
                 "warning",
                 5000,
@@ -187,26 +187,88 @@ async fn process_capture_frame(
         }
     };
 
-    let raw_data = &rgba_data;
-    let buf_width = frame.buffer.width;
-    let buf_height = frame.buffer.height;
-    let scale = frame.scale_factor;
+    let payload = TranslationPayload {
+        boxes: styled_boxes,
+        scale_factor: frame.scale_factor,
+        display_id: frame.display_id,
+        frame_id,
+    };
+
+    if let Err(error) = app_handle.emit("translation-update", &payload) {
+        log::error!("[IPC] Failed to emit translation-update: {error}");
+    }
+
+    Some(payload)
+}
+
+pub async fn process_concurrent_translation_and_styling(
+    client: &Arc<AsyncMutex<crate::translation::TranslationClient>>,
+    ocr_results: &[crate::ocr::OcrResult],
+    rgba_data: &[u8],
+    buf_width: usize,
+    buf_height: usize,
+    scale: f32,
+    frame_id: u64,
+) -> anyhow::Result<Vec<TranslationBox>> {
+    if ocr_results.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let texts = ocr_results
+        .iter()
+        .map(|result| result.text.clone())
+        .collect::<Vec<_>>();
+
+    // Spawn CPU-bound styling color sampling in Rayon threadpool via tokio::task::spawn_blocking
+    let ocr_results_clone = ocr_results.to_vec();
+    let rgba_data_clone = rgba_data.to_vec();
+    let styling_task = tokio::task::spawn_blocking(move || {
+        ocr_results_clone
+            .par_iter()
+            .map(|ocr| {
+                let bg = StylingEngine::sample_rect_ring(
+                    &rgba_data_clone,
+                    buf_width,
+                    buf_height,
+                    ocr.bounding_box.x,
+                    ocr.bounding_box.y,
+                    ocr.bounding_box.width,
+                    ocr.bounding_box.height,
+                    scale,
+                );
+                let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
+                (bg, fg_color)
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // Run the async translation request concurrently with the styling task
+    let (translations_res, styling_res) = tokio::join!(
+        async {
+            let mut guard = client.lock().await;
+            guard.translate_batch(&texts).await
+        },
+        styling_task
+    );
+
+    let translations = translations_res?;
+    let styling_colors = styling_res
+        .map_err(|e| anyhow::anyhow!("Styling thread join failed: {e}"))?;
+
+    if translations.len() != ocr_results.len() {
+        anyhow::bail!(
+            "Translation batch count mismatch: expected {}, got {}",
+            ocr_results.len(),
+            translations.len()
+        );
+    }
+
     let styled_boxes = ocr_results
-        .par_iter()
-        .zip(translations.par_iter())
+        .iter()
+        .zip(translations.iter())
+        .zip(styling_colors.iter())
         .enumerate()
-        .map(|(index, (ocr, translation))| {
-            let bg = StylingEngine::sample_rect_ring(
-                raw_data,
-                buf_width,
-                buf_height,
-                ocr.bounding_box.x,
-                ocr.bounding_box.y,
-                ocr.bounding_box.width,
-                ocr.bounding_box.height,
-                scale,
-            );
-            let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
+        .map(|(index, ((ocr, translation), (bg, fg_color)))| {
             TranslationBox {
                 id: format!("{frame_id}-{index}"),
                 translated: translation.clone(),
@@ -223,19 +285,10 @@ async fn process_capture_frame(
         })
         .collect::<Vec<_>>();
 
-    let payload = TranslationPayload {
-        boxes: styled_boxes,
-        scale_factor: scale,
-        display_id: frame.display_id,
-        frame_id,
-    };
-
-    if let Err(error) = app_handle.emit("translation-update", &payload) {
-        log::error!("[IPC] Failed to emit translation-update: {error}");
-    }
-
-    Some(payload)
+    Ok(styled_boxes)
 }
+
+
 
 fn emit_cached_translation_payload(
     app_handle: &tauri::AppHandle,
@@ -975,5 +1028,82 @@ mod tests {
         assert!(serialized.contains("\"level\":\"error\""));
         assert!(serialized.contains("\"dismiss_ms\":0"));
     }
+
+    #[tokio::test]
+    async fn test_process_concurrent_translation_and_styling() {
+        use crate::ocr::{OcrResult, Rect};
+        use crate::translation::TranslationClient;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Start a local mock server to mock the LLM sidecar
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                // Return a mock Qwen translation response with matching numbered index
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\n  \"choices\": [\n    {\n      \"message\": {\n        \"content\": \"1: English One\\n2: English Two\"\n      }\n    }\n  ]\n}";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        // Initialize translation client pointing to the mock server port
+        let client = Arc::new(AsyncMutex::new(TranslationClient::new(6, port)));
+        // Make sure it uses Qwen strategy (which outputs numbered formats)
+        client.lock().await.set_strategy("qwen");
+
+        // Prepare dummy OCR results
+        let ocr_results = vec![
+            OcrResult {
+                text: "日本語一".to_string(),
+                confidence: 0.9,
+                bounding_box: Rect::new(10.0, 10.0, 100.0, 50.0),
+                text_angle: 0.0,
+                is_vertical: false,
+                is_furigana: false,
+            },
+            OcrResult {
+                text: "日本語二".to_string(),
+                confidence: 0.8,
+                bounding_box: Rect::new(20.0, 80.0, 100.0, 50.0),
+                text_angle: 0.0,
+                is_vertical: false,
+                is_furigana: false,
+            },
+        ];
+
+        // Prepare a mock 100x100 black pixel buffer (40000 bytes for RGBA)
+        let rgba_data = vec![0u8; 40000];
+
+        // Run the concurrent logic
+        let boxes = process_concurrent_translation_and_styling(
+            &client,
+            &ocr_results,
+            &rgba_data,
+            100,
+            100,
+            1.0,
+            123,
+        )
+        .await
+        .unwrap();
+
+        // Verify length and alignment
+        assert_eq!(boxes.len(), 2);
+
+        assert_eq!(boxes[0].original, "日本語一");
+        assert_eq!(boxes[0].translated, "English One");
+        assert_eq!(boxes[0].id, "123-0");
+
+        assert_eq!(boxes[1].original, "日本語二");
+        assert_eq!(boxes[1].translated, "English Two");
+        assert_eq!(boxes[1].id, "123-1");
+
+        // Verify colors were sampled (black bg -> white fg)
+        assert_eq!(boxes[0].bg_color, "rgba(0, 0, 0, 0.85)");
+        assert_eq!(boxes[0].fg_color, "#FFFFFF");
+    }
 }
+
 
