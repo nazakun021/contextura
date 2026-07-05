@@ -211,10 +211,7 @@ impl TranslationClient {
                 Ok(response) => {
                     let status = response.status();
                     let body = response.text().await?;
-                    if !status.is_success() {
-                        last_error =
-                            format!("llama-server returned HTTP {status}: {}", body.trim());
-                    } else {
+                    if status.is_success() {
                         return serde_json::from_str(&body).map_err(|error| {
                             anyhow::anyhow!(
                                 "llama-server returned invalid JSON: {error}; body: {}",
@@ -222,6 +219,7 @@ impl TranslationClient {
                             )
                         });
                     }
+                    last_error = format!("llama-server returned HTTP {status}: {}", body.trim());
                 }
                 Err(error) => {
                     last_error = error.to_string();
@@ -275,11 +273,13 @@ impl TranslationClient {
         let binaries_dir = resource_dir.join("binaries");
         let binaries_dir_str = binaries_dir
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("binaries dir path is not UTF-8: {binaries_dir:?}"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("binaries dir path is not UTF-8: {}", binaries_dir.display())
+            })?
             .to_string();
         let model_path_str = model_path
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("model path is not UTF-8: {model_path:?}"))?
+            .ok_or_else(|| anyhow::anyhow!("model path is not UTF-8: {}", model_path.display()))?
             .to_string();
 
         let mut command = app
@@ -525,10 +525,11 @@ impl TranslationClient {
         if unresolved.is_empty() {
             Ok(results)
         } else {
-            anyhow::bail!("missing translations for slots {:?}", unresolved);
+            anyhow::bail!("missing translations for slots {unresolved:?}");
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn translate_batch(&mut self, strings: &[String]) -> anyhow::Result<Vec<String>> {
         if strings.is_empty() {
             return Ok(vec![]);
@@ -583,18 +584,20 @@ impl TranslationClient {
                     for (chunk_offset, res_result) in chunk_responses.into_iter().enumerate() {
                         let result_idx = offset + chunk_offset;
                         match res_result {
-                            Ok(res) => {
-                                match Self::response_text_from_completion(&res) {
-                                    Ok(translation) => {
-                                        final_results[result_idx] = translation;
-                                    }
-                                    Err(error) => {
-                                        log::error!("[Translation] Gemma completion parsing failed for index {}: {error}", result_idx);
-                                    }
+                            Ok(res) => match Self::response_text_from_completion(&res) {
+                                Ok(translation) => {
+                                    final_results[result_idx] = translation;
                                 }
-                            }
+                                Err(error) => {
+                                    log::error!(
+                                        "[Translation] Gemma completion parsing failed for index {result_idx}: {error}"
+                                    );
+                                }
+                            },
                             Err(error) => {
-                                log::error!("[Translation] Gemma parallel request failed for index {}: {error}", result_idx);
+                                log::error!(
+                                    "[Translation] Gemma parallel request failed for index {result_idx}: {error}"
+                                );
                             }
                         }
                     }
@@ -629,10 +632,10 @@ impl TranslationClient {
                                 "temperature": 0.1,
                                 "max_tokens": 256
                             });
-                            if let Ok(res) = self.post_chat_completion(payload).await {
-                                if let Ok(translation) = Self::response_text_from_completion(&res) {
-                                    final_results[result_idx] = translation;
-                                }
+                            if let Ok(res) = self.post_chat_completion(payload).await
+                                && let Ok(translation) = Self::response_text_from_completion(&res)
+                            {
+                                final_results[result_idx] = translation;
                             }
                         }
                     }
@@ -645,7 +648,7 @@ impl TranslationClient {
                         .collect::<Vec<_>>();
 
                     if !still_missing.is_empty() {
-                        anyhow::bail!("Gemma parallel batch failed for slots {:?}", still_missing);
+                        anyhow::bail!("Gemma parallel batch failed for slots {still_missing:?}");
                     }
                 }
             }

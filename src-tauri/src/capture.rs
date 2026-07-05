@@ -71,7 +71,7 @@ pub struct DisplayManager {
 
 impl DisplayManager {
     pub fn new() -> Self {
-        Self { 
+        Self {
             stream: None,
             active_display_id: None,
             frame_rx: None,
@@ -86,14 +86,15 @@ impl DisplayManager {
         excluded_name_hints: &[&str],
     ) -> Receiver<CaptureFrame> {
         // If we already have a healthy stream for this display, just return the existing receiver.
-        if let Some(ref mut _stream) = self.stream {
-            if self.active_display_id == Some(display_id) && self.frame_rx.is_some() {
-                return self.frame_rx.as_ref().unwrap().clone();
-            }
+        if self.stream.is_some()
+            && self.active_display_id == Some(display_id)
+            && let Some(ref rx) = self.frame_rx
+        {
+            return rx.clone();
         }
 
         // Otherwise, perform a (re)start
-        log::info!("[Capture] Initializing persistent stream for display {}", display_id);
+        log::info!("[Capture] Initializing persistent stream for display {display_id}");
         let (tx, rx) = bounded::<CaptureFrame>(2);
 
         if let Some(old_stream) = self.stream.take() {
@@ -124,7 +125,7 @@ impl DisplayManager {
                     || name_matches(&app.application_name(), excluded_name_hints)
             })
             .collect::<Vec<_>>();
-        
+
         let excluded_app_refs = excluded_apps.iter().collect::<Vec<_>>();
         let excluded_windows = content
             .windows()
@@ -138,7 +139,7 @@ impl DisplayManager {
                 )
             })
             .collect::<Vec<_>>();
-        
+
         let excluded_window_refs = excluded_windows.iter().collect::<Vec<_>>();
         let filter_builder = SCContentFilter::create().with_display(&display);
         let filter = if !excluded_window_refs.is_empty() {
@@ -177,10 +178,10 @@ impl DisplayManager {
             display_id: actual_display_id,
             scale_factor,
         };
-        
+
         stream.add_output_handler(handler, SCStreamOutputType::Screen);
         stream.start_capture().expect("Failed to start capture");
-        
+
         self.stream = Some(stream);
         self.active_display_id = Some(actual_display_id);
         self.frame_rx = Some(rx.clone());
