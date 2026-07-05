@@ -594,10 +594,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                         frame.buffer.width,
                                         frame.buffer.height,
                                     );
-                                    let frame_hash = cached_thumbnail
-                                        .iter()
-                                        .map(|&pixel| u64::from(pixel))
-                                        .sum::<u64>();
+                                    let frame_hash = crate::motion::compute_thumbnail_hash(&cached_thumbnail);
                                     if last_processed_hash == Some(frame_hash)
                                         && let Some(payload) = last_payload.as_ref()
                                     {
@@ -706,8 +703,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                         }
                         DebounceEvent::Triggered => {
                             was_scrolling = false;
-                            let frame_hash =
-                                thumbnail.iter().map(|&pixel| u64::from(pixel)).sum::<u64>();
+                            let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
                             if last_processed_hash == Some(frame_hash)
                                 && let Some(payload) = last_payload.as_ref()
                             {

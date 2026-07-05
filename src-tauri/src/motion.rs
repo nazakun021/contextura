@@ -250,6 +250,11 @@ impl MotionDetector {
     }
 }
 
+/// Computes the xxHash (`xxh3_64`) of a downsampled grayscale thumbnail.
+pub fn compute_thumbnail_hash(thumbnail: &[u8]) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(thumbnail)
+}
+
 // Ensure tests module follows best practices
 #[cfg(test)]
 mod tests {
@@ -285,5 +290,19 @@ mod tests {
         // 0.06 is > 0.05 (base) but < 0.075 (settling_threshold)
         assert_eq!(state_machine.update(0.06), DebounceEvent::None);
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
+    }
+
+    #[test]
+    fn test_compute_thumbnail_hash() {
+        let t1 = vec![1, 3];
+        let t2 = vec![2, 2];
+        let t3 = vec![1, 3];
+
+        let h1 = super::compute_thumbnail_hash(&t1);
+        let h2 = super::compute_thumbnail_hash(&t2);
+        let h3 = super::compute_thumbnail_hash(&t3);
+
+        assert_eq!(h1, h3);
+        assert_ne!(h1, h2);
     }
 }

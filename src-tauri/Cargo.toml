@@ -38,6 +38,7 @@ rayon = "1.10"
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 sha2 = "0.10"
+xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
 
 # Logging
 log = "0.4"
