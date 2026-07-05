@@ -59,11 +59,87 @@ struct CliDebugOutput {
 }
 
 #[derive(Deserialize)]
-struct CorpusExpectation {
+pub(crate) struct ExpectedOcrBox {
+    text: String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CorpusExpectation {
     #[serde(default)]
-    ocr_must_contain: Vec<String>,
+    pub(crate) ocr_must_contain: Vec<String>,
     #[serde(default)]
-    translation_must_contain: Vec<String>,
+    pub(crate) translation_must_contain: Vec<String>,
+    /// Optional per-box coordinate assertions with ±5px tolerance.
+    #[serde(default)]
+    pub(crate) ocr_boxes: Vec<ExpectedOcrBox>,
+}
+
+/// Result of evaluating one corpus test case against its fixture.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CaseResult {
+    /// All `ocr_must_contain` fragments were found in the joined OCR text.
+    pub ocr_text_ok: bool,
+    /// All expected bounding boxes matched a detected box within ±tolerance.
+    pub coord_ok: bool,
+    /// All `translation_must_contain` fragments were found (case-insensitive) in the joined translation text.
+    pub translation_ok: bool,
+}
+
+impl CaseResult {
+    /// Returns `true` only when every assertion passed.
+    pub fn passed(&self) -> bool {
+        self.ocr_text_ok && self.coord_ok && self.translation_ok
+    }
+}
+
+/// Evaluates a corpus test case against its fixture purely from text/box data.
+/// This is the core assertion seam; it is independent of IO and process management.
+pub(crate) fn evaluate_corpus_case(
+    ocr_text: &str,
+    detected_boxes: &[crate::ocr::OcrResult],
+    translation_text: &str,
+    expectation: &CorpusExpectation,
+) -> CaseResult {
+    let ocr_text_ok = expectation
+        .ocr_must_contain
+        .iter()
+        .all(|fragment| ocr_text.contains(fragment.as_str()));
+    let coord_ok = ocr_boxes_match(detected_boxes, &expectation.ocr_boxes, OCR_COORD_TOLERANCE);
+    let translation_ok = expectation.translation_must_contain.iter().all(|fragment| {
+        translation_text
+            .to_ascii_lowercase()
+            .contains(&fragment.to_ascii_lowercase())
+    });
+    CaseResult {
+        ocr_text_ok,
+        coord_ok,
+        translation_ok,
+    }
+}
+
+const OCR_COORD_TOLERANCE: f32 = 5.0;
+
+/// Returns true when every expected OCR box finds a matching detected box
+/// whose text is a substring match and whose bounding coordinates are all
+/// within `tolerance` pixels of the expected values.
+pub fn ocr_boxes_match(
+    detected: &[crate::ocr::OcrResult],
+    expected: &[ExpectedOcrBox],
+    tolerance: f32,
+) -> bool {
+    expected.iter().all(|exp| {
+        detected.iter().any(|det| {
+            det.text.contains(&exp.text)
+                && (det.bounding_box.x - exp.x).abs() <= tolerance
+                && (det.bounding_box.y - exp.y).abs() <= tolerance
+                && (det.bounding_box.width - exp.width).abs() <= tolerance
+                && (det.bounding_box.height - exp.height).abs() <= tolerance
+        })
+    })
 }
 
 fn resolve_active_model_for_cli() -> anyhow::Result<(Settings, ModelStatus)> {
@@ -201,28 +277,26 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
             .await?;
         let translation_text = translations.join("\n");
 
-        let ocr_ok = expected
-            .ocr_must_contain
-            .iter()
-            .all(|fragment| ocr_text.contains(fragment));
-        let translation_ok = expected.translation_must_contain.iter().all(|fragment| {
-            translation_text
-                .to_ascii_lowercase()
-                .contains(&fragment.to_ascii_lowercase())
-        });
-        let passed = ocr_ok && translation_ok;
-        failed |= !passed;
+        let result = evaluate_corpus_case(&ocr_text, &ocr_results, &translation_text, &expected);
+        failed |= !result.passed();
 
         println!(
             "[{}] {}",
-            if passed { "PASS" } else { "FAIL" },
+            if result.passed() { "PASS" } else { "FAIL" },
             png.file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("<unknown>")
         );
-        if !passed {
-            println!("  OCR: {ocr_text}");
-            println!("  Translation: {translation_text}");
+        if !result.passed() {
+            if !result.ocr_text_ok {
+                println!("  OCR text mismatch. Got: {ocr_text}");
+            }
+            if !result.coord_ok {
+                println!("  OCR coordinate mismatch (tolerance ±{OCR_COORD_TOLERANCE}px).");
+            }
+            if !result.translation_ok {
+                println!("  Translation mismatch. Got: {translation_text}");
+            }
         }
     }
 
@@ -299,5 +373,222 @@ pub fn run_cli(args: &CliArgs) {
                 std::process::exit(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        evaluate_corpus_case, ocr_boxes_match, CaseResult, CorpusExpectation, ExpectedOcrBox,
+        OCR_COORD_TOLERANCE,
+    };
+    use crate::ocr::{OcrResult, Rect};
+
+    fn make_result(text: &str, x: f32, y: f32, width: f32, height: f32) -> OcrResult {
+        OcrResult {
+            text: text.to_string(),
+            confidence: 0.95,
+            bounding_box: Rect::new(x, y, width, height),
+            text_angle: 0.0,
+            is_vertical: false,
+            is_furigana: false,
+        }
+    }
+
+    fn make_expected(text: &str, x: f32, y: f32, width: f32, height: f32) -> ExpectedOcrBox {
+        ExpectedOcrBox {
+            text: text.to_string(),
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn ocr_boxes_match_exact_coordinates_passes() {
+        let detected = vec![make_result("日本語", 10.0, 20.0, 100.0, 40.0)];
+        let expected = vec![make_expected("日本語", 10.0, 20.0, 100.0, 40.0)];
+        assert!(ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_within_tolerance_passes() {
+        let detected = vec![make_result("テスト", 12.0, 18.0, 103.0, 37.0)];
+        // 2px off on each coord — well inside ±5px
+        let expected = vec![make_expected("テスト", 10.0, 20.0, 100.0, 40.0)];
+        assert!(ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_at_exact_tolerance_boundary_passes() {
+        let detected = vec![make_result("境界", 15.0, 25.0, 105.0, 45.0)];
+        // Exactly 5px off on every coordinate — should pass (tolerance is inclusive)
+        let expected = vec![make_expected("境界", 10.0, 20.0, 100.0, 40.0)];
+        assert!(ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_beyond_tolerance_fails() {
+        let detected = vec![make_result("違反", 20.0, 20.0, 100.0, 40.0)];
+        // x is 10px off — exceeds ±5px
+        let expected = vec![make_expected("違反", 10.0, 20.0, 100.0, 40.0)];
+        assert!(!ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_text_mismatch_fails() {
+        let detected = vec![make_result("猫", 10.0, 20.0, 100.0, 40.0)];
+        let expected = vec![make_expected("犬", 10.0, 20.0, 100.0, 40.0)];
+        assert!(!ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_empty_expected_always_passes() {
+        let detected = vec![make_result("何でも", 10.0, 20.0, 100.0, 40.0)];
+        assert!(ocr_boxes_match(&detected, &[], OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_partial_text_substring_passes() {
+        // detected text contains the expected fragment
+        let detected = vec![make_result("東京都渋谷区", 5.0, 5.0, 200.0, 30.0)];
+        let expected = vec![make_expected("渋谷", 5.0, 5.0, 200.0, 30.0)];
+        assert!(ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    #[test]
+    fn ocr_boxes_match_multiple_boxes_all_must_match() {
+        let detected = vec![
+            make_result("日本語", 10.0, 10.0, 100.0, 30.0),
+            make_result("テスト", 10.0, 50.0, 100.0, 30.0),
+        ];
+        let expected = vec![
+            make_expected("日本語", 10.0, 10.0, 100.0, 30.0),
+            make_expected("テスト", 10.0, 50.0, 100.0, 30.0),
+        ];
+        assert!(ocr_boxes_match(&detected, &expected, OCR_COORD_TOLERANCE));
+    }
+
+    // ── CorpusExpectation deserialization ────────────────────────────────────
+
+    #[test]
+    fn corpus_expectation_deserializes_full_fixture() {
+        let json = r#"{
+            "description": "test",
+            "ocr_must_contain": ["日本語", "テスト"],
+            "translation_must_contain": ["japanese"],
+            "ocr_boxes": [
+                {"text": "日本語", "x": 10.0, "y": 20.0, "width": 100.0, "height": 40.0}
+            ]
+        }"#;
+        let exp: CorpusExpectation = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(exp.ocr_must_contain, ["日本語", "テスト"]);
+        assert_eq!(exp.translation_must_contain, ["japanese"]);
+        assert_eq!(exp.ocr_boxes.len(), 1);
+        assert_eq!(exp.ocr_boxes[0].text, "日本語");
+        assert!((exp.ocr_boxes[0].x - 10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn corpus_expectation_defaults_all_fields_when_absent() {
+        let json = r"{}";
+        let exp: CorpusExpectation = serde_json::from_str(json).expect("should deserialize empty");
+        assert!(exp.ocr_must_contain.is_empty());
+        assert!(exp.translation_must_contain.is_empty());
+        assert!(exp.ocr_boxes.is_empty());
+    }
+
+    // ── evaluate_corpus_case ─────────────────────────────────────────────────
+
+    #[test]
+    fn evaluate_corpus_case_all_empty_expectations_passes() {
+        // A clean-pass fixture: no assertions → always passes regardless of output.
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec![],
+            translation_must_contain: vec![],
+            ocr_boxes: vec![],
+        };
+        let result = evaluate_corpus_case("", &[], "", &exp);
+        assert_eq!(result, CaseResult { ocr_text_ok: true, coord_ok: true, translation_ok: true });
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_ocr_fragment_present_passes() {
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec!["勇者".to_string()],
+            translation_must_contain: vec![],
+            ocr_boxes: vec![],
+        };
+        let result = evaluate_corpus_case("勇者よ、魔王を倒せ！", &[], "", &exp);
+        assert!(result.ocr_text_ok);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_ocr_fragment_missing_fails() {
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec!["不在テキスト".to_string()],
+            translation_must_contain: vec![],
+            ocr_boxes: vec![],
+        };
+        let result = evaluate_corpus_case("勇者よ、魔王を倒せ！", &[], "", &exp);
+        assert!(!result.ocr_text_ok);
+        assert!(!result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_translation_fragment_case_insensitive_passes() {
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec![],
+            translation_must_contain: vec!["Hero".to_string()],
+            ocr_boxes: vec![],
+        };
+        // Translation output is lowercase — fragment matching must be case-insensitive
+        let result = evaluate_corpus_case("", &[], "defeat the hero and the demon king", &exp);
+        assert!(result.translation_ok);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_translation_fragment_missing_fails() {
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec![],
+            translation_must_contain: vec!["dragon".to_string()],
+            ocr_boxes: vec![],
+        };
+        let result = evaluate_corpus_case("", &[], "defeat the demon king", &exp);
+        assert!(!result.translation_ok);
+        assert!(!result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_coord_mismatch_fails_but_text_passes() {
+        // OCR text is fine but a box coordinate is out of tolerance → overall fail
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec!["魔王".to_string()],
+            translation_must_contain: vec![],
+            ocr_boxes: vec![make_expected("魔王", 10.0, 20.0, 100.0, 40.0)],
+        };
+        // Detected box is way off (50px x deviation)
+        let detected = vec![make_result("魔王", 60.0, 20.0, 100.0, 40.0)];
+        let result = evaluate_corpus_case("魔王を倒せ！", &detected, "", &exp);
+        assert!(result.ocr_text_ok, "ocr text should pass");
+        assert!(!result.coord_ok, "coord should fail");
+        assert!(!result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_all_checks_pass_together() {
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec!["勇者".to_string()],
+            translation_must_contain: vec!["brave".to_string()],
+            ocr_boxes: vec![make_expected("勇者", 10.0, 20.0, 100.0, 40.0)],
+        };
+        let detected = vec![make_result("勇者よ", 10.0, 20.0, 100.0, 40.0)];
+        let result = evaluate_corpus_case("勇者よ、魔王を倒せ！", &detected, "defeat the brave hero", &exp);
+        assert_eq!(result, CaseResult { ocr_text_ok: true, coord_ok: true, translation_ok: true });
+        assert!(result.passed());
     }
 }
