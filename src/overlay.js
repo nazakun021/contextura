@@ -12,8 +12,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   listen('translation-update', (event) => {
     const payload = event.payload;
-    // Hide spinner
+    // Hide spinner and error banner
     spinner.classList.add('hidden');
+    errorBanner.classList.add('hidden');
     clearTimeout(spinnerTimeout);
     
     requestAnimationFrame(() => {
@@ -49,10 +50,12 @@ document.addEventListener('DOMContentLoaded', () => {
   listen('translation-clear', () => {
     container.innerHTML = '';
     spinner.classList.add('hidden');
+    errorBanner.classList.add('hidden'); // Clear error banner on reset
   });
 
   listen('translation-started', () => {
     spinner.classList.remove('hidden');
+    errorBanner.classList.add('hidden'); // Clear error banner when starting
     // Safety timeout to hide spinner if update never comes (10s)
     clearTimeout(spinnerTimeout);
     spinnerTimeout = setTimeout(() => {
@@ -66,18 +69,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const message = payload?.message || 'Translation engine restarted.';
     const detail = payload?.detail || '';
     const level = payload?.level || 'warning';
-    const dismissMs = payload?.dismiss_ms || 4000;
 
     errorTitle.textContent = title;
     errorDetail.textContent = detail ? `${message} ${detail}` : message;
     errorBanner.dataset.level = level;
     errorBanner.classList.remove('hidden');
+  });
 
-    clearTimeout(errorTimeout);
-    if (dismissMs > 0) {
-      errorTimeout = setTimeout(() => {
-        errorBanner.classList.add('hidden');
-      }, dismissMs);
+  const retryBtn = document.getElementById('error-retry');
+  retryBtn.addEventListener('click', async () => {
+    retryBtn.disabled = true;
+    retryBtn.textContent = 'Retrying...';
+    try {
+      await invoke('reload_runtime');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      retryBtn.disabled = false;
+      retryBtn.textContent = 'Retry Connection';
     }
   });
 });

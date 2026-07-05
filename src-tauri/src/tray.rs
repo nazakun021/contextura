@@ -42,6 +42,7 @@ pub fn setup_tray(
         None::<&str>,
     )?;
     let help_i = MenuItem::with_id(app, "help", "Help", true, None::<&str>)?;
+    let retry_i = MenuItem::with_id(app, "retry", "Retry Connecting Engine", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit Contextura", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -51,6 +52,7 @@ pub fn setup_tray(
             &force_i,
             &clear_ctx_i,
             &switch_model_i,
+            &retry_i,
             &settings_i,
             &help_i,
             &quit_i,
@@ -91,6 +93,12 @@ pub fn setup_tray(
                     5000,
                 ),
             },
+            "retry" => {
+                log::info!("[Tray] Manual retry requested");
+                let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
+                    reason: "Tray retry click".to_string(),
+                });
+            }
             "settings" => {
                 if let Ok(dir) = crate::settings::Settings::dir() {
                     let _ = std::process::Command::new("open").arg(&dir).spawn();

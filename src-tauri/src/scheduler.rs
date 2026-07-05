@@ -381,20 +381,33 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
                         );
                         if consecutive_failures >= 3 {
-                            emit_runtime_notice(
-                                &watchdog_app_handle,
-                                "Translation Engine Restarted",
-                                "The local translation engine became unresponsive and was restarted.",
-                                model_path.display().to_string(),
-                                "warning",
-                                5000,
-                            );
-                            let _ = guard.start_sidecar(
+                            log::warn!("[Watchdog] Restarting unresponsive sidecar...");
+                            let restart_res = guard.start_sidecar(
                                 &watchdog_app_handle,
                                 &model_path,
                                 &model_key,
                                 model_strategy.as_deref(),
                             );
+                            if let Err(error) = restart_res {
+                                log::error!("[Watchdog] Failed to restart sidecar: {error}");
+                                emit_runtime_notice(
+                                    &watchdog_app_handle,
+                                    "Translation Engine Restart Failed",
+                                    "Watchdog failed to restart the translation engine.",
+                                    error.to_string(),
+                                    "error",
+                                    0, // Persistent!
+                                );
+                            } else {
+                                emit_runtime_notice(
+                                    &watchdog_app_handle,
+                                    "Translation Engine Restarted",
+                                    "The local translation engine became unresponsive and was restarted.",
+                                    model_path.display().to_string(),
+                                    "warning",
+                                    5000,
+                                );
+                            }
                             consecutive_failures = 0;
                         }
                     } else {
@@ -509,16 +522,31 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             sidecar_started = true;
                         }
                         Err(error) => {
-                            log::error!("[Pipeline] Failed to start sidecar: {error}");
+                            failure_count += 1;
+                            log::error!("[Pipeline] Failed to start sidecar (attempt {failure_count}): {error}");
                             emit_runtime_notice(
                                 &app_handle_sidecar,
-                                "Translation Engine Failed",
-                                "Contextura could not start the local translation sidecar.",
+                                "Translation Engine Startup Failed",
+                                format!("Attempt {failure_count}/5 to start the translation engine failed."),
                                 error.to_string(),
                                 "error",
-                                6000,
+                                3000,
                             );
-                            sleep(Duration::from_secs(5)).await;
+                            if failure_count > 5 {
+                                emit_runtime_notice(
+                                    &app_handle_sidecar,
+                                    "Translation Engine Unavailable",
+                                    "The sidecar failed to start. Verify the active model file and click Retry.",
+                                    error.to_string(),
+                                    "error",
+                                    0, // Persistent
+                                );
+                                if handle_startup_halt(&config.pipeline_rx, &mut failure_count, &mut runtime_reload_requested, &mut sidecar_started).await {
+                                    return;
+                                }
+                                continue;
+                            }
+                            sleep(Duration::from_secs(2)).await;
                             continue;
                         }
                     }
@@ -541,16 +569,27 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                         log::error!(
                             "[Pipeline] Sidecar not ready (attempt {failure_count}): {error}"
                         );
+                        emit_runtime_notice(
+                            &app_handle_sidecar,
+                            "Translation Engine Startup Failed",
+                            format!("Attempt {failure_count}/5 to start the translation engine failed."),
+                            error.to_string(),
+                            "error",
+                            3000,
+                        );
                         if failure_count > 5 {
                             emit_runtime_notice(
                                 &app_handle_sidecar,
                                 "Translation Engine Unavailable",
-                                "The sidecar never became ready. Restart the app after verifying the model file.",
+                                "The sidecar never became ready. Verify the active model file and click Retry.",
                                 error.to_string(),
                                 "error",
-                                8000,
+                                0, // Persistent
                             );
-                            break;
+                            if handle_startup_halt(&config.pipeline_rx, &mut failure_count, &mut runtime_reload_requested, &mut sidecar_started).await {
+                                return;
+                            }
+                            continue;
                         }
                         sleep(Duration::from_secs(2)).await;
                         continue;
@@ -794,6 +833,42 @@ async fn compute_debounce_sleep(state: crate::motion::DebounceState, duration: D
     }
 }
 
+async fn handle_startup_halt(
+    pipeline_rx: &crossbeam_channel::Receiver<PipelineCommand>,
+    failure_count: &mut u32,
+    runtime_reload_requested: &mut bool,
+    sidecar_started: &mut bool,
+) -> bool {
+    log::info!("[Pipeline] Halted due to startup failure. Waiting for manual retry...");
+    let pipeline_rx_sync = pipeline_rx.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        while let Ok(command) = pipeline_rx_sync.recv() {
+            match command {
+                PipelineCommand::ReloadRuntime { reason } => {
+                    return Some(reason);
+                }
+                PipelineCommand::Shutdown => {
+                    return None;
+                }
+                PipelineCommand::ForceScan => {}
+            }
+        }
+        None
+    })
+    .await;
+
+    if let Ok(Some(reason)) = result {
+        log::info!("[Pipeline] Manual retry triggered: {reason}");
+        *failure_count = 0;
+        *runtime_reload_requested = true;
+        *sidecar_started = false;
+        false
+    } else {
+        log::info!("[Pipeline] Shutdown requested while halted");
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,6 +956,24 @@ mod tests {
         let sleep_fut = compute_debounce_sleep(state, duration);
         let res = timeout(Duration::from_millis(20), sleep_fut).await;
         assert!(res.is_err()); // should time out because it's pending
+    }
+
+    #[test]
+    fn test_translation_error_payload_serialization() {
+        let payload = crate::ipc::TranslationErrorPayload {
+            message: "test_msg".to_string(),
+            title: "test_title".to_string(),
+            detail: "test_detail".to_string(),
+            level: "error".to_string(),
+            dismiss_ms: 0,
+        };
+        let serialized = serde_json::to_string(&payload).unwrap();
+
+        assert!(serialized.contains("\"message\":\"test_msg\""));
+        assert!(serialized.contains("\"title\":\"test_title\""));
+        assert!(serialized.contains("\"detail\":\"test_detail\""));
+        assert!(serialized.contains("\"level\":\"error\""));
+        assert!(serialized.contains("\"dismiss_ms\":0"));
     }
 }
 
