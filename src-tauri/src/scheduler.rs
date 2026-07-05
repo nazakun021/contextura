@@ -579,170 +579,193 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                 let mut last_processed_hash: Option<u64> = None;
                 let mut last_payload: Option<TranslationPayload> = None;
 
+                let (pipeline_tokio_tx, mut pipeline_tokio_rx) = tokio::sync::mpsc::channel(16);
+                let pipeline_rx_sync = config.pipeline_rx.clone();
+                tokio::task::spawn_blocking(move || {
+                    while let Ok(msg) = pipeline_rx_sync.recv() {
+                        if pipeline_tokio_tx.blocking_send(msg).is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                let (frame_tokio_tx, mut frame_tokio_rx) = tokio::sync::mpsc::channel(2);
+                let frame_rx_sync = frame_rx.clone();
+                tokio::task::spawn_blocking(move || {
+                    while let Ok(frame) = frame_rx_sync.recv() {
+                        if frame_tokio_tx.blocking_send(frame).is_err() {
+                            break;
+                        }
+                    }
+                });
+
                 log::info!("[Pipeline] Entering capture loop");
 
                 'capture: loop {
-                    sleep(Duration::from_millis(10)).await;
+                    let debounce_sleep = compute_debounce_sleep(debounce.state, debounce.debounce_duration);
+                    tokio::pin!(debounce_sleep);
 
-                    while let Ok(command) = config.pipeline_rx.try_recv() {
-                        match command {
-                            PipelineCommand::ForceScan => {
-                                if let Some(frame) = latest_frame.clone() {
-                                    log::info!(
-                                        "[Pipeline] Force scan requested on cached frame"
-                                    );
-                                    let cached_rgba = &frame.buffer.data;
-                                    let cached_thumbnail = motion_detector.downsample(
-                                        cached_rgba,
-                                        frame.buffer.width,
-                                        frame.buffer.height,
-                                    );
-                                    let frame_hash = crate::motion::compute_thumbnail_hash(&cached_thumbnail);
+                    tokio::select! {
+                        cmd_opt = pipeline_tokio_rx.recv() => {
+                            let Some(command) = cmd_opt else { break 'capture; };
+                            match command {
+                                PipelineCommand::ForceScan => {
+                                    if let Some(frame) = latest_frame.clone() {
+                                        log::info!(
+                                            "[Pipeline] Force scan requested on cached frame"
+                                        );
+                                        let cached_rgba = &frame.buffer.data;
+                                        let cached_thumbnail = motion_detector.downsample(
+                                            cached_rgba,
+                                            frame.buffer.width,
+                                            frame.buffer.height,
+                                        );
+                                        let frame_hash = crate::motion::compute_thumbnail_hash(&cached_thumbnail);
+                                        if last_processed_hash == Some(frame_hash)
+                                            && let Some(payload) = last_payload.as_ref()
+                                        {
+                                            log::debug!(
+                                                "[Pipeline] Force scan frame identical to last processed, reusing cached payload"
+                                            );
+                                            let _ = emit_cached_translation_payload(
+                                                &app_handle_sidecar,
+                                                payload,
+                                            );
+                                        } else {
+                                            let current_frame_id = frame_id;
+                                            frame_id += 1;
+                                            if let Some(payload) = process_capture_frame(
+                                                &app_handle_sidecar,
+                                                &client_clone,
+                                                &ocr_engine_loop,
+                                                &config.invalidation_rx,
+                                                &config.pipeline_tx,
+                                                &frame,
+                                                current_frame_id,
+                                            )
+                                            .await
+                                            {
+                                                last_processed_hash = Some(frame_hash);
+                                                last_payload = Some(payload);
+                                            }
+                                        }
+                                        pending_force_scan = false;
+                                    } else {
+                                        log::info!(
+                                            "[Pipeline] Force scan queued until the first frame arrives"
+                                        );
+                                        pending_force_scan = true;
+                                    }
+                                }
+                                PipelineCommand::ReloadRuntime { reason } => {
+                                    log::info!("[Pipeline] Reload requested: {reason}");
+                                    runtime_reload_requested = true;
+                                    sidecar_started = false;
+                                    break 'capture;
+                                }
+                                PipelineCommand::Shutdown => {
+                                    log::info!("[Pipeline] Shutdown requested");
+                                    config.display_manager.stop();
+                                    client_clone.lock().await.shutdown_sidecar();
+
+                                    if let Ok(cache_dir) = config.app_handle.path().app_cache_dir() {
+                                        crate::snapshot::cleanup_stale_temp_frames(&cache_dir);
+                                    }
+                                    return;
+                                }
+                            }
+                        }
+                        frame_opt = frame_tokio_rx.recv() => {
+                            let Some(frame) = frame_opt else {
+                                if last_frame_at.elapsed() > Duration::from_secs(60) {
+                                    log::warn!("[Pipeline] Frame stream silent for 60s - checking health");
+                                    last_frame_at = Instant::now();
+                                }
+                                continue;
+                            };
+                            last_frame_at = Instant::now();
+                            latest_frame = Some(frame.clone());
+
+                            let is_forced = std::mem::take(&mut pending_force_scan);
+                            let rgba_data = &frame.buffer.data;
+                            let thumbnail = motion_detector.downsample(
+                                rgba_data,
+                                frame.buffer.width,
+                                frame.buffer.height,
+                            );
+                            let motion_ratio = motion_detector.process_thumbnail(&thumbnail);
+                            let debounce_event = if is_forced {
+                                DebounceEvent::Triggered
+                            } else {
+                                debounce.update(motion_ratio)
+                            };
+
+                            match debounce_event {
+                                DebounceEvent::MotionDetected => {
+                                    if !was_scrolling {
+                                        let _ = app_handle_sidecar.emit("translation-clear", ());
+                                        was_scrolling = true;
+                                    }
+                                }
+                                DebounceEvent::Triggered => {
+                                    was_scrolling = false;
+                                    let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
                                     if last_processed_hash == Some(frame_hash)
                                         && let Some(payload) = last_payload.as_ref()
                                     {
                                         log::debug!(
-                                            "[Pipeline] Force scan frame identical to last processed, reusing cached payload"
+                                            "[Pipeline] Frame identical to last processed, reusing cached payload"
                                         );
                                         let _ = emit_cached_translation_payload(
                                             &app_handle_sidecar,
                                             payload,
                                         );
-                                    } else {
-                                        let current_frame_id = frame_id;
-                                        frame_id += 1;
-                                        if let Some(payload) = process_capture_frame(
-                                            &app_handle_sidecar,
-                                            &client_clone,
-                                            &ocr_engine_loop,
-                                            &config.invalidation_rx,
-                                            &config.pipeline_tx,
-                                            &frame,
-                                            current_frame_id,
-                                        )
-                                        .await
-                                        {
-                                            last_processed_hash = Some(frame_hash);
-                                            last_payload = Some(payload);
-                                        }
+                                        continue;
                                     }
-                                    pending_force_scan = false;
-                                } else {
-                                    log::info!(
-                                        "[Pipeline] Force scan queued until the first frame arrives"
-                                    );
-                                    pending_force_scan = true;
+                                    let current_frame_id = frame_id;
+                                    frame_id += 1;
+                                    if let Some(payload) = process_capture_frame(
+                                        &app_handle_sidecar,
+                                        &client_clone,
+                                        &ocr_engine_loop,
+                                        &config.invalidation_rx,
+                                        &config.pipeline_tx,
+                                        &frame,
+                                        current_frame_id,
+                                    )
+                                    .await
+                                    {
+                                        last_processed_hash = Some(frame_hash);
+                                        last_payload = Some(payload);
+                                    }
+                                }
+                                DebounceEvent::None => {
+                                    if !matches!(debounce.state, crate::motion::DebounceState::Scrolling) {
+                                        was_scrolling = false;
+                                    }
                                 }
                             }
-                            PipelineCommand::ReloadRuntime { reason } => {
-                                log::info!("[Pipeline] Reload requested: {reason}");
-                                runtime_reload_requested = true;
-                                sidecar_started = false;
-                                break 'capture;
-                            }
-                            PipelineCommand::Shutdown => {
-                                log::info!("[Pipeline] Shutdown requested");
-                                config.display_manager.stop();
-                                client_clone.lock().await.shutdown_sidecar();
-
-                                if let Ok(cache_dir) = config.app_handle.path().app_cache_dir() {
-                                    crate::snapshot::cleanup_stale_temp_frames(&cache_dir);
-                                }
-                                return;
-                            }
                         }
-                    }
-
-                    let frame_res = frame_rx.try_recv();
-                    if frame_res.is_err() {
-                        if last_frame_at.elapsed() > Duration::from_secs(60) {
-                            log::warn!("[Pipeline] Frame stream silent for 60s - checking health");
-                            last_frame_at = Instant::now();
-                        }
-
-                        if matches!(debounce.state, crate::motion::DebounceState::Settling(_))
-                            && matches!(debounce.update(0.0), DebounceEvent::Triggered)
-                            && let Some(frame) = latest_frame.as_ref()
-                        {
-                            log::info!("[Pipeline] Debounce triggered on static screen");
-                            let current_frame_id = frame_id;
-                            frame_id += 1;
-                            if let Some(payload) = process_capture_frame(
-                                &app_handle_sidecar,
-                                &client_clone,
-                                &ocr_engine_loop,
-                                &config.invalidation_rx,
-                                &config.pipeline_tx,
-                                frame,
-                                current_frame_id,
-                            )
-                            .await
-                            {
-                                last_payload = Some(payload);
-                            }
-                        }
-                        continue;
-                    }
-                    let frame = frame_res.unwrap();
-                    last_frame_at = Instant::now();
-                    latest_frame = Some(frame.clone());
-
-                    let is_forced = std::mem::take(&mut pending_force_scan);
-                    let rgba_data = &frame.buffer.data;
-                    let thumbnail = motion_detector.downsample(
-                        rgba_data,
-                        frame.buffer.width,
-                        frame.buffer.height,
-                    );
-                    let motion_ratio = motion_detector.process_thumbnail(&thumbnail);
-                    let debounce_event = if is_forced {
-                        DebounceEvent::Triggered
-                    } else {
-                        debounce.update(motion_ratio)
-                    };
-
-                    match debounce_event {
-                        DebounceEvent::MotionDetected => {
-                            if !was_scrolling {
-                                let _ = app_handle_sidecar.emit("translation-clear", ());
-                                was_scrolling = true;
-                            }
-                        }
-                        DebounceEvent::Triggered => {
-                            was_scrolling = false;
-                            let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
-                            if last_processed_hash == Some(frame_hash)
-                                && let Some(payload) = last_payload.as_ref()
-                            {
-                                log::debug!(
-                                    "[Pipeline] Frame identical to last processed, reusing cached payload"
-                                );
-                                let _ = emit_cached_translation_payload(
-                                    &app_handle_sidecar,
-                                    payload,
-                                );
-                                continue;
-                            }
-                            let current_frame_id = frame_id;
-                            frame_id += 1;
-                            if let Some(payload) = process_capture_frame(
-                                &app_handle_sidecar,
-                                &client_clone,
-                                &ocr_engine_loop,
-                                &config.invalidation_rx,
-                                &config.pipeline_tx,
-                                &frame,
-                                current_frame_id,
-                            )
-                            .await
-                            {
-                                last_processed_hash = Some(frame_hash);
-                                last_payload = Some(payload);
-                            }
-                        }
-                        DebounceEvent::None => {
-                            if !matches!(debounce.state, crate::motion::DebounceState::Scrolling) {
+                        () = &mut debounce_sleep => {
+                            let debounce_event = debounce.update(0.0);
+                            if matches!(debounce_event, DebounceEvent::Triggered) && let Some(frame) = latest_frame.as_ref() {
+                                log::info!("[Pipeline] Debounce triggered on static screen");
                                 was_scrolling = false;
+                                let current_frame_id = frame_id;
+                                frame_id += 1;
+                                if let Some(payload) = process_capture_frame(
+                                    &app_handle_sidecar,
+                                    &client_clone,
+                                    &ocr_engine_loop,
+                                    &config.invalidation_rx,
+                                    &config.pipeline_tx,
+                                    frame,
+                                    current_frame_id,
+                                )
+                                .await
+                                {
+                                    last_payload = Some(payload);
+                                }
                             }
                         }
                     }
@@ -758,6 +781,17 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
             }
         });
     });
+}
+
+async fn compute_debounce_sleep(state: crate::motion::DebounceState, duration: Duration) {
+    if let crate::motion::DebounceState::Settling(start_time) = state {
+        let elapsed = start_time.elapsed();
+        if elapsed < duration {
+            tokio::time::sleep(duration.saturating_sub(elapsed)).await;
+        }
+    } else {
+        std::future::pending::<()>().await;
+    }
 }
 
 #[cfg(test)]
@@ -804,6 +838,49 @@ mod tests {
         // Reload state
         let reloaded_state = load_runtime_state(&app_dir).expect("should reload state");
         assert_eq!(reloaded_state.settings.debounce_ms, 400);
+    }
+
+    #[tokio::test]
+    async fn test_compute_debounce_sleep_settling_resolves() {
+        use crate::motion::DebounceState;
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let state = DebounceState::Settling(start);
+        let duration = Duration::from_millis(50);
+
+        let sleep_fut = compute_debounce_sleep(state, duration);
+        let start_wait = Instant::now();
+        sleep_fut.await;
+        let elapsed = start_wait.elapsed();
+
+        assert!(elapsed >= Duration::from_millis(45));
+    }
+
+    #[tokio::test]
+    async fn test_compute_debounce_sleep_idle_pending() {
+        use crate::motion::DebounceState;
+        use tokio::time::timeout;
+
+        let state = DebounceState::Idle;
+        let duration = Duration::from_millis(50);
+
+        let sleep_fut = compute_debounce_sleep(state, duration);
+        let res = timeout(Duration::from_millis(20), sleep_fut).await;
+        assert!(res.is_err()); // should time out because it's pending
+    }
+
+    #[tokio::test]
+    async fn test_compute_debounce_sleep_scrolling_pending() {
+        use crate::motion::DebounceState;
+        use tokio::time::timeout;
+
+        let state = DebounceState::Scrolling;
+        let duration = Duration::from_millis(50);
+
+        let sleep_fut = compute_debounce_sleep(state, duration);
+        let res = timeout(Duration::from_millis(20), sleep_fut).await;
+        assert!(res.is_err()); // should time out because it's pending
     }
 }
 
