@@ -21,7 +21,6 @@ use crate::path_resolver::find_available_local_port;
 use crate::snapshot::save_frame_as_png;
 use crate::styling::StylingEngine;
 
-const SETTINGS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PipelineCommand {
@@ -34,7 +33,6 @@ pub enum PipelineCommand {
 struct RuntimeState {
     settings: crate::settings::Settings,
     active_model: crate::models::ModelStatus,
-    loaded_at: Instant,
 }
 
 pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>(
@@ -251,14 +249,12 @@ fn emit_cached_translation_payload(
     }
 }
 
-fn load_runtime_state() -> anyhow::Result<RuntimeState> {
-    let app_dir = crate::settings::Settings::dir()?;
-    let loaded_settings = crate::settings::Settings::load(&app_dir)?;
-    let active_model = crate::models::active_model_status(&app_dir, &loaded_settings)?;
+fn load_runtime_state(app_dir: &std::path::Path) -> anyhow::Result<RuntimeState> {
+    let loaded_settings = crate::settings::Settings::load(app_dir)?;
+    let active_model = crate::models::active_model_status(app_dir, &loaded_settings)?;
     Ok(RuntimeState {
         settings: loaded_settings,
         active_model,
-        loaded_at: Instant::now(),
     })
 }
 
@@ -361,6 +357,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
         });
 
         rt.block_on(async move {
+            let app_dir = crate::settings::Settings::dir().expect("Failed to get app directory");
             let watchdog_client = Arc::clone(&client);
             let watchdog_app_handle = app_handle_sidecar.clone();
             let watchdog_model_path = Arc::clone(&active_model_path);
@@ -417,13 +414,10 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
             let mut thermal_monitor = crate::thermal::ThermalMonitor::new();
 
             loop {
-                let should_refresh_runtime = runtime_reload_requested
-                    || runtime_state.as_ref().is_none_or(|state| {
-                        state.loaded_at.elapsed() >= SETTINGS_REFRESH_INTERVAL
-                    });
+                let should_refresh_runtime = runtime_reload_requested || runtime_state.is_none();
 
                 if should_refresh_runtime {
-                    match load_runtime_state() {
+                    match load_runtime_state(&app_dir) {
                         Ok(state) => {
                             if runtime_state.as_ref().is_none_or(|current| {
                                 current.active_model.entry.id != state.active_model.entry.id
@@ -765,3 +759,51 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
         });
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::Settings;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_app_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("contextura-{label}-{unique}"));
+        fs::create_dir_all(dir.join("models")).expect("temp model dir should be created");
+        dir
+    }
+
+    #[test]
+    fn test_load_runtime_state_reloads_immediately() {
+        let app_dir = temp_app_dir("scheduler-reload");
+
+        // Write initial settings
+        let settings = Settings {
+            debounce_ms: 200,
+            ..Default::default()
+        };
+        settings.save(&app_dir).unwrap();
+
+        // Write a mock active model
+        let model_filename = "translategemma-4b-it.Q4_K_M.gguf";
+        fs::write(app_dir.join("models").join(model_filename), b"model-bytes").unwrap();
+
+        let state = load_runtime_state(&app_dir).expect("should load initial state");
+        assert_eq!(state.settings.debounce_ms, 200);
+
+        // Update settings on disk
+        let mut updated_settings = settings;
+        updated_settings.debounce_ms = 400;
+        updated_settings.save(&app_dir).unwrap();
+
+        // Reload state
+        let reloaded_state = load_runtime_state(&app_dir).expect("should reload state");
+        assert_eq!(reloaded_state.settings.debounce_ms, 400);
+    }
+}
+

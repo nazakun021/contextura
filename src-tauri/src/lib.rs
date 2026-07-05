@@ -34,12 +34,20 @@ use cli::CliArgs;
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn complete_wizard(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+fn complete_wizard(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    pipeline_tx: tauri::State<'_, Sender<PipelineCommand>>,
+) -> Result<(), String> {
     use tauri::Manager;
     let app_dir = crate::settings::Settings::dir().map_err(|e| e.to_string())?;
     let mut settings = crate::settings::Settings::load(&app_dir).map_err(|e| e.to_string())?;
     settings.wizard_completed = true;
     settings.save(&app_dir).map_err(|e| e.to_string())?;
+
+    let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
+        reason: "Wizard completed".to_string(),
+    });
 
     if let Some(overlay) = app.get_webview_window("overlay-main") {
         let _ = overlay.show();
@@ -47,6 +55,16 @@ fn complete_wizard(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resul
 
     window.close().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn reload_runtime(
+    pipeline_tx: tauri::State<'_, Sender<PipelineCommand>>,
+) {
+    let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
+        reason: "UI requested reload".to_string(),
+    });
 }
 
 #[tauri::command]
@@ -97,7 +115,8 @@ pub fn run() {
             complete_wizard,
             wizard_status,
             open_models_folder_command,
-            open_screen_recording_settings
+            open_screen_recording_settings,
+            reload_runtime
         ])
         .setup(move |app| {
             use tauri::Manager;
@@ -123,6 +142,7 @@ pub fn run() {
             ));
             let display_manager = capture::DisplayManager::new();
             let (pipeline_tx, pipeline_rx) = crossbeam_channel::bounded(16);
+            app.manage(pipeline_tx.clone());
             *pipeline_tx_setup
                 .lock()
                 .expect("pipeline exit handle lock poisoned") = Some(pipeline_tx.clone());
