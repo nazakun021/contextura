@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::models::{ModelManifest, ModelStatus};
 use crate::ocr::OcrEngine;
 use crate::path_resolver::{
-    find_available_local_port, resolve_binary_path, resolve_llama_server_path,
+    find_available_local_port, resolve_binary_path,
 };
 use crate::settings::Settings;
 use crate::translation::TranslationClient;
@@ -149,31 +149,6 @@ fn resolve_active_model_for_cli() -> anyhow::Result<(Settings, ModelStatus)> {
     Ok((settings, model))
 }
 
-fn spawn_cli_sidecar(model_path: &Path, port: u16) -> anyhow::Result<std::process::Child> {
-    use std::process::{Command, Stdio};
-
-    let llama_path = resolve_llama_server_path()?;
-    let binaries_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
-
-    let child = Command::new(&llama_path)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", binaries_dir)
-        .arg("--model")
-        .arg(model_path)
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--n-gpu-layers")
-        .arg("99")
-        .arg("--ctx-size")
-        .arg("1024")
-        .arg("--host")
-        .arg("127.0.0.1")
-        .arg("--jinja")
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()?;
-    Ok(child)
-}
-
 async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> {
     let (settings, active_model) = resolve_active_model_for_cli()?;
     if !active_model.installed {
@@ -185,11 +160,10 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     }
 
     let sidecar_port = find_available_local_port()?;
-    let mut sidecar = spawn_cli_sidecar(&active_model.path, sidecar_port)?;
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id, active_model.entry.strategy.as_deref());
+    translation_client.start_sidecar_headless(&active_model.path, &active_model.entry.id, active_model.entry.strategy.as_deref())?;
     translation_client.wait_for_ready().await?;
 
     let (width, height) = image::image_dimensions(input)?;
@@ -211,21 +185,13 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
         serde_json::to_string(&output)?
     };
     println!("{json}");
-    let _ = sidecar.kill();
-    let _ = sidecar.wait();
+    
+    translation_client.shutdown_sidecar();
 
     Ok(())
 }
 
 async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
-    struct SidecarGuard(std::process::Child);
-    impl Drop for SidecarGuard {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
     let mut entries = std::fs::read_dir(dir)?
         .flatten()
         .map(|entry| entry.path())
@@ -247,11 +213,10 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     }
 
     let sidecar_port = find_available_local_port()?;
-    let sidecar = SidecarGuard(spawn_cli_sidecar(&active_model.path, sidecar_port)?);
     let vision_helper_path = resolve_binary_path("vision-helper")?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_mode_for_cli(&active_model.entry.id, active_model.entry.strategy.as_deref());
+    translation_client.start_sidecar_headless(&active_model.path, &active_model.entry.id, active_model.entry.strategy.as_deref())?;
     translation_client.wait_for_ready().await?;
 
     let mut failed = false;
@@ -300,8 +265,7 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Guard will automatically kill the sidecar when dropped.
-    drop(sidecar);
+    translation_client.shutdown_sidecar();
 
     if failed {
         anyhow::bail!("One or more corpus checks failed");

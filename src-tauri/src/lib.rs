@@ -4,6 +4,7 @@ mod cli;
 mod downloader;
 mod models;
 mod settings;
+mod sidecar;
 
 mod capture;
 mod context;

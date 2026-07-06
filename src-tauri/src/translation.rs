@@ -1,6 +1,5 @@
 // src-tauri/src/translation.rs
 
-use anyhow::Context;
 use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{Value, json};
@@ -9,11 +8,6 @@ use std::fmt::Write;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(180);
-const RETRY_READY_TIMEOUT: Duration = Duration::from_secs(30);
-const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(15);
-const QUICK_HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
-const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const TRANSLATEGEMMA_HISTORY_LIMIT: usize = 6;
 
@@ -60,13 +54,6 @@ pub enum TranslationStrategy {
 }
 
 impl TranslationStrategy {
-    pub fn extra_llama_args(self) -> Vec<String> {
-        match self {
-            Self::Qwen => vec!["--jinja".to_string()],
-            Self::Gemma => vec!["--no-jinja".to_string()],
-        }
-    }
-
     pub async fn translate_chunk(
         self,
         client: &TranslationClient,
@@ -354,7 +341,7 @@ pub struct TranslationClient {
     pub memory: TranslationMemory,
     pub(crate) port: u16,
     pub(crate) client: Client,
-    sidecar_child: Option<tauri_plugin_shell::process::CommandChild>,
+    pub(crate) sidecar: crate::sidecar::SidecarManager,
     pub strategy: TranslationStrategy,
 }
 
@@ -368,7 +355,7 @@ impl TranslationClient {
                 .timeout(TRANSLATION_REQUEST_TIMEOUT)
                 .build()
                 .expect("translation HTTP client should build"),
-            sidecar_child: None,
+            sidecar: crate::sidecar::SidecarManager::new(port),
             strategy: TranslationStrategy::Qwen,
         }
     }
@@ -378,17 +365,6 @@ impl TranslationClient {
             "gemma" | "translategemma" => TranslationStrategy::Gemma,
             _ => TranslationStrategy::Qwen,
         };
-    }
-
-    pub fn start_sidecar_mode_for_cli(&mut self, model_id: &str, strategy: Option<&str>) {
-        let strategy_name = strategy.unwrap_or_else(|| {
-            if model_id.to_ascii_lowercase().contains("translategemma") {
-                "gemma"
-            } else {
-                "qwen"
-            }
-        });
-        self.set_strategy(strategy_name);
     }
 
     fn response_text(content: &Value) -> String {
@@ -464,13 +440,6 @@ impl TranslationClient {
         model_id: &str,
         strategy: Option<&str>,
     ) -> anyhow::Result<()> {
-        use tauri::Manager;
-        use tauri_plugin_shell::ShellExt;
-
-        if let Some(child) = self.sidecar_child.take() {
-            let _ = child.kill();
-        }
-
         let strategy_name = strategy.unwrap_or_else(|| {
             if model_id.to_ascii_lowercase().contains("translategemma") {
                 "gemma"
@@ -479,174 +448,44 @@ impl TranslationClient {
             }
         });
         self.set_strategy(strategy_name);
-
-        let resource_dir = app
-            .path()
-            .resource_dir()
-            .context("resource_dir unavailable")?;
-        let binaries_dir = resource_dir.join("binaries");
-        let binaries_dir_str = binaries_dir
-            .to_str()
-            .ok_or_else(|| {
-                anyhow::anyhow!("binaries dir path is not UTF-8: {}", binaries_dir.display())
-            })?
-            .to_string();
-        let model_path_str = model_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("model path is not UTF-8: {}", model_path.display()))?
-            .to_string();
-
-        let mut command = app
-            .shell()
-            .sidecar("llama-server")?
-            .env("DYLD_FALLBACK_LIBRARY_PATH", binaries_dir_str)
-            .args([
-                "--model",
-                &model_path_str,
-                "--port",
-                &self.port.to_string(),
-                "--n-gpu-layers",
-                "99", // full Metal offload
-                "-c",
-                "8192",
-                "--host",
-                "127.0.0.1",
-                "--parallel",
-                "4", // Support up to 4 parallel requests for Gemma mode
-            ]);
-
-        for arg in self.strategy.extra_llama_args() {
-            command = command.arg(arg);
-        }
-
-        let (mut rx, child) = command.spawn()?;
-
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
-                        log::info!("SIDECAR OUT: {}", String::from_utf8_lossy(&line));
-                    }
-                    tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
-                        log::info!("SIDECAR ERR: {}", String::from_utf8_lossy(&line));
-                    }
-                    tauri_plugin_shell::process::CommandEvent::Error(err) => {
-                        log::error!("SIDECAR ERROR EVENT: {err}");
-                    }
-                    tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
-                        log::info!("SIDECAR TERMINATED: {:?}", payload.code);
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        self.sidecar_child = Some(child);
-
-        log::info!("Sidecar started");
-        Ok(())
+        self.sidecar.start(app, model_path, model_id, strategy)
     }
 
-    async fn wait_for_ready_with_timeout(&self, timeout: Duration) -> anyhow::Result<()> {
-        let url = format!("http://127.0.0.1:{}/health", self.port);
-        let started_at = tokio::time::Instant::now();
-        let mut last_error = None::<String>;
-
-        loop {
-            if started_at.elapsed() >= timeout {
-                let detail =
-                    last_error.unwrap_or_else(|| "unknown health check failure".to_string());
-                return Err(anyhow::anyhow!(
-                    "Llama-server health check timed out after {}s: {detail}",
-                    timeout.as_secs()
-                ));
+    pub fn start_sidecar_headless(
+        &mut self,
+        model_path: &std::path::Path,
+        model_id: &str,
+        strategy: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let strategy_name = strategy.unwrap_or_else(|| {
+            if model_id.to_ascii_lowercase().contains("translategemma") {
+                "gemma"
+            } else {
+                "qwen"
             }
-
-            match self.client.get(&url).send().await {
-                Ok(res) => {
-                    let status = res.status();
-                    let body = res.text().await.unwrap_or_default();
-
-                    if status.is_success() {
-                        match serde_json::from_str::<Value>(&body) {
-                            Ok(json)
-                                if json.get("status").and_then(|value| value.as_str())
-                                    == Some("ok") =>
-                            {
-                                return Ok(());
-                            }
-                            Ok(json) => {
-                                last_error = Some(format!(
-                                    "health endpoint returned unexpected payload: {json}"
-                                ));
-                            }
-                            Err(error) => {
-                                last_error = Some(format!(
-                                    "health endpoint returned invalid JSON: {error}; body: {}",
-                                    body.trim()
-                                ));
-                            }
-                        }
-                    } else {
-                        last_error = Some(format!(
-                            "health endpoint returned HTTP {status}: {}",
-                            body.trim()
-                        ));
-                    }
-                }
-                Err(error) => {
-                    last_error = Some(error.to_string());
-                }
-            }
-
-            sleep(HEALTH_POLL_INTERVAL).await;
-        }
+        });
+        self.set_strategy(strategy_name);
+        self.sidecar.start_headless(model_path, model_id, strategy)
     }
 
     pub async fn wait_for_ready(&self) -> anyhow::Result<()> {
-        self.wait_for_ready_with_timeout(STARTUP_READY_TIMEOUT)
-            .await
+        self.sidecar.wait_for_ready().await
     }
 
     pub async fn wait_for_ready_retry(&self) -> anyhow::Result<()> {
-        self.wait_for_ready_with_timeout(RETRY_READY_TIMEOUT).await
+        self.sidecar.wait_for_ready_retry().await
     }
 
     pub async fn wait_for_runtime_ready(&self) -> anyhow::Result<()> {
-        self.wait_for_ready_with_timeout(RUNTIME_READY_TIMEOUT)
-            .await
+        self.sidecar.wait_for_runtime_ready().await
     }
 
     pub async fn quick_health_check(&self) -> anyhow::Result<()> {
-        let url = format!("http://127.0.0.1:{}/health", self.port);
-        let response = tokio::time::timeout(QUICK_HEALTH_TIMEOUT, self.client.get(&url).send())
-            .await
-            .map_err(|_| anyhow::anyhow!("health check timed out after 2s"))??;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-
-        if !status.is_success() {
-            anyhow::bail!("health endpoint returned HTTP {status}: {}", body.trim());
-        }
-
-        let json: Value = serde_json::from_str(&body).map_err(|error| {
-            anyhow::anyhow!(
-                "health endpoint returned invalid JSON: {error}; body: {}",
-                body.trim()
-            )
-        })?;
-
-        if json.get("status").and_then(Value::as_str) == Some("ok") {
-            Ok(())
-        } else {
-            anyhow::bail!("health endpoint returned unexpected payload: {json}");
-        }
+        self.sidecar.quick_health_check().await
     }
 
     pub fn shutdown_sidecar(&mut self) {
-        if let Some(child) = self.sidecar_child.take() {
-            let _ = child.kill();
-        }
+        self.sidecar.stop();
     }
 
     pub(crate) fn parse_numbered_translation_line(line: &str) -> Option<(usize, String)> {
@@ -784,9 +623,9 @@ mod tests {
         let mut client = TranslationClient::new(6, 8765);
 
         client.set_strategy("qwen");
-        assert_eq!(client.strategy.extra_llama_args(), vec!["--jinja".to_string()]);
+        assert_eq!(client.strategy, super::TranslationStrategy::Qwen);
 
         client.set_strategy("gemma");
-        assert_eq!(client.strategy.extra_llama_args(), vec!["--no-jinja".to_string()]);
+        assert_eq!(client.strategy, super::TranslationStrategy::Gemma);
     }
 }
