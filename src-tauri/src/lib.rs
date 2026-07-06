@@ -17,6 +17,7 @@ mod translation;
 
 mod hotkeys;
 mod path_resolver;
+mod pipeline;
 mod scheduler;
 mod snapshot;
 mod tray;

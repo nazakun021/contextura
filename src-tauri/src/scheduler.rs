@@ -8,18 +8,15 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::sleep;
 
 use crossbeam_channel::{Receiver, Sender};
-use rayon::prelude::*;
 use tauri::{Emitter, Manager};
 
 use crate::ipc::{
-    TranslationBox, TranslationErrorPayload, TranslationPayload, TranslationStartedPayload,
+    TranslationErrorPayload, TranslationPayload, TranslationStartedPayload,
     WizardStatusPayload,
 };
 use crate::models::ModelManifest;
-use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
+use crate::motion::DebounceEvent;
 use crate::path_resolver::find_available_local_port;
-use crate::snapshot::save_frame_as_png;
-use crate::styling::StylingEngine;
 
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -56,64 +53,16 @@ pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>
     );
 }
 
-async fn drain_invalidations(
+async fn run_pipeline_frame(
     app_handle: &tauri::AppHandle,
-    client: &Arc<AsyncMutex<crate::translation::TranslationClient>>,
-    invalidation_rx: &Receiver<crate::context::InvalidationReason>,
-) {
-    while let Ok(reason) = invalidation_rx.try_recv() {
-        log::info!("[Context] Invalidation: {reason:?}");
-        match reason {
-            crate::context::InvalidationReason::AppSwitch { from, to } => {
-                log::info!("[Context] App switch: {from} -> {to} — clearing memory");
-                client.lock().await.memory.clear();
-                let _ = app_handle.emit("translation-clear", ());
-            }
-
-            crate::context::InvalidationReason::ManualReset => {
-                client.lock().await.memory.clear();
-                emit_runtime_notice(
-                    app_handle,
-                    "Context Cleared",
-                    "Translation memory was cleared.",
-                    "New translations will start without prior context.",
-                    "info",
-                    2500,
-                );
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-async fn process_capture_frame(
-    app_handle: &tauri::AppHandle,
-    client: &Arc<AsyncMutex<crate::translation::TranslationClient>>,
-    ocr_engine: &crate::ocr::OcrEngine,
-    invalidation_rx: &Receiver<crate::context::InvalidationReason>,
-    pipeline_tx: &Sender<PipelineCommand>,
+    processor: &crate::pipeline::PipelineProcessor,
     frame: &crate::capture::CaptureFrame,
     frame_id: u64,
+    invalidation_rx: &Receiver<crate::context::InvalidationReason>,
+    pipeline_tx: &Sender<PipelineCommand>,
 ) -> Option<TranslationPayload> {
-
-    drain_invalidations(app_handle, client, invalidation_rx).await;
-
     let cache_dir = app_handle.path().app_cache_dir().expect("Failed to get cache dir");
-    let rgba_data = &frame.buffer.data;
-    let png_path = match save_frame_as_png(
-        rgba_data,
-        frame.buffer.width,
-        frame.buffer.height,
-        frame_id,
-        &cache_dir,
-    ) {
-        Ok(path) => path,
-        Err(error) => {
-            log::error!("[OCR] PNG save failed: {error}");
-            return None;
-        }
-    };
-
+    
     let _ = app_handle.emit(
         "translation-started",
         TranslationStartedPayload {
@@ -121,171 +70,35 @@ async fn process_capture_frame(
         },
     );
 
-    if client.lock().await.quick_health_check().await.is_err() {
-        log::warn!(
-            "[Translation] Pre-flight health check failed — skipping frame and requesting runtime reload"
+    let result = processor.process_frame(
+        &cache_dir,
+        frame,
+        frame_id,
+        invalidation_rx,
+        pipeline_tx,
+    ).await;
+
+    if result.clear_context {
+        let _ = app_handle.emit("translation-clear", ());
+    }
+    if result.manual_reset {
+        emit_runtime_notice(
+            app_handle,
+            "Context Cleared",
+            "Translation memory was cleared.",
+            "New translations will start without prior context.",
+            "info",
+            2500,
         );
-        let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
-            reason: "health check failed before batch".to_string(),
-        });
-        return None;
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    let ocr_results = ocr_engine.recognize(
-        &png_path,
-        frame.buffer.width as f32,
-        frame.buffer.height as f32,
-        frame.scale_factor,
-    );
-    let _ = std::fs::remove_file(&png_path);
-
-    let ocr_results = match ocr_results {
-        Ok(results) => results,
-        Err(error) => {
-            log::error!("[OCR] Recognition failed: {error}");
-            emit_runtime_notice(
-                app_handle,
-                "OCR Failed",
-                "The Vision helper could not read the current frame.",
-                error.to_string(),
-                "warning",
-                4000,
-            );
-            return None;
-        }
-    };
-
-    if ocr_results.is_empty() {
-        log::debug!("[OCR] No CJK text found in frame {frame_id}");
-        return None;
-    }
-
-    let styled_boxes = match process_concurrent_translation_and_styling(
-        client,
-        &ocr_results,
-        rgba_data,
-        frame.buffer.width,
-        frame.buffer.height,
-        frame.scale_factor,
-        frame_id,
-    )
-    .await
+    if let Some(ref payload) = result.payload
+        && let Err(error) = app_handle.emit("translation-update", payload)
     {
-        Ok(boxes) => boxes,
-        Err(error) => {
-            log::error!("[Pipeline] Concurrent styling and translation failed: {error}");
-            emit_runtime_notice(
-                app_handle,
-                "Translation Failed",
-                "The concurrent styling/translation pipeline failed.",
-                error.to_string(),
-                "warning",
-                5000,
-            );
-            return None;
-        }
-    };
-
-    let payload = TranslationPayload {
-        boxes: styled_boxes,
-        scale_factor: frame.scale_factor,
-        display_id: frame.display_id,
-        frame_id,
-    };
-
-    if let Err(error) = app_handle.emit("translation-update", &payload) {
         log::error!("[IPC] Failed to emit translation-update: {error}");
     }
 
-    Some(payload)
-}
-
-pub async fn process_concurrent_translation_and_styling(
-    client: &Arc<AsyncMutex<crate::translation::TranslationClient>>,
-    ocr_results: &[crate::ocr::OcrResult],
-    rgba_data: &[u8],
-    buf_width: usize,
-    buf_height: usize,
-    scale: f32,
-    frame_id: u64,
-) -> anyhow::Result<Vec<TranslationBox>> {
-    if ocr_results.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let texts = ocr_results
-        .iter()
-        .map(|result| result.text.clone())
-        .collect::<Vec<_>>();
-
-    // Spawn CPU-bound styling color sampling in Rayon threadpool via tokio::task::spawn_blocking
-    let ocr_results_clone = ocr_results.to_vec();
-    let rgba_data_clone = rgba_data.to_vec();
-    let styling_task = tokio::task::spawn_blocking(move || {
-        ocr_results_clone
-            .par_iter()
-            .map(|ocr| {
-                let bg = StylingEngine::sample_rect_ring(
-                    &rgba_data_clone,
-                    buf_width,
-                    buf_height,
-                    ocr.bounding_box.x,
-                    ocr.bounding_box.y,
-                    ocr.bounding_box.width,
-                    ocr.bounding_box.height,
-                    scale,
-                );
-                let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
-                (bg, fg_color)
-            })
-            .collect::<Vec<_>>()
-    });
-
-    // Run the async translation request concurrently with the styling task
-    let (translations_res, styling_res) = tokio::join!(
-        async {
-            let mut guard = client.lock().await;
-            guard.translate_batch(&texts).await
-        },
-        styling_task
-    );
-
-    let translations = translations_res?;
-    let styling_colors = styling_res
-        .map_err(|e| anyhow::anyhow!("Styling thread join failed: {e}"))?;
-
-    if translations.len() != ocr_results.len() {
-        anyhow::bail!(
-            "Translation batch count mismatch: expected {}, got {}",
-            ocr_results.len(),
-            translations.len()
-        );
-    }
-
-    let styled_boxes = ocr_results
-        .iter()
-        .zip(translations.iter())
-        .zip(styling_colors.iter())
-        .enumerate()
-        .map(|(index, ((ocr, translation), (bg, fg_color)))| {
-            TranslationBox {
-                id: format!("{frame_id}-{index}"),
-                translated: translation.clone(),
-                original: ocr.text.clone(),
-                x: ocr.bounding_box.x,
-                y: ocr.bounding_box.y,
-                width: ocr.bounding_box.width,
-                height: ocr.bounding_box.height,
-                is_vertical: ocr.is_vertical,
-                bg_color: bg.to_css_color(),
-                fg_color: fg_color.to_string(),
-                confidence: ocr.confidence,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    Ok(styled_boxes)
+    result.payload
 }
 
 
@@ -478,6 +291,14 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
             let mut runtime_state: Option<RuntimeState> = None;
             let mut runtime_reload_requested = true;
             let mut thermal_monitor = crate::thermal::ThermalMonitor::new();
+            let mut processor = crate::pipeline::PipelineProcessor::new(
+                0,
+                0,
+                0,
+                0.0,
+                Arc::clone(&config.ocr_engine),
+                Arc::clone(&client_clone),
+            );
 
             loop {
                 let should_refresh_runtime = runtime_reload_requested || runtime_state.is_none();
@@ -490,6 +311,12 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             }) {
                                 sidecar_started = false;
                             }
+                            processor.update_settings(
+                                state.settings.debounce_ms,
+                                state.settings.motion_threshold,
+                                state.settings.pixel_diff_threshold,
+                                state.settings.edge_inset_percent,
+                            );
                             runtime_state = Some(state);
                             runtime_reload_requested = false;
                         }
@@ -519,7 +346,6 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                     sleep(Duration::from_secs(1)).await;
                     continue;
                 };
-                let runtime_settings = state.settings.clone();
                 let active_model = state.active_model.clone();
 
                 *active_model_path.lock().await = active_model.path.clone();
@@ -649,20 +475,11 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                     }
                 }
 
-                let ocr_engine_loop = Arc::clone(&config.ocr_engine);
                 let frame_rx = config.display_manager.get_or_start_capture(
                     0,
                     &[&config.app_bundle_id],
                     &[config.app_process_id],
                     &[&config.app_name_hint],
-                );
-                let mut motion_detector = MotionDetector::new(
-                    runtime_settings.pixel_diff_threshold,
-                    runtime_settings.edge_inset_percent,
-                );
-                let mut debounce = DebounceStateMachine::new(
-                    runtime_settings.debounce_ms,
-                    runtime_settings.motion_threshold,
                 );
                 let mut pending_force_scan = false;
                 let mut latest_frame: Option<crate::capture::CaptureFrame> = None;
@@ -694,7 +511,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                 log::info!("[Pipeline] Entering capture loop");
 
                 'capture: loop {
-                    let debounce_sleep = compute_debounce_sleep(debounce.state, debounce.debounce_duration);
+                    let debounce_sleep = compute_debounce_sleep(processor.debounce.state, processor.debounce.debounce_duration);
                     tokio::pin!(debounce_sleep);
 
                     tokio::select! {
@@ -707,7 +524,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                             "[Pipeline] Force scan requested on cached frame"
                                         );
                                         let cached_rgba = &frame.buffer.data;
-                                        let cached_thumbnail = motion_detector.downsample(
+                                        let cached_thumbnail = processor.motion_detector.downsample(
                                             cached_rgba,
                                             frame.buffer.width,
                                             frame.buffer.height,
@@ -726,14 +543,13 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                         } else {
                                             let current_frame_id = frame_id;
                                             frame_id += 1;
-                                            if let Some(payload) = process_capture_frame(
+                                            if let Some(payload) = run_pipeline_frame(
                                                 &app_handle_sidecar,
-                                                &client_clone,
-                                                &ocr_engine_loop,
-                                                &config.invalidation_rx,
-                                                &config.pipeline_tx,
+                                                &processor,
                                                 &frame,
                                                 current_frame_id,
+                                                &config.invalidation_rx,
+                                                &config.pipeline_tx,
                                             )
                                             .await
                                             {
@@ -779,18 +595,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             latest_frame = Some(frame.clone());
 
                             let is_forced = std::mem::take(&mut pending_force_scan);
-                            let rgba_data = &frame.buffer.data;
-                            let thumbnail = motion_detector.downsample(
-                                rgba_data,
-                                frame.buffer.width,
-                                frame.buffer.height,
-                            );
-                            let motion_ratio = motion_detector.process_thumbnail(&thumbnail);
-                            let debounce_event = if is_forced {
-                                DebounceEvent::Triggered
-                            } else {
-                                debounce.update(motion_ratio)
-                            };
+                            let debounce_event = processor.process_motion(&frame, is_forced);
 
                             match debounce_event {
                                 DebounceEvent::MotionDetected => {
@@ -801,6 +606,12 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                 }
                                 DebounceEvent::Triggered => {
                                     was_scrolling = false;
+                                    let rgba_data = &frame.buffer.data;
+                                    let thumbnail = processor.motion_detector.downsample(
+                                        rgba_data,
+                                        frame.buffer.width,
+                                        frame.buffer.height,
+                                    );
                                     let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
                                     if last_processed_hash == Some(frame_hash)
                                         && let Some(payload) = last_payload.as_ref()
@@ -816,14 +627,13 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                     }
                                     let current_frame_id = frame_id;
                                     frame_id += 1;
-                                    if let Some(payload) = process_capture_frame(
+                                    if let Some(payload) = run_pipeline_frame(
                                         &app_handle_sidecar,
-                                        &client_clone,
-                                        &ocr_engine_loop,
-                                        &config.invalidation_rx,
-                                        &config.pipeline_tx,
+                                        &processor,
                                         &frame,
                                         current_frame_id,
+                                        &config.invalidation_rx,
+                                        &config.pipeline_tx,
                                     )
                                     .await
                                     {
@@ -832,27 +642,26 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                     }
                                 }
                                 DebounceEvent::None => {
-                                    if !matches!(debounce.state, crate::motion::DebounceState::Scrolling) {
+                                    if !matches!(processor.debounce.state, crate::motion::DebounceState::Scrolling) {
                                         was_scrolling = false;
                                     }
                                 }
                             }
                         }
                         () = &mut debounce_sleep => {
-                            let debounce_event = debounce.update(0.0);
+                            let debounce_event = processor.debounce.update(0.0);
                             if matches!(debounce_event, DebounceEvent::Triggered) && let Some(frame) = latest_frame.as_ref() {
                                 log::info!("[Pipeline] Debounce triggered on static screen");
                                 was_scrolling = false;
                                 let current_frame_id = frame_id;
                                 frame_id += 1;
-                                if let Some(payload) = process_capture_frame(
+                                if let Some(payload) = run_pipeline_frame(
                                     &app_handle_sidecar,
-                                    &client_clone,
-                                    &ocr_engine_loop,
-                                    &config.invalidation_rx,
-                                    &config.pipeline_tx,
+                                    &processor,
                                     frame,
                                     current_frame_id,
+                                    &config.invalidation_rx,
+                                    &config.pipeline_tx,
                                 )
                                 .await
                                 {
@@ -1076,9 +885,14 @@ mod tests {
         // Prepare a mock 100x100 black pixel buffer (40000 bytes for RGBA)
         let rgba_data = vec![0u8; 40000];
 
+        let processor = crate::pipeline::PipelineProcessor::new(
+            10, 0, 50, 0.05,
+            Arc::new(crate::ocr::OcrEngine::new(false, PathBuf::from("mock-vision"))),
+            Arc::clone(&client),
+        );
+
         // Run the concurrent logic
-        let boxes = process_concurrent_translation_and_styling(
-            &client,
+        let boxes = processor.process_concurrent_translation_and_styling(
             &ocr_results,
             &rgba_data,
             100,
