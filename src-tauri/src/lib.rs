@@ -1,4 +1,4 @@
-// src-tauri/src/lib.rs
+#![allow(clippy::duration_suboptimal_units)]
 
 mod cli;
 mod downloader;
