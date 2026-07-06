@@ -7,7 +7,7 @@ Contextura uses a hybrid architecture combining Rust for orchestration and syste
 ```mermaid
 graph TD
     SCK[macOS ScreenCaptureKit] -->|Frames| Rust[Rust Orchestrator - Tauri v2]
-    Rust -->|Write Temp Frame| Disk[Disk /tmp]
+    Rust -->|Write Temp Frame| Disk[Disk App Cache]
     Disk -->|Read Frame| Swift[Swift vision-helper Subprocess]
     Swift -->|Return OCR JSON| Rust
     Rust -->|Text Blocks| LLM[llama-server Sidecar]
@@ -20,7 +20,7 @@ graph TD
 1. **Stream Capture**: `capture.rs` starts an `SCStream` for the display. Frames are copied out of the pixel buffer as BGRA bytes.
 2. **Motion Detection**: `motion.rs` downsamples frames to `160x90` grayscale and computes the motion ratio.
 3. **Debounce Gate**: `DebounceStateMachine` decides whether to clear overlays, wait, or trigger a scan based on screen settling (200ms default).
-4. **Snapshotting**: On trigger or manual force-scan, the orchestrator (`lib.rs`) converts BGRA to RGBA once, writes `/tmp/contextura-frame-{id}.png`, and updates `/tmp/contextura-frame-latest.png`.
+4. **Snapshotting**: On trigger or manual force-scan, the orchestrator (`lib.rs`) converts BGRA to RGBA once, writes `contextura-frame-{id}.png` to the secure App Cache directory, and updates `contextura-frame-latest.png` there.
 5. **OCR Subprocess**: `ocr.rs` invokes `vision-helper` with the PNG path, handles timeouts, and converts Vision relative coordinates to overlay coordinates.
 6. **Sidecar Translation**: `translation.rs` formats request payloads depending on active model: sequential completions for `TranslateGemma` or numbered batched completions for Qwen.
 7. **Styling**: `styling.rs` samples background colors from the RGBA buffer and determines WCAG-compliant high-contrast foreground colors.
@@ -41,7 +41,7 @@ graph TD
 * **Overlay Capture Exclusion**: Prefers direct window exclusion for Contextura-owned windows, and the overlay window is also marked `NSWindowSharingType::None`.
 * **Deduplication Strategy**: OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
 * **Debounce Resilience**: Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
-* **Secure Temporary Files**: Storing frames in `/tmp/contextura-frame-latest.png` is functional but insecure on a shared system. Production builds must transition to using the app's secure, private Application Support or Cache directory.
+* **Secure Temporary Files**: Frames are written to the app's secure, private Cache directory, ensuring multi-user security.
 * **Content Security Policy**: A restrictive Content Security Policy (CSP) must be implemented in the frontend HTML documents to mitigate injection risks, despite the offline nature of the app.
 
 

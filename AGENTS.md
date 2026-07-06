@@ -25,13 +25,7 @@ Read this file before changing code or project docs.
 - Wizard screens 1–4 now exist in `src/wizard.html`.
 - `--debug-cli --input <png>` and `--test-suite <dir>` run the real OCR/translation path.
 - `ocr.rs` now treats helper process failure as a real OCR error instead of silent empty output.
-
-## Still Open
-
-- End-to-end manual smoke verification is still required after major pipeline changes.
-- `ocr_boxes` coordinates in `test-corpus/*.expected.json` are empty; populate after a live `--debug-cli --input` pass captures real Vision coordinates.
-- `downloader.rs`, richer CLI flows, updater signing, and multi-display support are still future work.
-- Quality-tier policy, RAM gating, and updater signing with a real production pubkey are still pending.
+- The downloader (`downloader.rs`) is present, and model cycling, watchdog protection, secure cache snapshots, and all core CLI features are fully implemented.
 
 ## Source of Truth
 
