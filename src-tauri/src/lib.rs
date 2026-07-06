@@ -42,7 +42,10 @@ fn complete_wizard(
     app_config: tauri::State<'_, crate::path_resolver::AppConfig>,
 ) -> Result<(), String> {
     use tauri::Manager;
-    let app_dir = app_config.path_resolver.settings_dir(Some(&app)).map_err(|e| e.to_string())?;
+    let app_dir = app_config
+        .path_resolver
+        .settings_dir(Some(&app))
+        .map_err(|e| e.to_string())?;
     let mut settings = crate::settings::Settings::load(&app_dir).map_err(|e| e.to_string())?;
     settings.wizard_completed = true;
     settings.save(&app_dir).map_err(|e| e.to_string())?;
@@ -61,9 +64,7 @@ fn complete_wizard(
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn reload_runtime(
-    pipeline_tx: tauri::State<'_, Sender<PipelineCommand>>,
-) {
+fn reload_runtime(pipeline_tx: tauri::State<'_, Sender<PipelineCommand>>) {
     let _ = pipeline_tx.try_send(PipelineCommand::ReloadRuntime {
         reason: "UI requested reload".to_string(),
     });
@@ -80,7 +81,10 @@ fn open_models_folder_command(
     app: tauri::AppHandle,
     app_config: tauri::State<'_, crate::path_resolver::AppConfig>,
 ) -> Result<(), String> {
-    let models_dir = app_config.path_resolver.models_dir(Some(&app)).map_err(|e| e.to_string())?;
+    let models_dir = app_config
+        .path_resolver
+        .models_dir(Some(&app))
+        .map_err(|e| e.to_string())?;
     scheduler::open_models_folder(&models_dir)
 }
 
@@ -109,8 +113,6 @@ pub fn run() {
         return;
     }
 
-
-
     let pipeline_tx_for_exit = Arc::new(std::sync::Mutex::new(None::<Sender<PipelineCommand>>));
     let pipeline_tx_setup = Arc::clone(&pipeline_tx_for_exit);
 
@@ -137,15 +139,20 @@ pub fn run() {
             );
             app.manage(app_config.clone());
 
-            let cache_dir = path_resolver.cache_dir(Some(app.handle())).expect("Failed to get cache dir");
+            let cache_dir = path_resolver
+                .cache_dir(Some(app.handle()))
+                .expect("Failed to get cache dir");
             let _ = std::fs::create_dir_all(&cache_dir);
             snapshot::cleanup_stale_temp_frames(&cache_dir);
 
-            let app_dir = path_resolver.settings_dir(Some(app.handle())).expect("Failed to get app directory");
+            let app_dir = path_resolver
+                .settings_dir(Some(app.handle()))
+                .expect("Failed to get app directory");
             let startup_settings = crate::settings::Settings::load(&app_dir)
                 .expect("Failed to load settings at startup");
-            let vision_helper_path =
-                path_resolver.resolve_binary("vision-helper", Some(app.handle())).expect("Failed to resolve vision-helper path");
+            let vision_helper_path = path_resolver
+                .resolve_binary("vision-helper", Some(app.handle()))
+                .expect("Failed to resolve vision-helper path");
 
             // --- Subsystem Initialization ---
             let (window_tracker, invalidation_rx) = context::AppWindowTracker::new();

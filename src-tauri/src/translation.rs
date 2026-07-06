@@ -11,8 +11,6 @@ use tokio::time::sleep;
 const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const TRANSLATEGEMMA_HISTORY_LIMIT: usize = 6;
 
-
-
 #[derive(Debug)]
 pub struct TranslationMemory {
     entries: VecDeque<(String, String)>,
@@ -61,8 +59,14 @@ impl TranslationStrategy {
         chunk_strings: &[String],
     ) -> anyhow::Result<Vec<String>> {
         match self {
-            Self::Qwen => self.translate_qwen_chunk(client, history, chunk_strings).await,
-            Self::Gemma => self.translate_gemma_chunk(client, history, chunk_strings).await,
+            Self::Qwen => {
+                self.translate_qwen_chunk(client, history, chunk_strings)
+                    .await
+            }
+            Self::Gemma => {
+                self.translate_gemma_chunk(client, history, chunk_strings)
+                    .await
+            }
         }
     }
 
@@ -111,7 +115,11 @@ impl TranslationStrategy {
         })
     }
 
-    async fn translate_single_qwen(self, client: &TranslationClient, input_text: &str) -> anyhow::Result<String> {
+    async fn translate_single_qwen(
+        self,
+        client: &TranslationClient,
+        input_text: &str,
+    ) -> anyhow::Result<String> {
         let payload = Self::build_qwen_single_payload(input_text);
         let res = client.post_chat_completion(payload).await?;
         TranslationClient::response_text_from_completion(&res)
@@ -123,12 +131,13 @@ impl TranslationStrategy {
         history: &[(String, String)],
         chunk_strings: &[String],
     ) -> anyhow::Result<Vec<String>> {
-        let chunk_translations = match self.do_translate_qwen_chunk(client, history, chunk_strings).await {
+        let chunk_translations = match self
+            .do_translate_qwen_chunk(client, history, chunk_strings)
+            .await
+        {
             Ok(results) => results,
             Err(first_error) => {
-                log::warn!(
-                    "[Translation] Qwen batch failed, retrying once: {first_error}"
-                );
+                log::warn!("[Translation] Qwen batch failed, retrying once: {first_error}");
                 sleep(Duration::from_millis(500)).await;
                 self.do_translate_qwen_chunk(client, history, chunk_strings).await.map_err(|retry_error| {
                     anyhow::anyhow!(
@@ -176,7 +185,10 @@ impl TranslationStrategy {
                 empty_indices.len()
             );
             for idx in empty_indices {
-                if let Ok(single) = self.translate_single_qwen(client, &chunk_strings[idx]).await {
+                if let Ok(single) = self
+                    .translate_single_qwen(client, &chunk_strings[idx])
+                    .await
+                {
                     results[idx] = single;
                 }
             }
@@ -326,7 +338,10 @@ impl TranslationStrategy {
         conversation
     }
 
-    pub fn build_translategemma_messages(history: &[(String, String)], input_text: &str) -> Vec<Value> {
+    pub fn build_translategemma_messages(
+        history: &[(String, String)],
+        input_text: &str,
+    ) -> Vec<Value> {
         let system_prompt = "You are a professional Japanese-to-English translator. Translate the user's Japanese screen-text observations into natural, concise English. Output only the English translation of the observed text. Do not provide notes, explanations, or alternate translations.";
         let mut messages = vec![json!({
             "role": "system",
@@ -386,8 +401,6 @@ impl TranslationClient {
             .trim()
             .to_string()
     }
-
-
 
     pub(crate) async fn post_chat_completion(&self, payload: Value) -> anyhow::Result<Value> {
         let url = format!("http://127.0.0.1:{}/v1/chat/completions", self.port);
@@ -511,8 +524,6 @@ impl TranslationClient {
         Some((idx, remainder.to_string()))
     }
 
-
-
     pub async fn translate_batch(&mut self, strings: &[String]) -> anyhow::Result<Vec<String>> {
         if strings.is_empty() {
             return Ok(vec![]);
@@ -524,7 +535,10 @@ impl TranslationClient {
         // Sub-batch at 15 strings to avoid hitting token limits or context window issues
         for (chunk_idx, chunk_strings) in strings.chunks(15).enumerate() {
             let offset = chunk_idx * 15;
-            let chunk_translations = self.strategy.translate_chunk(self, &history, chunk_strings).await?;
+            let chunk_translations = self
+                .strategy
+                .translate_chunk(self, &history, chunk_strings)
+                .await?;
             for (chunk_offset, translation) in chunk_translations.into_iter().enumerate() {
                 final_results[offset + chunk_offset] = translation;
             }
@@ -561,7 +575,8 @@ mod tests {
 
     #[test]
     fn translategemma_conversation_matches_structured_user_only_format() {
-        let conversation = super::TranslationStrategy::build_translategemma_conversation(&[], "はじめに");
+        let conversation =
+            super::TranslationStrategy::build_translategemma_conversation(&[], "はじめに");
 
         assert_eq!(conversation.len(), 1);
         assert_eq!(conversation[0]["role"], "user");
@@ -593,7 +608,9 @@ mod tests {
         assert!(
             messages[0]["content"]
                 .as_str()
-                .is_some_and(|content: &str| { content.contains("Output only the English translation") })
+                .is_some_and(|content: &str| {
+                    content.contains("Output only the English translation")
+                })
         );
         assert_eq!(messages[1]["role"], "user");
     }

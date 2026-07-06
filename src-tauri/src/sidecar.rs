@@ -1,11 +1,11 @@
 // src-tauri/src/sidecar.rs
 
+use anyhow::Context;
+use reqwest::Client;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::sleep;
-use serde_json::Value;
-use anyhow::Context;
-use reqwest::Client;
 
 const STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(180);
 const RETRY_READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -21,7 +21,9 @@ pub enum SidecarChild {
 impl SidecarChild {
     pub fn kill(self) -> std::io::Result<()> {
         match self {
-            Self::Tauri(child) => child.kill().map_err(|e| std::io::Error::other(e.to_string())),
+            Self::Tauri(child) => child
+                .kill()
+                .map_err(|e| std::io::Error::other(e.to_string())),
             Self::Headless(mut child) => child.kill(),
         }
     }
@@ -147,7 +149,7 @@ impl SidecarManager {
         strategy: Option<&str>,
     ) -> anyhow::Result<()> {
         use std::process::{Command, Stdio};
-        
+
         if let Some(child) = self.sidecar_child.take() {
             let _ = child.kill();
         }

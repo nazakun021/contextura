@@ -1,15 +1,15 @@
 // src-tauri/src/pipeline.rs
 
+use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
-use rayon::prelude::*;
 
 use crate::capture::CaptureFrame;
-use crate::motion::{MotionDetector, DebounceStateMachine, DebounceEvent};
-use crate::styling::StylingEngine;
 use crate::ipc::{TranslationBox, TranslationPayload};
+use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::snapshot::save_frame_as_png;
+use crate::styling::StylingEngine;
 
 pub struct ProcessResult {
     pub payload: Option<TranslationPayload>,
@@ -58,16 +58,12 @@ impl PipelineProcessor {
         }
 
         let rgba_data = &frame.buffer.data;
-        let thumbnail = self.motion_detector.downsample(
-            rgba_data,
-            frame.buffer.width,
-            frame.buffer.height,
-        );
+        let thumbnail =
+            self.motion_detector
+                .downsample(rgba_data, frame.buffer.width, frame.buffer.height);
         let motion_ratio = self.motion_detector.process_thumbnail(&thumbnail);
         self.debounce.update(motion_ratio)
     }
-
-
 
     #[allow(clippy::too_many_lines)]
     pub async fn process_frame(
@@ -165,15 +161,16 @@ impl PipelineProcessor {
         }
 
         // 5. Run concurrent styling and translation
-        let styled_boxes = match self.process_concurrent_translation_and_styling(
-            &ocr_results,
-            rgba_data,
-            frame.buffer.width,
-            frame.buffer.height,
-            frame.scale_factor,
-            frame_id,
-        )
-        .await
+        let styled_boxes = match self
+            .process_concurrent_translation_and_styling(
+                &ocr_results,
+                rgba_data,
+                frame.buffer.width,
+                frame.buffer.height,
+                frame.scale_factor,
+                frame_id,
+            )
+            .await
         {
             Ok(boxes) => boxes,
             Err(error) => {
@@ -251,8 +248,8 @@ impl PipelineProcessor {
         );
 
         let translations = translations_res?;
-        let styling_colors = styling_res
-            .map_err(|e| anyhow::anyhow!("Styling thread join failed: {e}"))?;
+        let styling_colors =
+            styling_res.map_err(|e| anyhow::anyhow!("Styling thread join failed: {e}"))?;
 
         if translations.len() != ocr_results.len() {
             anyhow::bail!(
@@ -267,8 +264,8 @@ impl PipelineProcessor {
             .zip(translations.iter())
             .zip(styling_colors.iter())
             .enumerate()
-            .map(|(index, ((ocr, translation), (bg, fg_color)))| {
-                TranslationBox {
+            .map(
+                |(index, ((ocr, translation), (bg, fg_color)))| TranslationBox {
                     id: format!("{frame_id}-{index}"),
                     translated: translation.clone(),
                     original: ocr.text.clone(),
@@ -280,8 +277,8 @@ impl PipelineProcessor {
                     bg_color: bg.to_css_color(),
                     fg_color: fg_color.to_string(),
                     confidence: ocr.confidence,
-                }
-            })
+                },
+            )
             .collect::<Vec<_>>();
 
         Ok(styled_boxes)
@@ -291,11 +288,11 @@ impl PipelineProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use crate::capture::{CaptureFrame, PixelBuffer};
     use crate::ocr::OcrEngine;
     use crate::translation::TranslationClient;
+    use std::path::PathBuf;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn test_pipeline_motion_debounce_flow() {
@@ -329,8 +326,6 @@ mod tests {
         let ev2 = processor.process_motion(&frame2, false);
         assert_eq!(ev2, DebounceEvent::MotionDetected);
     }
-
-
 
     #[tokio::test]
     async fn test_pipeline_async_frame_flow() {
@@ -393,13 +388,9 @@ mod tests {
         let (_invalidation_tx, invalidation_rx) = crossbeam_channel::bounded(2);
         let (pipeline_tx, _pipeline_rx) = crossbeam_channel::bounded(2);
 
-        let result = processor.process_frame(
-            &temp_dir,
-            &frame,
-            123,
-            &invalidation_rx,
-            &pipeline_tx,
-        ).await;
+        let result = processor
+            .process_frame(&temp_dir, &frame, 123, &invalidation_rx, &pipeline_tx)
+            .await;
 
         assert!(result.payload.is_some());
         let payload = result.payload.unwrap();

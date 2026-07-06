@@ -11,13 +11,11 @@ use crossbeam_channel::{Receiver, Sender};
 use tauri::{Emitter, Manager};
 
 use crate::ipc::{
-    TranslationErrorPayload, TranslationPayload, TranslationStartedPayload,
-    WizardStatusPayload,
+    TranslationErrorPayload, TranslationPayload, TranslationStartedPayload, WizardStatusPayload,
 };
 use crate::models::ModelManifest;
 use crate::motion::DebounceEvent;
 use crate::path_resolver::find_available_local_port;
-
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PipelineCommand {
@@ -61,8 +59,11 @@ async fn run_pipeline_frame(
     invalidation_rx: &Receiver<crate::context::InvalidationReason>,
     pipeline_tx: &Sender<PipelineCommand>,
 ) -> Option<TranslationPayload> {
-    let cache_dir = app_handle.path().app_cache_dir().expect("Failed to get cache dir");
-    
+    let cache_dir = app_handle
+        .path()
+        .app_cache_dir()
+        .expect("Failed to get cache dir");
+
     let _ = app_handle.emit(
         "translation-started",
         TranslationStartedPayload {
@@ -70,13 +71,9 @@ async fn run_pipeline_frame(
         },
     );
 
-    let result = processor.process_frame(
-        &cache_dir,
-        frame,
-        frame_id,
-        invalidation_rx,
-        pipeline_tx,
-    ).await;
+    let result = processor
+        .process_frame(&cache_dir, frame, frame_id, invalidation_rx, pipeline_tx)
+        .await;
 
     if result.clear_context {
         let _ = app_handle.emit("translation-clear", ());
@@ -100,8 +97,6 @@ async fn run_pipeline_frame(
 
     result.payload
 }
-
-
 
 fn emit_cached_translation_payload(
     app_handle: &tauri::AppHandle,
@@ -882,22 +877,29 @@ mod tests {
         let rgba_data = vec![0u8; 40000];
 
         let processor = crate::pipeline::PipelineProcessor::new(
-            10, 0, 50, 0.05,
-            Arc::new(crate::ocr::OcrEngine::new(false, PathBuf::from("mock-vision"))),
+            10,
+            0,
+            50,
+            0.05,
+            Arc::new(crate::ocr::OcrEngine::new(
+                false,
+                PathBuf::from("mock-vision"),
+            )),
             Arc::clone(&client),
         );
 
         // Run the concurrent logic
-        let boxes = processor.process_concurrent_translation_and_styling(
-            &ocr_results,
-            &rgba_data,
-            100,
-            100,
-            1.0,
-            123,
-        )
-        .await
-        .unwrap();
+        let boxes = processor
+            .process_concurrent_translation_and_styling(
+                &ocr_results,
+                &rgba_data,
+                100,
+                100,
+                1.0,
+                123,
+            )
+            .await
+            .unwrap();
 
         // Verify length and alignment
         assert_eq!(boxes.len(), 2);
@@ -915,5 +917,3 @@ mod tests {
         assert_eq!(boxes[0].fg_color, "#FFFFFF");
     }
 }
-
-

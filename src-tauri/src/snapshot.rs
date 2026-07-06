@@ -83,7 +83,7 @@ mod tests {
 
         let rgba_data = vec![0; 400]; // 10x10 RGBA image
         let path = save_frame_as_png(&rgba_data, 10, 10, 9999, &temp_dir).unwrap();
-        
+
         // This will fail because save_frame_as_png is currently hardcoded to /tmp
         assert!(path.exists(), "Expected snapshot to exist at {path:?}");
         assert!(temp_dir.join("contextura-frame-latest.png").exists());

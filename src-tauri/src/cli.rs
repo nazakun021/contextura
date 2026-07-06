@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::models::{ModelManifest, ModelStatus};
 use crate::ocr::OcrEngine;
-use crate::path_resolver::{
-    find_available_local_port, PathResolver,
-};
+use crate::path_resolver::{PathResolver, find_available_local_port};
 use crate::settings::Settings;
 use crate::translation::TranslationClient;
 
@@ -164,7 +162,11 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     let vision_helper_path = path_resolver.resolve_binary("vision-helper", None)?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_headless(&active_model.path, &active_model.entry.id, active_model.entry.strategy.as_deref())?;
+    translation_client.start_sidecar_headless(
+        &active_model.path,
+        &active_model.entry.id,
+        active_model.entry.strategy.as_deref(),
+    )?;
     translation_client.wait_for_ready().await?;
 
     let (width, height) = image::image_dimensions(input)?;
@@ -186,7 +188,7 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
         serde_json::to_string(&output)?
     };
     println!("{json}");
-    
+
     translation_client.shutdown_sidecar();
 
     Ok(())
@@ -218,7 +220,11 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     let vision_helper_path = path_resolver.resolve_binary("vision-helper", None)?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_headless(&active_model.path, &active_model.entry.id, active_model.entry.strategy.as_deref())?;
+    translation_client.start_sidecar_headless(
+        &active_model.path,
+        &active_model.entry.id,
+        active_model.entry.strategy.as_deref(),
+    )?;
     translation_client.wait_for_ready().await?;
 
     let mut failed = false;
@@ -345,8 +351,8 @@ pub fn run_cli(args: &CliArgs) {
 #[cfg(test)]
 mod tests {
     use super::{
-        evaluate_corpus_case, ocr_boxes_match, CaseResult, CorpusExpectation, ExpectedOcrBox,
-        OCR_COORD_TOLERANCE,
+        CaseResult, CorpusExpectation, ExpectedOcrBox, OCR_COORD_TOLERANCE, evaluate_corpus_case,
+        ocr_boxes_match,
     };
     use crate::ocr::{OcrResult, Rect};
 
@@ -476,7 +482,14 @@ mod tests {
             ocr_boxes: vec![],
         };
         let result = evaluate_corpus_case("", &[], "", &exp);
-        assert_eq!(result, CaseResult { ocr_text_ok: true, coord_ok: true, translation_ok: true });
+        assert_eq!(
+            result,
+            CaseResult {
+                ocr_text_ok: true,
+                coord_ok: true,
+                translation_ok: true
+            }
+        );
         assert!(result.passed());
     }
 
@@ -553,8 +566,20 @@ mod tests {
             ocr_boxes: vec![make_expected("勇者", 10.0, 20.0, 100.0, 40.0)],
         };
         let detected = vec![make_result("勇者よ", 10.0, 20.0, 100.0, 40.0)];
-        let result = evaluate_corpus_case("勇者よ、魔王を倒せ！", &detected, "defeat the brave hero", &exp);
-        assert_eq!(result, CaseResult { ocr_text_ok: true, coord_ok: true, translation_ok: true });
+        let result = evaluate_corpus_case(
+            "勇者よ、魔王を倒せ！",
+            &detected,
+            "defeat the brave hero",
+            &exp,
+        );
+        assert_eq!(
+            result,
+            CaseResult {
+                ocr_text_ok: true,
+                coord_ok: true,
+                translation_ok: true
+            }
+        );
         assert!(result.passed());
     }
 }

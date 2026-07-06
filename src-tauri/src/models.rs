@@ -121,11 +121,13 @@ impl ModelManifest {
                 model.filename = format!("{}.gguf", model.id);
             }
             if model.strategy.is_none() {
-                model.strategy = Some(if model.id.to_ascii_lowercase().contains("translategemma") {
-                    "gemma".to_string()
-                } else {
-                    "qwen".to_string()
-                });
+                model.strategy = Some(
+                    if model.id.to_ascii_lowercase().contains("translategemma") {
+                        "gemma".to_string()
+                    } else {
+                        "qwen".to_string()
+                    },
+                );
             }
         }
 
@@ -413,20 +415,27 @@ mod tests {
             ..Settings::default()
         };
         fs::write(
-            app_dir.join("models").join("translategemma-4b-it.Q4_K_M.gguf"),
+            app_dir
+                .join("models")
+                .join("translategemma-4b-it.Q4_K_M.gguf"),
             b"gemma",
         )
         .expect("gemma model should be written");
-        fs::write(
-            app_dir.join("models").join("qwen3-0.6b-q4.gguf"),
-            b"qwen",
-        )
-        .expect("qwen model should be written");
+        fs::write(app_dir.join("models").join("qwen3-0.6b-q4.gguf"), b"qwen")
+            .expect("qwen model should be written");
 
         let manifest = ModelManifest::load(&app_dir, &settings).expect("manifest should load");
 
-        let gemma_entry = manifest.models.iter().find(|m| m.id.contains("translategemma")).unwrap();
-        let qwen_entry = manifest.models.iter().find(|m| m.id.contains("qwen")).unwrap();
+        let gemma_entry = manifest
+            .models
+            .iter()
+            .find(|m| m.id.contains("translategemma"))
+            .unwrap();
+        let qwen_entry = manifest
+            .models
+            .iter()
+            .find(|m| m.id.contains("qwen"))
+            .unwrap();
 
         assert_eq!(gemma_entry.strategy.as_deref(), Some("gemma"));
         assert_eq!(qwen_entry.strategy.as_deref(), Some("qwen"));
