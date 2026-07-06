@@ -30,7 +30,6 @@ use objc2_app_kit::{NSWindow, NSWindowSharingType};
 use std::sync::Arc;
 
 use crate::ipc::WizardStatusPayload;
-use crate::path_resolver::resolve_vision_helper_path;
 use clap::Parser;
 use cli::CliArgs;
 
@@ -40,9 +39,10 @@ fn complete_wizard(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     pipeline_tx: tauri::State<'_, Sender<PipelineCommand>>,
+    app_config: tauri::State<'_, crate::path_resolver::AppConfig>,
 ) -> Result<(), String> {
     use tauri::Manager;
-    let app_dir = crate::settings::Settings::dir().map_err(|e| e.to_string())?;
+    let app_dir = app_config.path_resolver.settings_dir(Some(&app)).map_err(|e| e.to_string())?;
     let mut settings = crate::settings::Settings::load(&app_dir).map_err(|e| e.to_string())?;
     settings.wizard_completed = true;
     settings.save(&app_dir).map_err(|e| e.to_string())?;
@@ -75,8 +75,13 @@ fn wizard_status() -> Result<WizardStatusPayload, String> {
 }
 
 #[tauri::command]
-fn open_models_folder_command() -> Result<(), String> {
-    scheduler::open_models_folder()
+#[allow(clippy::needless_pass_by_value)]
+fn open_models_folder_command(
+    app: tauri::AppHandle,
+    app_config: tauri::State<'_, crate::path_resolver::AppConfig>,
+) -> Result<(), String> {
+    let models_dir = app_config.path_resolver.models_dir(Some(&app)).map_err(|e| e.to_string())?;
+    scheduler::open_models_folder(&models_dir)
 }
 
 #[tauri::command]
@@ -123,18 +128,24 @@ pub fn run() {
         .setup(move |app| {
             use tauri::Manager;
 
-            let cache_dir = app.path().app_cache_dir().expect("Failed to get cache dir");
+            let path_resolver = Arc::new(crate::path_resolver::PathResolver::new(false, None));
+            let app_config = crate::path_resolver::AppConfig::new(
+                app.config().identifier.clone(),
+                i32::try_from(std::process::id()).unwrap_or_default(),
+                app.package_info().name.clone(),
+                Arc::clone(&path_resolver),
+            );
+            app.manage(app_config.clone());
+
+            let cache_dir = path_resolver.cache_dir(Some(app.handle())).expect("Failed to get cache dir");
             let _ = std::fs::create_dir_all(&cache_dir);
             snapshot::cleanup_stale_temp_frames(&cache_dir);
 
-            let app_dir = crate::settings::Settings::dir().expect("Failed to get app directory");
+            let app_dir = path_resolver.settings_dir(Some(app.handle())).expect("Failed to get app directory");
             let startup_settings = crate::settings::Settings::load(&app_dir)
                 .expect("Failed to load settings at startup");
             let vision_helper_path =
-                resolve_vision_helper_path(app).expect("Failed to resolve vision-helper path");
-            let app_bundle_id = app.config().identifier.clone();
-            let app_process_id = i32::try_from(std::process::id()).unwrap_or_default();
-            let app_name_hint = app.package_info().name.clone();
+                path_resolver.resolve_binary("vision-helper", Some(app.handle())).expect("Failed to resolve vision-helper path");
 
             // --- Subsystem Initialization ---
             let (window_tracker, invalidation_rx) = context::AppWindowTracker::new();
@@ -213,9 +224,7 @@ pub fn run() {
             // --- Pipeline Orchestration ---
             scheduler::start_scheduler(scheduler::SchedulerConfig {
                 app_handle: app.handle().clone(),
-                app_bundle_id,
-                app_process_id,
-                app_name_hint,
+                app_config,
                 initial_memory_size: startup_settings.context_memory_size,
                 window_tracker,
                 invalidation_rx,

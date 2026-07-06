@@ -124,12 +124,10 @@ fn load_runtime_state(app_dir: &std::path::Path) -> anyhow::Result<RuntimeState>
     })
 }
 
-pub fn open_models_folder() -> Result<(), String> {
-    let app_dir = crate::settings::Settings::dir().map_err(|e| e.to_string())?;
-    let models_dir = crate::models::models_dir(&app_dir);
-    std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
+pub fn open_models_folder(models_dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(models_dir).map_err(|e| e.to_string())?;
     std::process::Command::new("open")
-        .arg(&models_dir)
+        .arg(models_dir)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -189,9 +187,7 @@ pub fn request_model_switch(
 
 pub struct SchedulerConfig {
     pub app_handle: tauri::AppHandle,
-    pub app_bundle_id: String,
-    pub app_process_id: i32,
-    pub app_name_hint: String,
+    pub app_config: crate::path_resolver::AppConfig,
     pub initial_memory_size: usize,
     pub window_tracker: crate::context::AppWindowTracker,
     pub invalidation_rx: Receiver<crate::context::InvalidationReason>,
@@ -477,9 +473,9 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
 
                 let frame_rx = config.display_manager.get_or_start_capture(
                     0,
-                    &[&config.app_bundle_id],
-                    &[config.app_process_id],
-                    &[&config.app_name_hint],
+                    &[&config.app_config.bundle_id],
+                    &[config.app_config.process_id],
+                    &[&config.app_config.name_hint],
                 );
                 let mut pending_force_scan = false;
                 let mut latest_frame: Option<crate::capture::CaptureFrame> = None;

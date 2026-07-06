@@ -160,7 +160,8 @@ impl SidecarManager {
             }
         });
 
-        let llama_path = crate::path_resolver::resolve_llama_server_path()?;
+        let path_resolver = crate::path_resolver::PathResolver::new(true, None);
+        let llama_path = path_resolver.resolve_binary("llama-server", None)?;
         // CARGO_MANIFEST_DIR is reliable since the CLI runs in dev/test-suite environments
         let binaries_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
 

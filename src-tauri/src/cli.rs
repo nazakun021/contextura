@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::models::{ModelManifest, ModelStatus};
 use crate::ocr::OcrEngine;
 use crate::path_resolver::{
-    find_available_local_port, resolve_binary_path,
+    find_available_local_port, PathResolver,
 };
 use crate::settings::Settings;
 use crate::translation::TranslationClient;
@@ -160,7 +160,8 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     }
 
     let sidecar_port = find_available_local_port()?;
-    let vision_helper_path = resolve_binary_path("vision-helper")?;
+    let path_resolver = PathResolver::new(true, None);
+    let vision_helper_path = path_resolver.resolve_binary("vision-helper", None)?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
     translation_client.start_sidecar_headless(&active_model.path, &active_model.entry.id, active_model.entry.strategy.as_deref())?;
@@ -213,7 +214,8 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     }
 
     let sidecar_port = find_available_local_port()?;
-    let vision_helper_path = resolve_binary_path("vision-helper")?;
+    let path_resolver = PathResolver::new(true, None);
+    let vision_helper_path = path_resolver.resolve_binary("vision-helper", None)?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
     let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
     translation_client.start_sidecar_headless(&active_model.path, &active_model.entry.id, active_model.entry.strategy.as_deref())?;
