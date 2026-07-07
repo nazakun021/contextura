@@ -246,7 +246,7 @@ impl OcrEngine {
             .filter(|res| {
                 !res.is_furigana
                     && res.confidence >= MIN_CONFIDENCE
-                    && Self::contains_cjk(&res.text)
+                    && Self::is_japanese(&res.text)
             })
             .collect::<Vec<_>>();
 
@@ -270,10 +270,22 @@ impl OcrEngine {
         deduped_results
     }
 
-    fn contains_cjk(text: &str) -> bool {
-        text.chars().any(|c| {
-            matches!(c, '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}' | '\u{4E00}'..='\u{9FFF}')
-        })
+    fn is_likely_misread_dash(text: &str) -> bool {
+        if !text.contains('ー') {
+            return false;
+        }
+        let stripped_of_mark: String = text.chars().filter(|&c| c != 'ー').collect();
+        let has_digits_or_ascii = stripped_of_mark.chars().any(|c| c.is_alphanumeric() && c.is_ascii());
+        let has_real_japanese = text.chars().any(|c| {
+            matches!(c, '\u{3040}'..='\u{309F}' | '\u{4E00}'..='\u{9FFF}')
+        });
+        has_digits_or_ascii && !has_real_japanese
+    }
+
+    const MIN_KANA_COUNT: usize = 2;
+
+    fn is_japanese(text: &str) -> bool {
+        false
     }
 
     fn calculate_iou(a: &Rect, b: &Rect) -> f32 {
@@ -389,6 +401,18 @@ mod tests {
     #[test]
     fn process_vision_results_should_filter_non_cjk_text() {
         let results = vec![result("ChatGPT", 0.9, 0.10, 0.10, 0.30, 0.10)];
+
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+
+        assert!(processed.is_empty());
+    }
+
+    #[test]
+    fn process_vision_results_should_filter_likely_misread_dash() {
+        let results = vec![
+            result("0:00/0:17ー", 0.9, 0.10, 0.10, 0.30, 0.10),
+            result("▶ 0:00/0:17ー", 0.9, 0.10, 0.10, 0.30, 0.10),
+        ];
 
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
 
