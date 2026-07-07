@@ -1,0 +1,13 @@
+{
+  "description": "Code with mixed English syntax and Japanese comments",
+  "ocr_must_contain": ["合計値"],
+  "ocr_must_not_contain": ["func", "sum", "return"],
+  "ocr_boxes": [
+    { "text": "合計値", "x": 156.0, "y": 242.0, "width": 407.0, "height": 49.0 }
+  ],
+  "ocr_boxes_must_not_exist": [
+    { "text": "func", "x": 96.0, "y": 144.0, "width": 604.0, "height": 50.0 },
+    { "text": "let", "x": 150.0, "y": 340.0, "width": 258.0, "height": 54.0 },
+    { "text": "return", "x": 156.0, "y": 448.0, "width": 242.0, "height": 36.0 }
+  ]
+}

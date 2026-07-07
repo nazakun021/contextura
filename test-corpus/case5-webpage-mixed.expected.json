@@ -1,0 +1,11 @@
+{
+  "description": "Web page with mixed English navigation bar",
+  "ocr_must_contain": ["日本語のウェブページ"],
+  "ocr_must_not_contain": ["Home", "About", "Contact"],
+  "ocr_boxes": [
+    { "text": "日本語のウェブページ", "x": 207.0, "y": 214.0, "width": 588.0, "height": 63.0 }
+  ],
+  "ocr_boxes_must_not_exist": [
+    { "text": "Home", "x": 202.0, "y": 68.0, "width": 476.0, "height": 36.0 }
+  ]
+}

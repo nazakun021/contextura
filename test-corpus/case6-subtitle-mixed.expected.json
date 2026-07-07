@@ -1,0 +1,11 @@
+{
+  "description": "Subtitles with mixed media player chrome labels",
+  "ocr_must_contain": ["この映画は面白いですね。"],
+  "ocr_must_not_contain": ["Play", "Pause", "01:23"],
+  "ocr_boxes": [
+    { "text": "この映画は面白いですね。", "x": 685.0, "y": 1176.0, "width": 830.0, "height": 86.0 }
+  ],
+  "ocr_boxes_must_not_exist": [
+    { "text": "Play", "x": 96.0, "y": 1346.0, "width": 502.0, "height": 46.0 }
+  ]
+}

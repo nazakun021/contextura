@@ -1,0 +1,12 @@
+{
+  "description": "Game dialog with mixed English HUD labels",
+  "ocr_must_contain": ["勇者よ、魔王を倒せ！"],
+  "ocr_must_not_contain": ["HP", "Menu"],
+  "ocr_boxes": [
+    { "text": "勇者よ、魔王を倒せ！", "x": 159.0, "y": 328.0, "width": 627.0, "height": 87.0 }
+  ],
+  "ocr_boxes_must_not_exist": [
+    { "text": "HP", "x": 160.0, "y": 66.0, "width": 452.0, "height": 46.0 },
+    { "text": "Menu", "x": 1000.0, "y": 66.0, "width": 132.0, "height": 40.0 }
+  ]
+}

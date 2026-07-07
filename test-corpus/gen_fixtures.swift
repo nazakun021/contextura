@@ -54,6 +54,50 @@ let fixtures: [Fixture] = [
         ],
         description: "Web page — white background, Japanese article excerpt"
     ),
+    Fixture(
+        filename: "case4-game-mixed",
+        width: 640, height: 480,
+        background: NSColor(calibratedRed: 0.08, green: 0.06, blue: 0.12, alpha: 1.0),
+        textItems: [
+            TextItem(text: "勇者よ、魔王を倒せ！", x: 80, y: 180, fontSize: 32, foreground: .white),
+            TextItem(text: "HP: 120/120  LV. 5", x: 80, y: 40, fontSize: 24, foreground: .green),
+            TextItem(text: "Menu", x: 500, y: 40, fontSize: 24, foreground: .white),
+        ],
+        description: "Game dialog with mixed English HUD labels"
+    ),
+    Fixture(
+        filename: "case5-webpage-mixed",
+        width: 800, height: 600,
+        background: .white,
+        textItems: [
+            TextItem(text: "日本語のウェブページ", x: 100, y: 120, fontSize: 30, foreground: .black),
+            TextItem(text: "Home   About   Contact", x: 100, y: 40, fontSize: 20, foreground: .blue),
+        ],
+        description: "Web page with mixed English navigation bar"
+    ),
+    Fixture(
+        filename: "case6-subtitle-mixed",
+        width: 1280, height: 720,
+        background: NSColor(calibratedRed: 0.05, green: 0.05, blue: 0.1, alpha: 1.0),
+        textItems: [
+            TextItem(text: "この映画は面白いですね。", x: 340, y: 600, fontSize: 36, foreground: .white),
+            TextItem(text: "Play   Pause   01:23 / 02:45", x: 50, y: 680, fontSize: 18, foreground: .lightGray),
+        ],
+        description: "Subtitles with mixed media player chrome labels"
+    ),
+    Fixture(
+        filename: "case7-code-mixed",
+        width: 800, height: 600,
+        background: NSColor(calibratedRed: 0.05, green: 0.07, blue: 0.11, alpha: 1.0),
+        textItems: [
+            TextItem(text: "func calculateTotal() -> Int {", x: 50, y: 80, fontSize: 22, foreground: .orange),
+            TextItem(text: "    // 合計値を計算する", x: 50, y: 130, fontSize: 22, foreground: .gray),
+            TextItem(text: "    let sum = 0", x: 50, y: 180, fontSize: 22, foreground: .cyan),
+            TextItem(text: "    return sum", x: 50, y: 230, fontSize: 22, foreground: .orange),
+            TextItem(text: "}", x: 50, y: 280, fontSize: 22, foreground: .orange),
+        ],
+        description: "Code with mixed English syntax and Japanese comments"
+    ),
 ]
 
 func renderFixture(_ fixture: Fixture, outputDir: URL) throws {

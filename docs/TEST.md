@@ -1,6 +1,6 @@
 # TEST.md — Verification Guide
 
-**Last Updated:** 2026-04-26
+**Last Updated:** 2026-07-06
 
 Use this file when you want the shortest path to verify that Contextura still works after code or model changes.
 
@@ -13,7 +13,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-If you changed Rust runtime code, also run:
+If you changed Rust runtime code, also run clippy:
 
 ```bash
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
@@ -21,7 +21,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 
 ## Translation Sidecar Probe
 
-Start the bundled sidecar against the default TranslateGemma model:
+Start the bundled sidecar against the default TranslateGemma model (use `--no-jinja` to avoid chat template compilation errors with TranslateGemma):
 
 ```bash
 ./src-tauri/binaries/llama-server-aarch64-apple-darwin \
@@ -30,7 +30,7 @@ Start the bundled sidecar against the default TranslateGemma model:
   --n-gpu-layers 99 \
   --ctx-size 1024 \
   --host 127.0.0.1 \
-  --jinja
+  --no-jinja
 ```
 
 In another terminal, verify health:
@@ -47,16 +47,8 @@ curl -X POST http://127.0.0.1:8765/v1/chat/completions \
   -d '{
     "model": "local",
     "messages": [
-      {
-        "role": "system",
-        "content": "You are a Japanese-to-English translator. Respond with translation only."
-      },
-      {
-        "role": "user",
-        "content": [{ "type": "text", "text": "最近のAI技術の進歩により、リアルタイムでの多言語翻訳が可能になりました。" }],
-        "source_lang_code": "ja",
-        "target_lang_code": "en"
-      }
+      { "role": "system", "content": "You are a professional Japanese-to-English translator. Translate the user'\''s Japanese screen-text observations into natural, concise English. Output only the English translation of the observed text. Do not provide notes, explanations, or alternate translations." },
+      { "role": "user", "content": "映画はとても面白かった。" }
     ],
     "temperature": 0.1,
     "max_tokens": 64
@@ -71,16 +63,22 @@ lsof -ti:8765 | xargs kill -9 2>/dev/null
 
 ## OCR And CLI Probe
 
-After the app has captured at least one frame, verify the OCR/translation path on the saved PNG:
+After the app has captured at least one frame, verify the OCR/translation path on the saved PNG in the application's secure cache directory:
 
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml -- \
   --debug-cli \
-  --input /tmp/contextura-frame-latest.png \
+  --input ~/Library/Caches/com.contextura.app/contextura-frame-latest.png \
   --pretty
 ```
 
-The `--test-suite test-corpus` path is wired, but the current `test-corpus/*.png` assets are placeholders and should not be treated as a real regression suite yet.
+To run the golden-file regression test suite against the live fixtures:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- \
+  --debug-cli \
+  --test-suite test-corpus
+```
 
 ## Manual Smoke Pass
 
@@ -88,7 +86,7 @@ Use a real screen containing Japanese text and confirm:
 
 1. `cargo tauri dev` launches successfully.
 2. Screen Recording permission is granted.
-3. `/tmp/contextura-frame-latest.png` appears after a capture trigger.
+3. `contextura-frame-latest.png` appears in `~/Library/Caches/com.contextura.app/` after a capture trigger.
 4. `Cmd+Shift+R` forces an immediate scan on the cached frame.
 5. Overlay text appears aligned over the original CJK content.
 6. `Cmd+Shift+M` clears translation memory and visible overlay state.

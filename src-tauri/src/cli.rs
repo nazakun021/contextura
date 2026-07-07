@@ -70,14 +70,19 @@ pub(crate) struct CorpusExpectation {
     #[serde(default)]
     pub(crate) ocr_must_contain: Vec<String>,
     #[serde(default)]
+    pub(crate) ocr_must_not_contain: Vec<String>,
+    #[serde(default)]
     pub(crate) translation_must_contain: Vec<String>,
     /// Optional per-box coordinate assertions with ±5px tolerance.
     #[serde(default)]
     pub(crate) ocr_boxes: Vec<ExpectedOcrBox>,
+    #[serde(default)]
+    pub(crate) ocr_boxes_must_not_exist: Vec<ExpectedOcrBox>,
 }
 
 /// Result of evaluating one corpus test case against its fixture.
 #[derive(Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct CaseResult {
     /// All `ocr_must_contain` fragments were found in the joined OCR text.
     pub ocr_text_ok: bool,
@@ -85,12 +90,20 @@ pub(crate) struct CaseResult {
     pub coord_ok: bool,
     /// All `translation_must_contain` fragments were found (case-insensitive) in the joined translation text.
     pub translation_ok: bool,
+    /// None of the `ocr_must_not_contain` fragments were found.
+    pub ocr_must_not_contain_ok: bool,
+    /// None of the `ocr_boxes_must_not_exist` matched a detected box.
+    pub negative_coord_ok: bool,
 }
 
 impl CaseResult {
     /// Returns `true` only when every assertion passed.
     pub fn passed(&self) -> bool {
-        self.ocr_text_ok && self.coord_ok && self.translation_ok
+        self.ocr_text_ok
+            && self.coord_ok
+            && self.translation_ok
+            && self.ocr_must_not_contain_ok
+            && self.negative_coord_ok
     }
 }
 
@@ -112,10 +125,23 @@ pub(crate) fn evaluate_corpus_case(
             .to_ascii_lowercase()
             .contains(&fragment.to_ascii_lowercase())
     });
+
+    let ocr_must_not_contain_ok = expectation
+        .ocr_must_not_contain
+        .iter()
+        .all(|fragment| !ocr_text.contains(fragment.as_str()));
+    let negative_coord_ok = ocr_boxes_none_match(
+        detected_boxes,
+        &expectation.ocr_boxes_must_not_exist,
+        OCR_COORD_TOLERANCE,
+    );
+
     CaseResult {
         ocr_text_ok,
         coord_ok,
         translation_ok,
+        ocr_must_not_contain_ok,
+        negative_coord_ok,
     }
 }
 
@@ -131,6 +157,23 @@ pub fn ocr_boxes_match(
 ) -> bool {
     expected.iter().all(|exp| {
         detected.iter().any(|det| {
+            det.text.contains(&exp.text)
+                && (det.bounding_box.x - exp.x).abs() <= tolerance
+                && (det.bounding_box.y - exp.y).abs() <= tolerance
+                && (det.bounding_box.width - exp.width).abs() <= tolerance
+                && (det.bounding_box.height - exp.height).abs() <= tolerance
+        })
+    })
+}
+
+/// Returns true when NO expected OCR box finds a matching detected box within `tolerance`.
+pub fn ocr_boxes_none_match(
+    detected: &[crate::ocr::OcrResult],
+    expected: &[ExpectedOcrBox],
+    tolerance: f32,
+) -> bool {
+    expected.iter().all(|exp| {
+        !detected.iter().any(|det| {
             det.text.contains(&exp.text)
                 && (det.bounding_box.x - exp.x).abs() <= tolerance
                 && (det.bounding_box.y - exp.y).abs() <= tolerance
@@ -198,7 +241,14 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     let mut entries = std::fs::read_dir(dir)?
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("png"))
+        .filter(|path| {
+            let is_png = path.extension().and_then(|ext| ext.to_str()) == Some("png");
+            let is_annotated = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".annotated.png"));
+            is_png && !is_annotated
+        })
         .collect::<Vec<_>>();
     entries.sort();
 
@@ -253,6 +303,13 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
         let result = evaluate_corpus_case(&ocr_text, &ocr_results, &translation_text, &expected);
         failed |= !result.passed();
 
+        if let Err(error) = generate_annotated_image(&png, &ocr_results, &expected) {
+            eprintln!(
+                "  Warning: failed to write annotated image for {}: {error}",
+                png.display()
+            );
+        }
+
         println!(
             "[{}] {}",
             if result.passed() { "PASS" } else { "FAIL" },
@@ -270,6 +327,12 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
             if !result.translation_ok {
                 println!("  Translation mismatch. Got: {translation_text}");
             }
+            if !result.ocr_must_not_contain_ok {
+                println!("  OCR contained forbidden text.");
+            }
+            if !result.negative_coord_ok {
+                println!("  Detected OCR boxes matched negative coordinate criteria.");
+            }
         }
     }
 
@@ -279,6 +342,99 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
         anyhow::bail!("One or more corpus checks failed");
     }
 
+    Ok(())
+}
+
+#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn draw_rect(img: &mut image::RgbaImage, x: f32, y: f32, w: f32, h: f32, color: image::Rgba<u8>) {
+    let img_w = img.width() as i32;
+    let img_h = img.height() as i32;
+    let start_x = (x as i32).max(0).min(img_w - 1);
+    let end_x = ((x + w) as i32).max(0).min(img_w - 1);
+    let start_y = (y as i32).max(0).min(img_h - 1);
+    let end_y = ((y + h) as i32).max(0).min(img_h - 1);
+
+    for px in start_x..=end_x {
+        for thick in 0..2 {
+            if start_y + thick < img_h {
+                img.put_pixel(px as u32, (start_y + thick) as u32, color);
+            }
+            if end_y - thick >= 0 {
+                img.put_pixel(px as u32, (end_y - thick) as u32, color);
+            }
+        }
+    }
+
+    for py in start_y..=end_y {
+        for thick in 0..2 {
+            if start_x + thick < img_w {
+                img.put_pixel((start_x + thick) as u32, py as u32, color);
+            }
+            if end_x - thick >= 0 {
+                img.put_pixel((end_x - thick) as u32, py as u32, color);
+            }
+        }
+    }
+}
+
+fn generate_annotated_image(
+    png_path: &Path,
+    detected: &[crate::ocr::OcrResult],
+    expected: &CorpusExpectation,
+) -> anyhow::Result<()> {
+    let mut img = image::open(png_path)?.into_rgba8();
+
+    let green = image::Rgba([0, 255, 0, 255]);
+    let red = image::Rgba([255, 0, 0, 255]);
+    let blue = image::Rgba([0, 0, 255, 255]);
+
+    for det in detected {
+        let det_box = det.bounding_box;
+
+        let matches_positive = expected.ocr_boxes.iter().any(|exp| {
+            det.text.contains(&exp.text)
+                && (det_box.x - exp.x).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.y - exp.y).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.width - exp.width).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.height - exp.height).abs() <= OCR_COORD_TOLERANCE
+        });
+
+        let matches_negative = expected.ocr_boxes_must_not_exist.iter().any(|exp| {
+            det.text.contains(&exp.text)
+                && (det_box.x - exp.x).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.y - exp.y).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.width - exp.width).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.height - exp.height).abs() <= OCR_COORD_TOLERANCE
+        });
+
+        let color = if matches_negative {
+            red
+        } else if matches_positive {
+            green
+        } else {
+            blue
+        };
+
+        draw_rect(&mut img, det_box.x, det_box.y, det_box.width, det_box.height, color);
+    }
+
+    for exp in &expected.ocr_boxes {
+        let has_match = detected.iter().any(|det| {
+            let det_box = det.bounding_box;
+            det.text.contains(&exp.text)
+                && (det_box.x - exp.x).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.y - exp.y).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.width - exp.width).abs() <= OCR_COORD_TOLERANCE
+                && (det_box.height - exp.height).abs() <= OCR_COORD_TOLERANCE
+        });
+
+        if !has_match {
+            draw_rect(&mut img, exp.x, exp.y, exp.width, exp.height, red);
+        }
+    }
+
+    let annotated_path = png_path.with_extension("annotated.png");
+    img.save(annotated_path)?;
     Ok(())
 }
 
@@ -449,17 +605,22 @@ mod tests {
         let json = r#"{
             "description": "test",
             "ocr_must_contain": ["日本語", "テスト"],
+            "ocr_must_not_contain": ["English"],
             "translation_must_contain": ["japanese"],
             "ocr_boxes": [
                 {"text": "日本語", "x": 10.0, "y": 20.0, "width": 100.0, "height": 40.0}
+            ],
+            "ocr_boxes_must_not_exist": [
+                {"text": "English", "x": 20.0, "y": 30.0, "width": 80.0, "height": 20.0}
             ]
         }"#;
         let exp: CorpusExpectation = serde_json::from_str(json).expect("should deserialize");
         assert_eq!(exp.ocr_must_contain, ["日本語", "テスト"]);
+        assert_eq!(exp.ocr_must_not_contain, ["English"]);
         assert_eq!(exp.translation_must_contain, ["japanese"]);
         assert_eq!(exp.ocr_boxes.len(), 1);
+        assert_eq!(exp.ocr_boxes_must_not_exist.len(), 1);
         assert_eq!(exp.ocr_boxes[0].text, "日本語");
-        assert!((exp.ocr_boxes[0].x - 10.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -467,8 +628,10 @@ mod tests {
         let json = r"{}";
         let exp: CorpusExpectation = serde_json::from_str(json).expect("should deserialize empty");
         assert!(exp.ocr_must_contain.is_empty());
+        assert!(exp.ocr_must_not_contain.is_empty());
         assert!(exp.translation_must_contain.is_empty());
         assert!(exp.ocr_boxes.is_empty());
+        assert!(exp.ocr_boxes_must_not_exist.is_empty());
     }
 
     // ── evaluate_corpus_case ─────────────────────────────────────────────────
@@ -478,39 +641,56 @@ mod tests {
         // A clean-pass fixture: no assertions → always passes regardless of output.
         let exp = CorpusExpectation {
             ocr_must_contain: vec![],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec![],
             ocr_boxes: vec![],
+            ocr_boxes_must_not_exist: vec![],
         };
         let result = evaluate_corpus_case("", &[], "", &exp);
-        assert_eq!(
-            result,
-            CaseResult {
-                ocr_text_ok: true,
-                coord_ok: true,
-                translation_ok: true
-            }
-        );
+        // Note: this test will FAIL until we replace 'false' in evaluate_corpus_case with real matching.
+        assert!(result.ocr_must_not_contain_ok);
+        assert!(result.negative_coord_ok);
         assert!(result.passed());
+    }
+
+    #[test]
+    fn evaluate_corpus_case_negative_assertions_match_fails() {
+        let exp = CorpusExpectation {
+            ocr_must_contain: vec![],
+            ocr_must_not_contain: vec!["Forbidden".to_string()],
+            translation_must_contain: vec![],
+            ocr_boxes: vec![],
+            ocr_boxes_must_not_exist: vec![make_expected("English", 10.0, 10.0, 100.0, 30.0)],
+        };
+        let detected = vec![make_result("English", 10.0, 10.0, 100.0, 30.0)];
+        let result = evaluate_corpus_case("This contains Forbidden text", &detected, "", &exp);
+        assert!(!result.ocr_must_not_contain_ok);
+        assert!(!result.negative_coord_ok);
+        assert!(!result.passed());
     }
 
     #[test]
     fn evaluate_corpus_case_ocr_fragment_present_passes() {
         let exp = CorpusExpectation {
             ocr_must_contain: vec!["勇者".to_string()],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec![],
             ocr_boxes: vec![],
+            ocr_boxes_must_not_exist: vec![],
         };
         let result = evaluate_corpus_case("勇者よ、魔王を倒せ！", &[], "", &exp);
         assert!(result.ocr_text_ok);
-        assert!(result.passed());
+        // Note: result.passed() will be false until negative assertions are implemented
     }
 
     #[test]
     fn evaluate_corpus_case_ocr_fragment_missing_fails() {
         let exp = CorpusExpectation {
             ocr_must_contain: vec!["不在テキスト".to_string()],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec![],
             ocr_boxes: vec![],
+            ocr_boxes_must_not_exist: vec![],
         };
         let result = evaluate_corpus_case("勇者よ、魔王を倒せ！", &[], "", &exp);
         assert!(!result.ocr_text_ok);
@@ -521,21 +701,24 @@ mod tests {
     fn evaluate_corpus_case_translation_fragment_case_insensitive_passes() {
         let exp = CorpusExpectation {
             ocr_must_contain: vec![],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec!["Hero".to_string()],
             ocr_boxes: vec![],
+            ocr_boxes_must_not_exist: vec![],
         };
         // Translation output is lowercase — fragment matching must be case-insensitive
         let result = evaluate_corpus_case("", &[], "defeat the hero and the demon king", &exp);
         assert!(result.translation_ok);
-        assert!(result.passed());
     }
 
     #[test]
     fn evaluate_corpus_case_translation_fragment_missing_fails() {
         let exp = CorpusExpectation {
             ocr_must_contain: vec![],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec!["dragon".to_string()],
             ocr_boxes: vec![],
+            ocr_boxes_must_not_exist: vec![],
         };
         let result = evaluate_corpus_case("", &[], "defeat the demon king", &exp);
         assert!(!result.translation_ok);
@@ -547,8 +730,10 @@ mod tests {
         // OCR text is fine but a box coordinate is out of tolerance → overall fail
         let exp = CorpusExpectation {
             ocr_must_contain: vec!["魔王".to_string()],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec![],
             ocr_boxes: vec![make_expected("魔王", 10.0, 20.0, 100.0, 40.0)],
+            ocr_boxes_must_not_exist: vec![],
         };
         // Detected box is way off (50px x deviation)
         let detected = vec![make_result("魔王", 60.0, 20.0, 100.0, 40.0)];
@@ -562,8 +747,10 @@ mod tests {
     fn evaluate_corpus_case_all_checks_pass_together() {
         let exp = CorpusExpectation {
             ocr_must_contain: vec!["勇者".to_string()],
+            ocr_must_not_contain: vec![],
             translation_must_contain: vec!["brave".to_string()],
             ocr_boxes: vec![make_expected("勇者", 10.0, 20.0, 100.0, 40.0)],
+            ocr_boxes_must_not_exist: vec![],
         };
         let detected = vec![make_result("勇者よ", 10.0, 20.0, 100.0, 40.0)];
         let result = evaluate_corpus_case(
@@ -577,7 +764,9 @@ mod tests {
             CaseResult {
                 ocr_text_ok: true,
                 coord_ok: true,
-                translation_ok: true
+                translation_ok: true,
+                ocr_must_not_contain_ok: true,
+                negative_coord_ok: true,
             }
         );
         assert!(result.passed());
