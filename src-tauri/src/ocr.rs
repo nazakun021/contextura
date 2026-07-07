@@ -472,4 +472,85 @@ mod tests {
         assert_close(processed[0].bounding_box.width, 10.0);
         assert_close(processed[0].bounding_box.height, 30.0);
     }
+
+    #[test]
+    fn is_japanese_accepts_pure_katakana() {
+        let results = vec![result("コンピューター", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_accepts_katakana_with_kanji() {
+        let results = vec![result("アニメ化", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_accepts_hiragana_with_kanji() {
+        let results = vec![result("日本語のテキスト", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_accepts_mixed_japanese_english() {
+        let results = vec![result("生成AIとは何か", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_rejects_kanji_only() {
+        let results = vec![result("漢字", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_single_kana_with_kanji() {
+        // e.g. 2 kanji + 1 kana = 3 characters total, but only 1 is kana ('の')
+        let results = vec![result("日本語の", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_accepts_pure_hiragana_two_chars() {
+        let results = vec![result("はい", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_rejects_pure_hiragana_one_char() {
+        let results = vec![result("は", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_pure_english() {
+        let results = vec![result("ChatGPT", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_timestamp_with_stray_mark() {
+        let results = vec![
+            result("0:00/0:17ー", 0.9, 0.10, 0.10, 0.30, 0.10),
+            result("▶ 0:00/0:17ー", 0.9, 0.10, 0.10, 0.30, 0.10),
+        ];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_chinese_kanji_block() {
+        let results = vec![result("你好世界", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
 }
