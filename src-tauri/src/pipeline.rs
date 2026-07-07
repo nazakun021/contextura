@@ -338,7 +338,7 @@ mod tests {
 
         // 1. Create a mock vision-helper executable script
         let mock_vision_path = temp_dir.join("mock-vision-helper");
-        let script_content = "#!/bin/sh\necho '[{\"text\": \"日本語\", \"confidence\": 1.0, \"x\": 0.1, \"y\": 0.1, \"width\": 0.5, \"height\": 0.2, \"text_angle\": 0.0}]'\n";
+        let script_content = "#!/bin/sh\necho '[{\"text\": \"日本語のは\", \"confidence\": 1.0, \"x\": 0.1, \"y\": 0.1, \"width\": 0.5, \"height\": 0.2, \"text_angle\": 0.0}]'\n";
         std::fs::write(&mock_vision_path, script_content).unwrap();
 
         // chmod +x on Mac
@@ -395,7 +395,7 @@ mod tests {
         assert!(result.payload.is_some());
         let payload = result.payload.unwrap();
         assert_eq!(payload.boxes.len(), 1);
-        assert_eq!(payload.boxes[0].original, "日本語");
+        assert_eq!(payload.boxes[0].original, "日本語のは");
         assert_eq!(payload.boxes[0].translated, "English text");
 
         // Clean up mock vision script

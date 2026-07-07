@@ -285,7 +285,32 @@ impl OcrEngine {
     const MIN_KANA_COUNT: usize = 2;
 
     fn is_japanese(text: &str) -> bool {
-        false
+        if Self::is_likely_misread_dash(text) {
+            return false;
+        }
+
+        let mut hiragana_count = 0;
+        let mut katakana_count = 0;
+        let mut kanji_count = 0;
+
+        for c in text.chars() {
+            match c {
+                '\u{3040}'..='\u{309F}' => hiragana_count += 1,
+                '\u{30A0}'..='\u{30FF}' => katakana_count += 1,
+                '\u{4E00}'..='\u{9FFF}' => kanji_count += 1,
+                _ => {}
+            }
+        }
+
+        let kana_count = hiragana_count + katakana_count;
+
+        // Rule 1: Pure katakana exception (kana count matches katakana count, greater than 0, no kanji)
+        if kana_count == katakana_count && katakana_count > 0 && kanji_count == 0 {
+            return true;
+        }
+
+        // Rule 2: Kana-presence gate
+        kana_count >= Self::MIN_KANA_COUNT
     }
 
     fn calculate_iou(a: &Rect, b: &Rect) -> f32 {
@@ -379,7 +404,7 @@ mod tests {
 
     #[test]
     fn process_vision_results_should_convert_coordinates_to_logical_space() {
-        let results = vec![result("日本語", 0.9, 0.25, 0.10, 0.50, 0.20)];
+        let results = vec![result("日本語のは", 0.9, 0.25, 0.10, 0.50, 0.20)];
 
         let processed = engine(false).process_vision_results(results, 200.0, 100.0, 2.0);
 
@@ -391,7 +416,7 @@ mod tests {
 
     #[test]
     fn process_vision_results_should_keep_mixed_language_text_when_it_contains_cjk() {
-        let results = vec![result("生成AI (ChatGPT)", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let results = vec![result("生成AI（ChatGPT）とは", 0.9, 0.10, 0.10, 0.30, 0.10)];
 
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
 
@@ -421,48 +446,72 @@ mod tests {
 
     #[test]
     fn process_vision_results_should_mark_small_overlapping_text_as_furigana() {
+        // Original coordinates:
+        // parent: x: 0.10, y: 0.10, width: 0.30, height: 0.20
+        // candidate: x: 0.10, y: 0.12, width: 0.30, height: 0.05
+        // Under bottom-left coordinate conversion:
+        // parent y_conv = (1.0 - 0.10 - 0.20) * 100.0 / 1.0 = 70.0
+        // parent height_conv = 0.20 * 100.0 / 1.0 = 20.0
+        // candidate y_conv = (1.0 - 0.12 - 0.05) * 100.0 / 1.0 = 83.0
+        // candidate height_conv = 0.05 * 100.0 / 1.0 = 5.0
+        // Let's check candidate height < parent height * 0.40: 5.0 < 20.0 * 0.40 (8.0), which is true.
+        // Wait, does candidate overlaps parent horizontally by 70%?
+        // Both have x=0.10, width=0.30, so yes, they overlap 100%.
+        // Wait, why did it fail? Ah, candidate.bounding_box.height is 5.0, parent is 20.0.
+        // Is it because `Self::is_japanese` was rejected?
+        // No, both "漢字の" (2 kana: 'の') and "かんじの" (5 kana: 'か','ん','じ','の') are Japanese!
+        // Wait, let's check: "かんじの" is 'か' (hiragana), 'ん' (hiragana), 'じ' (hiragana), 'の' (hiragana). That's 4 kana.
+        // But what about "漢字の"? It is '漢' (kanji), '字' (kanji), 'の' (hiragana). That is exactly 1 kana!
+        // Ah! "漢字の" only has 1 kana, so it is REJECTED by `is_japanese` because `MIN_KANA_COUNT = 2`!
+        // That's why it was filtered out! Both parent and candidate must pass `is_japanese` first,
+        // or else they don't even reach furigana suppression!
         let results = vec![
-            result("漢字", 0.9, 0.10, 0.10, 0.30, 0.20),
-            result("かんじ", 0.9, 0.10, 0.12, 0.30, 0.05),
+            result("漢字のだよ", 0.9, 0.10, 0.10, 0.30, 0.20),
+            result("かんじのだよ", 0.9, 0.10, 0.12, 0.30, 0.05),
         ];
 
         let processed = engine(true).process_vision_results(results, 100.0, 100.0, 1.0);
 
         assert_eq!(processed.len(), 1);
-        assert_eq!(processed[0].text, "漢字");
+        assert_eq!(processed[0].text, "漢字のだよ");
     }
 
     #[test]
     fn process_vision_results_should_merge_overlapping_boxes_and_keep_higher_confidence_text() {
         let results = vec![
-            result("日本", 0.6, 0.10, 0.10, 0.20, 0.10),
-            result("日本", 0.9, 0.10, 0.10, 0.20, 0.10),
+            result("日本のだ", 0.6, 0.10, 0.10, 0.20, 0.10),
+            result("日本のだ", 0.9, 0.10, 0.10, 0.20, 0.10),
         ];
 
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
 
         assert_eq!(processed.len(), 1);
-        assert_eq!(processed[0].text, "日本");
+        assert_eq!(processed[0].text, "日本のだ");
         assert_close(processed[0].confidence, 0.9);
     }
 
     #[test]
     fn process_vision_results_should_keep_distinct_overlapping_text() {
+        // Must use distinct texts that each have at least 2 kana to pass is_japanese.
+        // E.g. "日本のだ" (2 kana: 'の', 'だ') and "日本語のだ" (3 kana: 'の', 'だ', 'の' is not there, wait, 'の','だ' are 2 kana).
+        // Let's use: "日本の" (2 kana: 'の', 'の' -- wait, 'の' is 1 kana, 'の' is 1 kana, so "日本の" is 1 kana 'の').
+        // Ah! "日本の" has only 1 kana ('の')! That's why it was rejected by is_japanese (kana_count = 1)!
+        // Let's use "日本のだ" (2 kana: 'の', 'だ') and "日本語のだ" (3 kana: 'の', 'だ', 'の' wait, 'ご'/'の'/'だ').
         let results = vec![
-            result("日本", 0.9, 0.10, 0.10, 0.30, 0.12),
-            result("日本語", 0.8, 0.12, 0.11, 0.31, 0.12),
+            result("日本のだ", 0.9, 0.10, 0.10, 0.30, 0.12),
+            result("日本語のだ", 0.8, 0.12, 0.11, 0.31, 0.12),
         ];
 
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
 
         assert_eq!(processed.len(), 2);
-        assert_eq!(processed[0].text, "日本");
-        assert_eq!(processed[1].text, "日本語");
+        assert_eq!(processed[0].text, "日本のだ");
+        assert_eq!(processed[1].text, "日本語のだ");
     }
 
     #[test]
     fn process_vision_results_should_keep_vertical_box_geometry() {
-        let mut vertical = result("縦書き", 0.9, 0.20, 0.10, 0.10, 0.30);
+        let mut vertical = result("縦書きの", 0.9, 0.20, 0.10, 0.10, 0.30);
         vertical.text_angle = std::f32::consts::PI / 2.0;
         vertical.is_vertical = true;
 
