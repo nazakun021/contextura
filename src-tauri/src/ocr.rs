@@ -244,9 +244,7 @@ impl OcrEngine {
         let mut filtered_results = results
             .into_iter()
             .filter(|res| {
-                !res.is_furigana
-                    && res.confidence >= MIN_CONFIDENCE
-                    && Self::is_japanese(&res.text)
+                !res.is_furigana && res.confidence >= MIN_CONFIDENCE && Self::is_japanese(&res.text)
             })
             .collect::<Vec<_>>();
 
@@ -275,10 +273,12 @@ impl OcrEngine {
             return false;
         }
         let stripped_of_mark: String = text.chars().filter(|&c| c != 'ー').collect();
-        let has_digits_or_ascii = stripped_of_mark.chars().any(|c| c.is_alphanumeric() && c.is_ascii());
-        let has_real_japanese = text.chars().any(|c| {
-            matches!(c, '\u{3040}'..='\u{309F}' | '\u{4E00}'..='\u{9FFF}')
-        });
+        let has_digits_or_ascii = stripped_of_mark
+            .chars()
+            .any(|c| c.is_alphanumeric() && c.is_ascii());
+        let has_real_japanese = text
+            .chars()
+            .any(|c| matches!(c, '\u{3040}'..='\u{309F}' | '\u{4E00}'..='\u{9FFF}'));
         has_digits_or_ascii && !has_real_japanese
     }
 
@@ -309,7 +309,10 @@ impl OcrEngine {
         let kana_count = hiragana_count + katakana_count;
 
         // Rule 1: Pure katakana exception (kana count matches katakana count, at least MIN_KANA_COUNT, no kanji)
-        if kana_count == katakana_count && katakana_count >= Self::MIN_KANA_COUNT && kanji_count == 0 {
+        if kana_count == katakana_count
+            && katakana_count >= Self::MIN_KANA_COUNT
+            && kanji_count == 0
+        {
             return true;
         }
 

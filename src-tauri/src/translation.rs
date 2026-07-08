@@ -637,11 +637,19 @@ mod tests {
 
     #[test]
     fn parse_numbered_translation_line_rejects_malformed() {
-        assert_eq!(TranslationClient::parse_numbered_translation_line("hello"), None);
-        assert_eq!(TranslationClient::parse_numbered_translation_line(""), None);
-        assert_eq!(TranslationClient::parse_numbered_translation_line("1234"), None);
         assert_eq!(
-            TranslationClient::parse_numbered_translation_line("9999999999999999999999999999: hello"),
+            TranslationClient::parse_numbered_translation_line("hello"),
+            None
+        );
+        assert_eq!(TranslationClient::parse_numbered_translation_line(""), None);
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line("1234"),
+            None
+        );
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line(
+                "9999999999999999999999999999: hello"
+            ),
             None
         );
     }

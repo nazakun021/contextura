@@ -101,7 +101,10 @@ mod tests {
         assert!(!temp_dir.join("contextura-frame-latest.png").exists());
 
         // Verify that unrelated file was NOT deleted
-        assert!(unrelated_path.exists(), "Expected unrelated.txt to be preserved");
+        assert!(
+            unrelated_path.exists(),
+            "Expected unrelated.txt to be preserved"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

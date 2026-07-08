@@ -345,7 +345,11 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn draw_rect(img: &mut image::RgbaImage, x: f32, y: f32, w: f32, h: f32, color: image::Rgba<u8>) {
     let img_w = img.width() as i32;
     let img_h = img.height() as i32;
@@ -415,7 +419,14 @@ fn generate_annotated_image(
             blue
         };
 
-        draw_rect(&mut img, det_box.x, det_box.y, det_box.width, det_box.height, color);
+        draw_rect(
+            &mut img,
+            det_box.x,
+            det_box.y,
+            det_box.width,
+            det_box.height,
+            color,
+        );
     }
 
     for exp in &expected.ocr_boxes {

@@ -464,7 +464,7 @@ mod tests {
 
         assert!(result.payload.is_some());
         let payload = result.payload.unwrap();
-        
+
         // Assert only the Japanese text got through and was translated
         assert_eq!(payload.boxes.len(), 1);
         assert_eq!(payload.boxes[0].original, "日本語のは");
@@ -547,9 +547,18 @@ echo '[
 
         // Assert only the 3 Japanese lines are present, no English bullet points!
         assert_eq!(payload.boxes.len(), 3);
-        assert_eq!(payload.boxes[0].original, "すべての人間は、生まれながらにして自由であり、かつ、尊厳と");
-        assert_eq!(payload.boxes[1].original, "権利とについて平等である。人間は、理性と良心とを授けられて");
-        assert_eq!(payload.boxes[2].original, "おり、互いに同胞の精神をもって行動しなければならない。");
+        assert_eq!(
+            payload.boxes[0].original,
+            "すべての人間は、生まれながらにして自由であり、かつ、尊厳と"
+        );
+        assert_eq!(
+            payload.boxes[1].original,
+            "権利とについて平等である。人間は、理性と良心とを授けられて"
+        );
+        assert_eq!(
+            payload.boxes[2].original,
+            "おり、互いに同胞の精神をもって行動しなければならない。"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
