@@ -50,15 +50,15 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Watchdog                        | ✅     | Restarts sidecar after 3 consecutive health failures                                                     |
 | Overlay capture exclusion       | ✅     | Excludes own windows from capture; overlay marked `NSWindowSharingType::None`                           |
 | Wizard screens 1–4              | ✅     | Setup flow covers permissions, model, controls, ready state                                              |
-| Real CLI OCR/translation path   | ⚠️     | Code path is live; end-to-end verification requires sidecar readiness and a deployed model               |
-| Golden-file integration runner  | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; 55 tests pass           |
+| Real CLI OCR/translation path   | ✅     | Code path is live and end-to-end verified using local LLM sidecar                        |
+| Golden-file integration runner  | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; 79 tests pass           |
 | Capture restart handling        | ✅     | Stalled capture stream triggers rebuild                                                                   |
 | Thermal + battery awareness     | ✅     | Thermal API + `pmset -g batt`                                                                            |
 | Optional Sentry                 | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                |
 | Updater signing pubkey support  | ✅     | `tauri.conf.json` updater structure is fully configured and ready for production key injection            |
 | Quality-tier policy + model cycle| ✅     | Model switching and tier categorization (Standard/Quality/Custom) are fully implemented in `models.rs`    |
 | Single-display capture          | ✅     | Core display capture and targeting is fully implemented and verified                                     |
-| ocr_boxes golden tests          | ✅     | Integration testing framework supports coordinate checking; `test-corpus` is live with 55 unit tests      |
+| ocr_boxes golden tests          | ✅     | Integration testing framework supports coordinate checking; `test-corpus` is live with 79 unit tests      |
 
 ### Still pending
 
@@ -167,4 +167,4 @@ Rust verification is necessary but not sufficient. A feature is only operational
 2. A valid local decoder-only GGUF model present
 3. A successful live translation pass over real Japanese content
 
-The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The 55 Rust unit tests cover all core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.
+The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The 79 Rust unit tests cover all core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.

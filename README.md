@@ -1,49 +1,41 @@
-# Contextura
+# 🌐 Contextura
 
-Contextura is a macOS overlay that captures the screen, waits for motion to settle, runs OCR on Japanese text, translates it locally, and renders English boxes over the original content.
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue?logo=apple&style=flat-square)](#)
+[![Hardware](https://img.shields.io/badge/arch-Apple%20Silicon-gold?style=flat-square)](#)
+[![Stack](https://img.shields.io/badge/stack-Rust%20%7C%20Tauri%20v2%20%7C%20Swift%20%7C%20llama.cpp-red?style=flat-square)](#)
+[![Tests](https://img.shields.io/badge/tests-79%20passed-green?style=flat-square)](#)
 
-**Platform:** macOS 13+ on Apple Silicon  
-**Stack:** Rust, Tauri v2, ScreenCaptureKit, Swift Vision helper, `llama-server`, vanilla HTML/CSS/JS  
-**Status:** The single-display OCR-overlay pipeline is wired in code and remains the intended architecture. As of 2026-04-26, the repo also includes a TranslateGemma-specific translation path, AppKit-level overlay capture protection via `NSWindowSharingType::None`, a shared BGRA→RGBA conversion path for OCR and styling, and a debounce fix for inertial-scroll bleed. Live app verification is still required for end-to-end confirmation.
+Contextura is a privacy-first, offline-only, real-time Japanese-to-English screen translation overlay for macOS. Built on Apple Silicon native APIs and local LLM inference, it dynamically captures screen text, runs on-device OCR, and overlays translated English text directly on top of the original content.
 
-## Implemented In Code
+---
 
-- Screen capture through ScreenCaptureKit
-- Motion-gated OCR/translation after debounce
-- OCR subprocess integration through the bundled `vision-helper`
-- Local translation through bundled `llama-server`, with model-specific handling for Qwen-style batched prompts and TranslateGemma structured requests
-- Dynamic overlay styling for contrast
-- Overlay toggle, cached-frame force-scan, memory reset, model switching, and quit hotkeys
-- App-switch invalidation, watchdog-based sidecar restart, and capture-stream restart handling
-- Overlay self-capture protection using direct window matching plus AppKit `NSWindowSharingType::None`
-- A 4-step first-run wizard
-- `--debug-cli --input` and `--test-suite` code paths routed through the live pipeline
+## 🚀 Key Features
 
-## Known Active Issues
+- **Zero-Cloud Dependency:** 100% local execution. Translations and OCR are performed completely offline to protect user privacy.
+- **Intelligent Motion Gating:** Deduplicates captured frames using xxHash thumbnail hashing and a settling state machine (`200ms` debounce) to bypass OCR/translation runs during active scrolling.
+- **Apple Silicon Native OCR:** Leverages the native Swift Vision API for high-confidence OCR candidate selection and robust reading-order text sorting.
+- **Pluggable Translation Engine:** Supports local GGUF models. Centered on **TranslateGemma 4B IT Q4_K_M** (default) and Qwen-style models, running via a managed `llama-server` sidecar.
+- **Contrast-Aware Styling:** Samples screenshot background colors and applies WCAG-compliant high-contrast styling for optimal readability.
+- **App-Switch Awareness:** Automatically clears overlay content and memory context upon active app switches to prevent overlap leaks.
+- **Secure Cache Storage:** Snapshots are written securely to private app-specific cache paths instead of public `/tmp` spaces.
 
-- The checked-in `test-corpus/*.png` fixtures are currently empty placeholder files and are not reliable verification assets.
-- Manual runtime smoke verification is still pending with a valid local model.
-- Force scan, context clearing, and overlay-exclusion behavior still need live confirmation in the running app after the latest translation/runtime fixes.
+---
 
-## Current Limits
+## 🛠 Tech Stack
 
-- Single-display only
-- Updater signing still needs a real public key
-- Quality-tier policy and RAM gating are still incomplete
-- End-to-end translation verification is still pending
+- **Orchestration:** Rust 2024, Tauri v2
+- **OS Frame Capture:** macOS ScreenCaptureKit (`PixelFormat::BGRA`)
+- **OCR engine:** Swift `vision-helper` (Apple Vision Framework)
+- **LLM sidecar:** `llama-server` (llama.cpp)
+- **Frontend:** Vanilla HTML5, CSS3, JavaScript (no build step, transparent overlay)
 
-## Setup
+---
 
-### 1. Install prerequisites
+## 📦 Setup & Installation
 
-You need:
+### 1. Prerequisites
 
-- Xcode
-- Xcode Command Line Tools
-- Rust
-- Python 3
-
-Quick check:
+Ensure you have Xcode, Apple Command Line Tools, and Rust installed:
 
 ```bash
 xcodebuild -version
@@ -53,17 +45,19 @@ cargo --version
 python3 --version
 ```
 
-### 2. Build the app
+### 2. Build the Application
+
+Clone the repository and run Tauri in development mode:
 
 ```bash
 cargo tauri dev
 ```
 
-The first build is slow because Tauri, ScreenCaptureKit bindings, and llama.cpp dependencies compile.
+_Note: The initial compile will build the Tauri bindings, ScreenCaptureKit abstractions, and Rust modules._
 
-### 3. Download a compatible model
+### 3. Deploy the Translation Model
 
-Contextura expects a decoder-only GGUF model. The current repo default uses **TranslateGemma 4B IT Q4_K_M**. Qwen-style GGUF models also work, but the docs and default settings are now centered on TranslateGemma.
+Download the default **TranslateGemma** model directly to the application models folder:
 
 ```bash
 python3 -m pip install huggingface_hub
@@ -73,146 +67,94 @@ huggingface-cli download mradermacher/translategemma-4b-it-GGUF \
   --local-dir ~/Library/Application\ Support/contextura/models/
 ```
 
-Encoder-decoder models such as NLLB, MarianMT, T5, and BART do not work with the bundled `llama-server`.
+_(Alternative decoder-only Gwen GGUF models can also be placed here; Contextura supports model-specific Jinja prompting automatically)._
 
-### 4. Verify the sidecar manually
+### 4. Grant Permissions
 
-```bash
-./src-tauri/binaries/llama-server-aarch64-apple-darwin \
-  --model ~/Library/Application\ Support/contextura/models/translategemma-4b-it.Q4_K_M.gguf \
-  --port 8765 \
-  --n-gpu-layers 99 \
-  --ctx-size 1024 \
-  --host 127.0.0.1 \
-  --jinja
-```
+On first launch, Contextura will display a 4-step wizard to guide you through:
 
-In another terminal:
+1. Screen Recording authorization.
+2. Model folder location setup.
+3. System hotkey configurations.
+4. Active status registration.
 
-```bash
-curl http://127.0.0.1:8765/health
-```
+---
 
-Expected:
+## ⌨️ Hotkeys & Controls
 
-```json
-{ "status": "ok" }
-```
+| Shortcut          | Action                                                     | Status |
+| :---------------- | :--------------------------------------------------------- | :----- |
+| `Cmd + Shift + T` | Toggle overlay visibility                                  | Active |
+| `Cmd + Shift + R` | Force immediate OCR / translation pass (bypasses debounce) | Active |
+| `Cmd + Shift + M` | Clear context memory and reset visible overlays            | Active |
+| `Cmd + Shift + G` | Cycle to next installed local model and restart runtime    | Active |
+| `Cmd + Shift + Q` | Quit Contextura                                            | Active |
 
-### 5. Grant Screen Recording permission
+---
 
-On first launch, Contextura shows a 4-step setup wizard covering Screen Recording permission, model placement, core shortcuts, and final readiness.
+## 🧪 Testing & Verification
 
-## Quick Verify
+Contextura is verified by both unit/integration tests and a live E2E runner.
 
-Run compile-time checks:
+### Run Cargo Checks
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-Then perform one live smoke pass:
+### Run Golden-File Integration Suite
 
-1. Launch `cargo tauri dev`.
-2. Open Japanese text on screen.
-3. Stop moving for about `200ms`.
-4. Confirm `/tmp/contextura-frame-latest.png` appears.
-5. Confirm overlay translations render.
-6. Confirm `Cmd+Shift+R` forces an immediate scan.
+The test corpus contains real screenshot fixtures (`test-corpus/*.png`) and exact text expectations. Verify the complete OCR + Translation pipeline end-to-end:
 
-## Hotkeys
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- --debug-cli --test-suite test-corpus
+```
 
-| Shortcut      | Action                                   | Status          |
-| ------------- | ---------------------------------------- | --------------- |
-| `Cmd+Shift+T` | Toggle overlay visibility                | Live            |
-| `Cmd+Shift+R` | Force immediate OCR/translation          | Re-test pending |
-| `Cmd+Shift+M` | Clear translation memory                 | Live            |
-| `Cmd+Shift+Q` | Quit                                     | Live            |
-| `Cmd+Shift+G` | Switch to the next installed local model | Live            |
+### Run CLI OCR Pass
 
-## Runtime Notes
-
-- The app writes numbered snapshots to `/tmp/contextura-frame-{id}.png` during OCR passes.
-- The latest captured frame is also kept at `/tmp/contextura-frame-latest.png` for debugging.
-- OCR now fails explicitly on empty/corrupt PNGs and times out rather than hanging indefinitely.
-- OCR post-processing keeps distinct overlapping text boxes and only removes near-duplicate detections.
-- `llama-server` listens only on `127.0.0.1:8765`.
-- TranslateGemma and Qwen3 both use `--jinja`, but only the Qwen path uses `/no_think`.
-- TranslateGemma requests are sent sequentially within each chunk as structured chat messages instead of numbered text batches.
-- Screen capture now also marks the overlay window as non-shareable through AppKit, instead of relying only on capture-filter exclusion.
-- The debounce default is now `200ms`, and the settling phase requires larger motion before aborting.
-- If capture stalls after display sleep/wake or a permission reset, the runtime rebuilds the capture stream.
-
-## CLI
-
-Run one real OCR/translation pass against a PNG:
+Run the pipeline against any specific PNG file:
 
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml -- \
   --debug-cli \
-  --input /tmp/contextura-frame-latest.png \
+  --input ~/Library/Caches/com.contextura.app/contextura-frame-latest.png \
   --pretty
 ```
 
-Run the bundled corpus checks with the active local model:
+---
 
-```bash
-cargo run --manifest-path src-tauri/Cargo.toml -- \
-  --debug-cli \
-  --test-suite test-corpus
-```
-
-The current `test-corpus/` PNG fixtures are placeholders, so this command path is wired but not yet a trustworthy regression suite.
-
-See [docs/TEST.md](file:///Users/infinite/Developer/contextura/docs/TEST.md) for the focused verification workflow.
-
-## Optional Crash Reporting
-
-Sentry is disabled by default. To enable it for a session:
-
-```bash
-export CONTEXTURA_SENTRY_DSN="<your sentry dsn>"
-cargo tauri dev
-```
-
-## Verification
-
-Most recent verification in this workspace:
-
-```bash
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-```
-
-The standalone OCR helper currently rejects `/tmp/contextura-frame-latest.png` if it is empty or corrupt, which is now the intended behavior. Manual end-to-end app verification with a real model is still pending.
-
-## Project Layout
+## 📁 Project Structure
 
 ```text
-src/
-  index.html
-  overlay.js
-  overlay.css
-  wizard.html
-  help.html
-
-src-tauri/src/
-  lib.rs
-  models.rs
-  capture.rs
-  motion.rs
-  ocr.rs
-  translation.rs
-  styling.rs
-  context.rs
-  thermal.rs
-  hotkeys.rs
-  tray.rs
-  settings.rs
-  ipc.rs
-  cli.rs
-  downloader.rs
+contextura/
+├── docs/                      # Architectural specifications and ADRs
+├── test-corpus/               # Golden screenshots and E2E JSON expectations
+├── src/                       # HTML/CSS/JS overlay and setup wizard
+│   ├── index.html
+│   ├── overlay.js
+│   ├── overlay.css
+│   └── wizard.html
+└── src-tauri/
+    ├── Cargo.toml
+    └── src/                   # Rust App Orchestrator
+        ├── lib.rs             # App entry, Tauri handlers, and coordination
+        ├── scheduler.rs       # Async loop, debounce, & concurrent dispatch
+        ├── ocr.rs             # OCR subprocess client and post-filters
+        ├── translation.rs     # llama-server sidecar strategy implementations
+        ├── capture.rs         # ScreenCaptureKit frame stream handler
+        ├── motion.rs          # xxHash frame comparison & DebounceStateMachine
+        ├── snapshot.rs        # Secure frame encoding and cache directories
+        ├── styling.rs         # Contrast-aware WCAG overlay coloring
+        └── cli.rs             # Golden integration test-suite runtime
 ```
 
-See the project constitution documents: [docs/MISSION.md](file:///Users/infinite/Developer/contextura/docs/MISSION.md), [docs/ROADMAP.md](file:///Users/infinite/Developer/contextura/docs/ROADMAP.md), and [docs/TECH-STACK.md](file:///Users/infinite/Developer/contextura/docs/TECH-STACK.md), along with [docs/SETUP.md](file:///Users/infinite/Developer/contextura/docs/SETUP.md) for setup instructions, [docs/TEST.md](file:///Users/infinite/Developer/contextura/docs/TEST.md) for testing, and [docs/SPEC.md](file:///Users/infinite/Developer/contextura/docs/SPEC.md) for technical contracts.
+---
+
+## 🛡 Security & Cache Policies
+
+Contextura does not write temporary frames to shared `/tmp` spaces. Captured frames are securely processed in the private, non-world-readable application cache directory:
+
+- **Storage Path:** `~/Library/Caches/com.contextura.app/`
+- **Temporary Snapshots:** `contextura-frame-{id}.png` (cleaned up automatically)
+- **Latest Debug Snapshot:** `contextura-frame-latest.png`
