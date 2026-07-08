@@ -1,15 +1,10 @@
-# 🌐 Contextura
-
-[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue?logo=apple&style=flat-square)](#)
-[![Hardware](https://img.shields.io/badge/arch-Apple%20Silicon-gold?style=flat-square)](#)
-[![Stack](https://img.shields.io/badge/stack-Rust%20%7C%20Tauri%20v2%20%7C%20Swift%20%7C%20llama.cpp-red?style=flat-square)](#)
-[![Tests](https://img.shields.io/badge/tests-79%20passed-green?style=flat-square)](#)
+# Contextura
 
 Contextura is a privacy-first, offline-only, real-time Japanese-to-English screen translation overlay for macOS. Built on Apple Silicon native APIs and local LLM inference, it dynamically captures screen text, runs on-device OCR, and overlays translated English text directly on top of the original content.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 - **Zero-Cloud Dependency:** 100% local execution. Translations and OCR are performed completely offline to protect user privacy.
 - **Intelligent Motion Gating:** Deduplicates captured frames using xxHash thumbnail hashing and a settling state machine (`200ms` debounce) to bypass OCR/translation runs during active scrolling.
@@ -21,7 +16,7 @@ Contextura is a privacy-first, offline-only, real-time Japanese-to-English scree
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
 - **Orchestration:** Rust 2024, Tauri v2
 - **OS Frame Capture:** macOS ScreenCaptureKit (`PixelFormat::BGRA`)
@@ -31,7 +26,7 @@ Contextura is a privacy-first, offline-only, real-time Japanese-to-English scree
 
 ---
 
-## 📦 Setup & Installation
+## Setup & Installation
 
 ### 1. Prerequisites
 
@@ -80,7 +75,7 @@ On first launch, Contextura will display a 4-step wizard to guide you through:
 
 ---
 
-## ⌨️ Hotkeys & Controls
+## Hotkeys & Controls
 
 | Shortcut          | Action                                                     | Status |
 | :---------------- | :--------------------------------------------------------- | :----- |
@@ -92,7 +87,7 @@ On first launch, Contextura will display a 4-step wizard to guide you through:
 
 ---
 
-## 🧪 Testing & Verification
+## Testing & Verification
 
 Contextura is verified by both unit/integration tests and a live E2E runner.
 
@@ -124,7 +119,7 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 contextura/
@@ -151,7 +146,7 @@ contextura/
 
 ---
 
-## 🛡 Security & Cache Policies
+## Security & Cache Policies
 
 Contextura does not write temporary frames to shared `/tmp` spaces. Captured frames are securely processed in the private, non-world-readable application cache directory:
 
