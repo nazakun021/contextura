@@ -296,7 +296,11 @@ impl OcrEngine {
         for c in text.chars() {
             match c {
                 '\u{3040}'..='\u{309F}' => hiragana_count += 1,
-                '\u{30A0}'..='\u{30FF}' => katakana_count += 1,
+                '\u{30A0}'..='\u{30FF}' => {
+                    if c != '\u{30FB}' {
+                        katakana_count += 1;
+                    }
+                }
                 '\u{4E00}'..='\u{9FFF}' => kanji_count += 1,
                 _ => {}
             }
@@ -304,8 +308,8 @@ impl OcrEngine {
 
         let kana_count = hiragana_count + katakana_count;
 
-        // Rule 1: Pure katakana exception (kana count matches katakana count, greater than 0, no kanji)
-        if kana_count == katakana_count && katakana_count > 0 && kanji_count == 0 {
+        // Rule 1: Pure katakana exception (kana count matches katakana count, at least MIN_KANA_COUNT, no kanji)
+        if kana_count == katakana_count && katakana_count >= Self::MIN_KANA_COUNT && kanji_count == 0 {
             return true;
         }
 
@@ -601,5 +605,50 @@ mod tests {
         let results = vec![result("你好世界", 0.9, 0.10, 0.10, 0.30, 0.10)];
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
         assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_omniglot_english_bullet_points() {
+        let cases = vec![
+            "• Type of writing system: semanto-phonetic",
+            "• Writing direction: right to left in vertical columns running from top to bottom, or left to right in hortizontal lines.",
+            "• Script family: (Chinese) Oracle bone script, Seal script, Clerical script, Regular script, Kanji, Hiragana, Katakana",
+            "• Used to write: Ainu, Amami, Japanese, Kikai, Miyakoan, Okinawan, Okinoerabu, Tarama, Tokunoshima, Yaeyama, Yonaguni, Yoron",
+        ];
+
+        for text in cases {
+            let results = vec![result(text, 0.9, 0.10, 0.10, 0.30, 0.10)];
+            let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+            assert_eq!(processed.len(), 0, "Expected string to be rejected: {text}");
+        }
+    }
+
+    #[test]
+    fn is_japanese_rejects_katakana_punctuation_only() {
+        let results = vec![result("・", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_single_katakana_char() {
+        let results = vec![result("ア", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 0);
+    }
+
+    #[test]
+    fn is_japanese_rejects_bullet_points_with_english() {
+        let cases = vec![
+            "・ Type of writing system: semanto-phonetic",
+            "・ Used to write: Ainu, Amami, Japanese, Kikai",
+            "• Script family： （Chinese） Oracle bone script",
+        ];
+
+        for text in cases {
+            let results = vec![result(text, 0.9, 0.10, 0.10, 0.30, 0.10)];
+            let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+            assert_eq!(processed.len(), 0, "Expected string to be rejected: {text}");
+        }
     }
 }

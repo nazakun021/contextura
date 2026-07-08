@@ -78,8 +78,16 @@ mod tests {
 
     #[test]
     fn test_save_and_cleanup_frames() {
-        let temp_dir = std::env::temp_dir().join("contextura_test_cache");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("contextura_test_cache_{unique}"));
         let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create an unrelated file that should NOT be cleaned up
+        let unrelated_path = temp_dir.join("unrelated.txt");
+        std::fs::write(&unrelated_path, "important data").unwrap();
 
         let rgba_data = vec![0; 400]; // 10x10 RGBA image
         let path = save_frame_as_png(&rgba_data, 10, 10, 9999, &temp_dir).unwrap();
@@ -91,6 +99,9 @@ mod tests {
         cleanup_stale_temp_frames(&temp_dir);
         assert!(!path.exists());
         assert!(!temp_dir.join("contextura-frame-latest.png").exists());
+
+        // Verify that unrelated file was NOT deleted
+        assert!(unrelated_path.exists(), "Expected unrelated.txt to be preserved");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

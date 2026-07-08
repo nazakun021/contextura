@@ -47,6 +47,10 @@ impl DebounceStateMachine {
     }
 
     pub fn update(&mut self, motion_ratio: f32) -> DebounceEvent {
+        self.update_with_instant(motion_ratio, Instant::now())
+    }
+
+    pub fn update_with_instant(&mut self, motion_ratio: f32, now: Instant) -> DebounceEvent {
         let has_motion = motion_ratio > self.motion_threshold;
 
         match self.state {
@@ -56,7 +60,7 @@ impl DebounceStateMachine {
                     DebounceEvent::MotionDetected
                 } else {
                     // Stopped scrolling, begin settling
-                    self.state = DebounceState::Settling(Instant::now());
+                    self.state = DebounceState::Settling(now);
                     DebounceEvent::None
                 }
             }
@@ -68,7 +72,7 @@ impl DebounceStateMachine {
                     // False stop, back to scrolling
                     self.state = DebounceState::Scrolling;
                     DebounceEvent::MotionDetected
-                } else if start_time.elapsed() >= self.debounce_duration {
+                } else if now.saturating_duration_since(start_time) >= self.debounce_duration {
                     // Fully settled
                     self.state = DebounceState::Idle;
                     DebounceEvent::Triggered
@@ -263,33 +267,76 @@ mod tests {
     #[test]
     fn debounce_should_trigger_when_motion_stops() {
         let mut state_machine = DebounceStateMachine::new(100, 0.05); // 100ms
+        let start = Instant::now();
 
         // Start scrolling
-        assert_eq!(state_machine.update(0.1), DebounceEvent::MotionDetected);
+        assert_eq!(
+            state_machine.update_with_instant(0.1, start),
+            DebounceEvent::MotionDetected
+        );
         assert_eq!(state_machine.state, DebounceState::Scrolling);
 
         // Stop scrolling
-        assert_eq!(state_machine.update(0.0), DebounceEvent::None);
+        assert_eq!(
+            state_machine.update_with_instant(0.0, start),
+            DebounceEvent::None
+        );
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
 
-        std::thread::sleep(Duration::from_millis(150));
+        // Advance mock clock by 50ms (not yet settled)
+        assert_eq!(
+            state_machine.update_with_instant(0.0, start + Duration::from_millis(50)),
+            DebounceEvent::None
+        );
 
-        // Should trigger after duration
-        assert_eq!(state_machine.update(0.0), DebounceEvent::Triggered);
+        // Advance mock clock by 150ms (settled)
+        assert_eq!(
+            state_machine.update_with_instant(0.0, start + Duration::from_millis(150)),
+            DebounceEvent::Triggered
+        );
         assert_eq!(state_machine.state, DebounceState::Idle);
     }
 
     #[test]
     fn debounce_should_ignore_small_settling_motion() {
         let mut state_machine = DebounceStateMachine::new(50, 0.05);
+        let start = Instant::now();
 
-        assert_eq!(state_machine.update(0.1), DebounceEvent::MotionDetected);
-        assert_eq!(state_machine.update(0.0), DebounceEvent::None);
+        assert_eq!(
+            state_machine.update_with_instant(0.1, start),
+            DebounceEvent::MotionDetected
+        );
+        assert_eq!(
+            state_machine.update_with_instant(0.0, start),
+            DebounceEvent::None
+        );
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
 
         // 0.06 is > 0.05 (base) but < 0.075 (settling_threshold)
-        assert_eq!(state_machine.update(0.06), DebounceEvent::None);
+        assert_eq!(
+            state_machine.update_with_instant(0.06, start + Duration::from_millis(10)),
+            DebounceEvent::None
+        );
         assert!(matches!(state_machine.state, DebounceState::Settling(_)));
+    }
+
+    #[test]
+    fn debounce_should_reset_timer_if_motion_resumes_mid_settling() {
+        let mut state_machine = DebounceStateMachine::new(100, 0.05);
+        let start = Instant::now();
+
+        // 1. Start scrolling
+        state_machine.update_with_instant(0.1, start);
+        // 2. Stop scrolling (enters settling)
+        state_machine.update_with_instant(0.0, start);
+        assert!(matches!(state_machine.state, DebounceState::Settling(_)));
+
+        // 3. New motion resumes mid-settling (> 1.5 * threshold = 0.075)
+        assert_eq!(
+            state_machine.update_with_instant(0.08, start + Duration::from_millis(50)),
+            DebounceEvent::MotionDetected
+        );
+        assert_eq!(state_machine.state, DebounceState::Scrolling);
     }
 
     #[test]

@@ -164,9 +164,10 @@ pub fn run() {
             let display_manager = capture::DisplayManager::new();
             let (pipeline_tx, pipeline_rx) = crossbeam_channel::bounded(16);
             app.manage(pipeline_tx.clone());
-            *pipeline_tx_setup
+            let mut setup_guard = pipeline_tx_setup
                 .lock()
-                .expect("pipeline exit handle lock poisoned") = Some(pipeline_tx.clone());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *setup_guard = Some(pipeline_tx.clone());
 
             // Register Hotkeys
             hotkeys::register_shortcuts(app, window_tracker.clone(), pipeline_tx.clone())
@@ -250,13 +251,15 @@ pub fn run() {
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-            ) && let Some(tx) = pipeline_tx_for_exit
-                .lock()
-                .expect("pipeline exit handle lock poisoned")
-                .as_ref()
-                .cloned()
-            {
-                let _ = tx.try_send(PipelineCommand::Shutdown);
+            ) {
+                let tx_opt = pipeline_tx_for_exit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_ref()
+                    .cloned();
+                if let Some(tx) = tx_opt {
+                    let _ = tx.try_send(PipelineCommand::Shutdown);
+                }
             }
         });
 }

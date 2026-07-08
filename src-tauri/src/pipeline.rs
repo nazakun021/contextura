@@ -401,4 +401,156 @@ mod tests {
         // Clean up mock vision script
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_pipeline_filters_english_from_cjk_flow() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("contextura-test-filter-{unique}"));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Mock vision helper returns both a Japanese line and a pure English line
+        let mock_vision_path = temp_dir.join("mock-vision-helper");
+        let script_content = "#!/bin/sh\necho '[{\"text\": \"日本語のは\", \"confidence\": 1.0, \"x\": 0.1, \"y\": 0.1, \"width\": 0.5, \"height\": 0.2, \"text_angle\": 0.0}, {\"text\": \"Hello World\", \"confidence\": 1.0, \"x\": 0.1, \"y\": 0.4, \"width\": 0.5, \"height\": 0.2, \"text_angle\": 0.0}]'\n";
+        std::fs::write(&mock_vision_path, script_content).unwrap();
+
+        std::process::Command::new("chmod")
+            .args(["+x", mock_vision_path.to_str().unwrap()])
+            .status()
+            .unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            // Health check
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\": \"ok\"}";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+            // Chat completion - expect only 1 text to translate!
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\n  \"choices\": [\n    {\n      \"message\": {\n        \"content\": \"1: English translation\"\n      }\n    }\n  ]\n}";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let ocr = Arc::new(OcrEngine::new(false, mock_vision_path));
+        let client = Arc::new(AsyncMutex::new(TranslationClient::new(6, port)));
+        client.lock().await.set_strategy("qwen");
+
+        let processor = PipelineProcessor::new(10, 0, 50, 0.05, ocr, client);
+        let frame = CaptureFrame {
+            buffer: PixelBuffer {
+                data: vec![0u8; 10 * 10 * 4],
+                width: 10,
+                height: 10,
+            },
+            display_id: 0,
+            scale_factor: 1.0,
+        };
+
+        let (_invalidation_tx, invalidation_rx) = crossbeam_channel::bounded(2);
+        let (pipeline_tx, _pipeline_rx) = crossbeam_channel::bounded(2);
+
+        let result = processor
+            .process_frame(&temp_dir, &frame, 124, &invalidation_rx, &pipeline_tx)
+            .await;
+
+        assert!(result.payload.is_some());
+        let payload = result.payload.unwrap();
+        
+        // Assert only the Japanese text got through and was translated
+        assert_eq!(payload.boxes.len(), 1);
+        assert_eq!(payload.boxes[0].original, "日本語のは");
+        assert_eq!(payload.boxes[0].translated, "English translation");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_filters_omniglot_mixed_page_flow() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("contextura-test-omniglot-{unique}"));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Mock vision helper returns the mixed bullet points and Japanese text block
+        let mock_vision_path = temp_dir.join("mock-vision-helper");
+        let script_content = r#"#!/bin/sh
+echo '[
+  {"text": "• Type of writing system: semanto-phonetic", "confidence": 1.0, "x": 0.1, "y": 0.1, "width": 0.5, "height": 0.05, "text_angle": 0.0},
+  {"text": "• Writing direction: right to left in vertical columns...", "confidence": 1.0, "x": 0.1, "y": 0.2, "width": 0.5, "height": 0.05, "text_angle": 0.0},
+  {"text": "• Script family: (Chinese) Oracle bone script...", "confidence": 1.0, "x": 0.1, "y": 0.3, "width": 0.5, "height": 0.05, "text_angle": 0.0},
+  {"text": "すべての人間は、生まれながらにして自由であり、かつ、尊厳と", "confidence": 1.0, "x": 0.1, "y": 0.4, "width": 0.5, "height": 0.05, "text_angle": 0.0},
+  {"text": "権利とについて平等である。人間は、理性と良心とを授けられて", "confidence": 1.0, "x": 0.1, "y": 0.5, "width": 0.5, "height": 0.05, "text_angle": 0.0},
+  {"text": "おり、互いに同胞の精神をもって行動しなければならない。", "confidence": 1.0, "x": 0.1, "y": 0.6, "width": 0.5, "height": 0.05, "text_angle": 0.0}
+]'
+"#;
+        std::fs::write(&mock_vision_path, script_content).unwrap();
+
+        std::process::Command::new("chmod")
+            .args(["+x", mock_vision_path.to_str().unwrap()])
+            .status()
+            .unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            // Health check
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\": \"ok\"}";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+            // Chat completion - expect only 3 Japanese texts to translate!
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\n  \"choices\": [\n    {\n      \"message\": {\n        \"content\": \"1: Translation One\\n2: Translation Two\\n3: Translation Three\"\n      }\n    }\n  ]\n}";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let ocr = Arc::new(OcrEngine::new(false, mock_vision_path));
+        let client = Arc::new(AsyncMutex::new(TranslationClient::new(6, port)));
+        client.lock().await.set_strategy("qwen");
+
+        let processor = PipelineProcessor::new(10, 0, 50, 0.05, ocr, client);
+        let frame = CaptureFrame {
+            buffer: PixelBuffer {
+                data: vec![0u8; 10 * 10 * 4],
+                width: 10,
+                height: 10,
+            },
+            display_id: 0,
+            scale_factor: 1.0,
+        };
+
+        let (_invalidation_tx, invalidation_rx) = crossbeam_channel::bounded(2);
+        let (pipeline_tx, _pipeline_rx) = crossbeam_channel::bounded(2);
+
+        let result = processor
+            .process_frame(&temp_dir, &frame, 125, &invalidation_rx, &pipeline_tx)
+            .await;
+
+        assert!(result.payload.is_some());
+        let payload = result.payload.unwrap();
+
+        // Assert only the 3 Japanese lines are present, no English bullet points!
+        assert_eq!(payload.boxes.len(), 3);
+        assert_eq!(payload.boxes[0].original, "すべての人間は、生まれながらにして自由であり、かつ、尊厳と");
+        assert_eq!(payload.boxes[1].original, "権利とについて平等である。人間は、理性と良心とを授けられて");
+        assert_eq!(payload.boxes[2].original, "おり、互いに同胞の精神をもって行動しなければならない。");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

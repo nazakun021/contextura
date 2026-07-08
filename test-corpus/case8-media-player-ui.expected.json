@@ -1,0 +1,19 @@
+{
+  "description": "Media player UI with play button and timestamp confused with CJK (lone Katakana prolong mark lookalike)",
+  "ocr_must_not_contain": [
+    "0:00/0:17",
+    "▶",
+    "semanto-phonetic",
+    "Writing direction",
+    "Script family",
+    "Used to write"
+  ],
+  "ocr_boxes": [
+    { "text": "すべての人間は、生まれながらにして自由であり、かつ、尊厳と", "x": 37.0, "y": 1116.7, "width": 1167.5, "height": 57.3 },
+    { "text": "権利とについて平等である。人間は、理性と良心とを授けられて", "x": 34.2, "y": 1182.0, "width": 1176.0, "height": 57.2 },
+    { "text": "おり、互いに同胞の精神をもって行動しなければならない。", "x": 31.3, "y": 1247.8, "width": 1102.0, "height": 57.2 }
+  ],
+  "ocr_boxes_must_not_exist": [
+    { "text": "0:00/0:17ー", "x": 32.0, "y": 410.0, "width": 107.0, "height": 7.0 }
+  ]
+}

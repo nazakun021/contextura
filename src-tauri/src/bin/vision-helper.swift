@@ -127,13 +127,23 @@ struct VisionHelper {
     private static func selectBestCandidate(
         from candidates: [VNRecognizedText]
     ) -> VNRecognizedText? {
-        candidates
-            .map { candidate in
-                (candidate: candidate, score: candidateScore(candidate))
-            }
-            .filter { !normalize($0.candidate.string).isEmpty }
-            .max { lhs, rhs in lhs.score < rhs.score }
-            .map(\.candidate)
+        let scored = candidates
+            .map { ($0, normalize($0.string)) }
+            .filter { !$1.isEmpty }
+
+        guard let topByConfidence = scored.max(by: { $0.0.confidence < $1.0.confidence }) else {
+            return nil
+        }
+
+        // Only prefer a CJK candidate if it's within a small confidence margin
+        // of the top candidate — otherwise a low-confidence CJK misread can't
+        // outrank a clearly correct English (or other) reading.
+        let margin: Float = 0.15
+        let bestCJK = scored
+            .filter { containsCJK($1) && $0.confidence >= topByConfidence.0.confidence - margin }
+            .max { a, b in candidateScore(a.0) < candidateScore(b.0) }
+
+        return (bestCJK ?? scored.max { candidateScore($0.0) < candidateScore($1.0) })?.0
     }
 
     private static func candidateScore(_ candidate: VNRecognizedText) -> Float {
@@ -154,8 +164,26 @@ struct VisionHelper {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    private static func isLikelyMisreadDash(_ text: String) -> Bool {
+        // U+30FC is visually near-identical to a hyphen/dash and commonly
+        // misrecognized in place of one, especially adjacent to digits/punctuation
+        // (timestamps, progress bars, ranges).
+        guard text.unicodeScalars.contains(where: { $0.value == 0x30FC }) else { return false }
+        let strippedOfMark = text.unicodeScalars.filter { $0.value != 0x30FC }
+        let hasDigitsOrAscii = strippedOfMark.contains { 
+            CharacterSet.alphanumerics.contains($0) && $0.isASCII 
+        }
+        let hasRealJapanese = text.unicodeScalars.contains {
+            (0x3040...0x309F).contains($0.value) || (0x4E00...0x9FFF).contains($0.value)
+        }
+        return hasDigitsOrAscii && !hasRealJapanese
+    }
+
     private static func containsCJK(_ text: String) -> Bool {
-        text.unicodeScalars.contains { scalar in
+        if isLikelyMisreadDash(text) {
+            return false
+        }
+        return text.unicodeScalars.contains { scalar in
             switch scalar.value {
             case 0x3040...0x309F, 0x30A0...0x30FF, 0x4E00...0x9FFF:
                 return true
@@ -166,7 +194,10 @@ struct VisionHelper {
     }
 
     private static func containsKana(_ text: String) -> Bool {
-        text.unicodeScalars.contains { scalar in
+        if isLikelyMisreadDash(text) {
+            return false
+        }
+        return text.unicodeScalars.contains { scalar in
             switch scalar.value {
             case 0x3040...0x309F, 0x30A0...0x30FF:
                 return true

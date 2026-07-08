@@ -636,6 +636,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_numbered_translation_line_rejects_malformed() {
+        assert_eq!(TranslationClient::parse_numbered_translation_line("hello"), None);
+        assert_eq!(TranslationClient::parse_numbered_translation_line(""), None);
+        assert_eq!(TranslationClient::parse_numbered_translation_line("1234"), None);
+        assert_eq!(
+            TranslationClient::parse_numbered_translation_line("9999999999999999999999999999: hello"),
+            None
+        );
+    }
+
+    #[test]
     fn test_strategy_selection() {
         let mut client = TranslationClient::new(6, 8765);
 
@@ -644,5 +655,42 @@ mod tests {
 
         client.set_strategy("gemma");
         assert_eq!(client.strategy, super::TranslationStrategy::Gemma);
+    }
+
+    #[test]
+    fn test_translation_memory_eviction() {
+        let mut memory = super::TranslationMemory::new(3);
+        memory.push("1".to_string(), "one".to_string());
+        memory.push("2".to_string(), "two".to_string());
+        memory.push("3".to_string(), "three".to_string());
+
+        assert_eq!(memory.as_context_slice().len(), 3);
+        assert_eq!(memory.as_context_slice()[0].0, "1");
+
+        // Exceed capacity -> should evict the oldest ("1")
+        memory.push("4".to_string(), "four".to_string());
+        let slice = memory.as_context_slice();
+        assert_eq!(slice.len(), 3);
+        assert_eq!(slice[0].0, "2");
+        assert_eq!(slice[1].0, "3");
+        assert_eq!(slice[2].0, "4");
+    }
+
+    #[test]
+    fn test_translation_memory_zero_capacity() {
+        let mut memory = super::TranslationMemory::new(0);
+        memory.push("1".to_string(), "one".to_string());
+        assert!(memory.as_context_slice().is_empty());
+    }
+
+    #[test]
+    fn test_translation_memory_clear() {
+        let mut memory = super::TranslationMemory::new(5);
+        memory.push("1".to_string(), "one".to_string());
+        memory.push("2".to_string(), "two".to_string());
+        assert_eq!(memory.as_context_slice().len(), 2);
+
+        memory.clear();
+        assert!(memory.as_context_slice().is_empty());
     }
 }
