@@ -3,12 +3,12 @@
 use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::Mutex as AsyncMutex;
 use std::collections::VecDeque;
 use std::fmt::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::sleep;
 
 const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
@@ -427,10 +427,7 @@ impl TranslationStrategy {
         Ok(final_results)
     }
 
-    pub fn build_lfm_payload(
-        history: &[(String, String)],
-        input_text: &str,
-    ) -> Value {
+    pub fn build_lfm_payload(history: &[(String, String)], input_text: &str) -> Value {
         json!({
             "model": "local",
             "messages": Self::build_lfm_messages(history, input_text),
@@ -441,10 +438,7 @@ impl TranslationStrategy {
         })
     }
 
-    pub fn build_lfm_messages(
-        history: &[(String, String)],
-        input_text: &str,
-    ) -> Vec<Value> {
+    pub fn build_lfm_messages(history: &[(String, String)], input_text: &str) -> Vec<Value> {
         let mut messages = vec![json!({
             "role": "system",
             "content": "Translate to English."
@@ -600,7 +594,9 @@ impl TranslationClient {
         let strategy_name = strategy.unwrap_or_else(|| {
             if model_id.to_ascii_lowercase().contains("translategemma") {
                 "gemma"
-            } else if model_id.to_ascii_lowercase().contains("lfm") || model_id.to_ascii_lowercase().contains("350m") {
+            } else if model_id.to_ascii_lowercase().contains("lfm")
+                || model_id.to_ascii_lowercase().contains("350m")
+            {
                 "lfm"
             } else {
                 "qwen"
@@ -698,7 +694,10 @@ pub struct TranslationManager {
 
 impl TranslationManager {
     pub fn new(max_memory_size: usize, port: u16) -> Self {
-        let client = Arc::new(AsyncMutex::new(TranslationClient::new(max_memory_size, port)));
+        let client = Arc::new(AsyncMutex::new(TranslationClient::new(
+            max_memory_size,
+            port,
+        )));
         Self {
             client,
             watchdog_state: Arc::new(AsyncMutex::new(WatchdogState::default())),
@@ -706,12 +705,7 @@ impl TranslationManager {
         }
     }
 
-    pub async fn update_model_state(
-        &mut self,
-        path: &Path,
-        id: &str,
-        strategy: Option<String>,
-    ) {
+    pub async fn update_model_state(&mut self, path: &Path, id: &str, strategy: Option<String>) {
         let mut state = self.watchdog_state.lock().await;
         state.path = path.to_path_buf();
         state.id = id.to_string();
@@ -744,9 +738,7 @@ impl TranslationManager {
                 let mut guard = client.lock().await;
                 if guard.wait_for_runtime_ready().await.is_err() {
                     consecutive_failures += 1;
-                    log::warn!(
-                        "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
-                    );
+                    log::warn!("[Watchdog] Sidecar health check failed ({consecutive_failures}/3)");
                     if consecutive_failures >= 3 {
                         log::warn!("[Watchdog] Restarting unresponsive sidecar...");
                         let restart_res = guard.start_sidecar(
@@ -993,11 +985,13 @@ mod tests {
             assert!(state.path.as_os_str().is_empty());
         }
 
-        manager.update_model_state(
-            std::path::Path::new("/path/to/model.gguf"),
-            "model-123",
-            Some("lfm".to_string()),
-        ).await;
+        manager
+            .update_model_state(
+                std::path::Path::new("/path/to/model.gguf"),
+                "model-123",
+                Some("lfm".to_string()),
+            )
+            .await;
 
         {
             let state = manager.watchdog_state.lock().await;
@@ -1012,8 +1006,17 @@ mod tests {
 
     #[test]
     fn test_strategy_fallback_from_model_id() {
-        assert_eq!(super::TranslationClient::select_strategy_for_model("shisa-v2.1-llama3.2-3b-GGUF"), "qwen");
-        assert_eq!(super::TranslationClient::select_strategy_for_model("translategemma-4b-it.Q4_K_M"), "gemma");
-        assert_eq!(super::TranslationClient::select_strategy_for_model("LFM2-350M-ENJP-MT-Q8_0"), "lfm");
+        assert_eq!(
+            super::TranslationClient::select_strategy_for_model("shisa-v2.1-llama3.2-3b-GGUF"),
+            "qwen"
+        );
+        assert_eq!(
+            super::TranslationClient::select_strategy_for_model("translategemma-4b-it.Q4_K_M"),
+            "gemma"
+        );
+        assert_eq!(
+            super::TranslationClient::select_strategy_for_model("LFM2-350M-ENJP-MT-Q8_0"),
+            "lfm"
+        );
     }
 }

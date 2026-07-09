@@ -91,7 +91,9 @@ impl SidecarManager {
             let _ = child.kill();
         }
 
-        let strategy_name = strategy.unwrap_or_else(|| crate::translation::TranslationClient::select_strategy_for_model(model_id));
+        let strategy_name = strategy.unwrap_or_else(|| {
+            crate::translation::TranslationClient::select_strategy_for_model(model_id)
+        });
 
         let resource_dir = app
             .path()

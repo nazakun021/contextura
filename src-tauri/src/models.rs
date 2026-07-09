@@ -124,7 +124,9 @@ impl ModelManifest {
                 model.strategy = Some(
                     if model.id.to_ascii_lowercase().contains("translategemma") {
                         "gemma".to_string()
-                    } else if model.id.to_ascii_lowercase().contains("lfm") || model.id.to_ascii_lowercase().contains("350m") {
+                    } else if model.id.to_ascii_lowercase().contains("lfm")
+                        || model.id.to_ascii_lowercase().contains("350m")
+                    {
                         "lfm".to_string()
                     } else {
                         "qwen".to_string()

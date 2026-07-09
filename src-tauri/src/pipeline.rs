@@ -120,16 +120,15 @@ impl PipelineProcessor {
 
         // 2. Compute motion duplicate hash
         let rgba_data = &frame.buffer.data;
-        let thumbnail = self.motion_detector.downsample(
-            rgba_data,
-            frame.buffer.width,
-            frame.buffer.height,
-        );
+        let thumbnail =
+            self.motion_detector
+                .downsample(rgba_data, frame.buffer.width, frame.buffer.height);
         let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
-        if !is_forced && self.last_processed_hash == Some(frame_hash) && let Some(ref payload) = self.last_payload {
-            log::debug!(
-                "[Pipeline] Frame identical to last processed, reusing cached payload"
-            );
+        if !is_forced
+            && self.last_processed_hash == Some(frame_hash)
+            && let Some(ref payload) = self.last_payload
+        {
+            log::debug!("[Pipeline] Frame identical to last processed, reusing cached payload");
             let _ = app_handle.emit("translation-update", payload);
             return Some(payload.clone());
         }
@@ -650,7 +649,10 @@ echo '[
             .handle_frame(app_handle, &frame, false, &invalidation_rx, &pipeline_tx)
             .await;
         assert!(res2.is_some());
-        assert_eq!(res1.unwrap().boxes[0].translated, res2.unwrap().boxes[0].translated);
+        assert_eq!(
+            res1.unwrap().boxes[0].translated,
+            res2.unwrap().boxes[0].translated
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -676,7 +678,9 @@ echo '[
         let (invalidation_tx, invalidation_rx) = crossbeam_channel::bounded(2);
         let (pipeline_tx, _pipeline_rx) = crossbeam_channel::bounded(2);
 
-        invalidation_tx.send(crate::context::InvalidationReason::ManualReset).unwrap();
+        invalidation_tx
+            .send(crate::context::InvalidationReason::ManualReset)
+            .unwrap();
 
         let frame = CaptureFrame {
             buffer: PixelBuffer {

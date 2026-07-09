@@ -28,7 +28,12 @@ struct RuntimeState {
     active_model: crate::models::ModelStatus,
 }
 
-pub fn emit_runtime_notice<R: tauri::Runtime, S1: Into<String>, S2: Into<String>, S3: Into<String>>(
+pub fn emit_runtime_notice<
+    R: tauri::Runtime,
+    S1: Into<String>,
+    S2: Into<String>,
+    S3: Into<String>,
+>(
     app: &tauri::AppHandle<R>,
     title: S1,
     message: S2,
@@ -157,10 +162,8 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
         let rt = tokio::runtime::Runtime::new().expect("Tokio runtime should initialize");
         let sidecar_port = find_available_local_port().expect("localhost port should be available");
 
-        let mut translation_manager = crate::translation::TranslationManager::new(
-            config.initial_memory_size,
-            sidecar_port,
-        );
+        let mut translation_manager =
+            crate::translation::TranslationManager::new(config.initial_memory_size, sidecar_port);
 
         let client = Arc::clone(&translation_manager.client);
         let client_clone = Arc::clone(&client);

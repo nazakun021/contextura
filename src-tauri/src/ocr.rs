@@ -215,12 +215,7 @@ impl OcrEngine {
             .collect();
 
         #[allow(clippy::cast_precision_loss)]
-        Ok(self.process_vision_results(
-            results,
-            width as f32,
-            height as f32,
-            scale_factor,
-        ))
+        Ok(self.process_vision_results(results, width as f32, height as f32, scale_factor))
     }
 
     pub fn process_vision_results(
@@ -700,14 +695,7 @@ mod tests {
         let engine = OcrEngine::new(false, PathBuf::from("non-existent-vision-helper"));
         let rgba_data = vec![0; 400]; // 10x10 RGBA image
 
-        let res = engine.recognize(
-            &rgba_data,
-            10,
-            10,
-            1.0,
-            &temp_dir,
-            9999,
-        );
+        let res = engine.recognize(&rgba_data, 10, 10, 1.0, &temp_dir, 9999);
 
         // It should return an error because the helper binary does not exist
         assert!(res.is_err());
