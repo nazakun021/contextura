@@ -1,0 +1,15 @@
+{
+  "description": "Kanji-only UI signage and buttons with mixed characters and high confidence",
+  "ocr_must_contain": [
+    "設定",
+    "保存",
+    "終了",
+    "注意",
+    "駅"
+  ],
+  "translation_must_contain": [
+    "Sett",
+    "Station"
+  ],
+  "ocr_boxes": []
+}

@@ -272,7 +272,19 @@ impl OcrEngine {
         let mut filtered_results = results
             .into_iter()
             .filter(|res| {
-                !res.is_furigana && res.confidence >= MIN_CONFIDENCE && Self::is_japanese(&res.text)
+                if res.is_furigana {
+                    return false;
+                }
+                let counts = crate::script::count_script_chars(&res.text);
+                let is_single_kanji_only =
+                    counts.kanji == 1 && counts.hiragana == 0 && counts.katakana == 0;
+                let conf_floor = if is_single_kanji_only {
+                    0.75
+                } else {
+                    MIN_CONFIDENCE
+                };
+
+                res.confidence >= conf_floor && Self::is_japanese(&res.text)
             })
             .collect::<Vec<_>>();
 
@@ -310,42 +322,14 @@ impl OcrEngine {
         has_digits_or_ascii && !has_real_japanese
     }
 
-    const MIN_KANA_COUNT: usize = 2;
-
     fn is_japanese(text: &str) -> bool {
         if Self::is_likely_misread_dash(text) {
             return false;
         }
-
-        let mut hiragana_count = 0;
-        let mut katakana_count = 0;
-        let mut kanji_count = 0;
-
-        for c in text.chars() {
-            match c {
-                '\u{3040}'..='\u{309F}' => hiragana_count += 1,
-                '\u{30A0}'..='\u{30FF}' => {
-                    if c != '\u{30FB}' {
-                        katakana_count += 1;
-                    }
-                }
-                '\u{4E00}'..='\u{9FFF}' => kanji_count += 1,
-                _ => {}
-            }
-        }
-
-        let kana_count = hiragana_count + katakana_count;
-
-        // Rule 1: Pure katakana exception (kana count matches katakana count, at least MIN_KANA_COUNT, no kanji)
-        if kana_count == katakana_count
-            && katakana_count >= Self::MIN_KANA_COUNT
-            && kanji_count == 0
-        {
-            return true;
-        }
-
-        // Rule 2: Kana-presence gate
-        kana_count >= Self::MIN_KANA_COUNT
+        matches!(
+            crate::script::classify_script(text),
+            crate::script::ScriptVerdict::Accept
+        )
     }
 
     fn calculate_iou(a: &Rect, b: &Rect) -> f32 {
@@ -586,18 +570,50 @@ mod tests {
     }
 
     #[test]
-    fn is_japanese_rejects_kanji_only() {
+    fn is_japanese_accepts_kanji_only() {
         let results = vec![result("漢字", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_accepts_single_kana_with_kanji() {
+        // e.g. 2 kanji + 1 kana = 3 characters total, but only 1 is kana ('の')
+        let results = vec![result("日本語の", 0.9, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_accepts_kanji_only_common_signage() {
+        for text in &["出口", "注意", "設定", "保存", "終了"] {
+            let results = vec![result(text, 0.9, 0.10, 0.10, 0.30, 0.10)];
+            let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+            assert_eq!(processed.len(), 1, "Expected accept for: {text}");
+        }
+    }
+
+    #[test]
+    fn is_japanese_accepts_single_kanji_with_high_confidence() {
+        let results = vec![result("駅", 0.85, 0.10, 0.10, 0.30, 0.10)];
+        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+        assert_eq!(processed.len(), 1);
+    }
+
+    #[test]
+    fn is_japanese_rejects_single_kanji_low_confidence() {
+        let results = vec![result("駅", 0.60, 0.10, 0.10, 0.30, 0.10)];
         let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
         assert_eq!(processed.len(), 0);
     }
 
     #[test]
-    fn is_japanese_rejects_single_kana_with_kanji() {
-        // e.g. 2 kanji + 1 kana = 3 characters total, but only 1 is kana ('の')
-        let results = vec![result("日本語の", 0.9, 0.10, 0.10, 0.30, 0.10)];
-        let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
-        assert_eq!(processed.len(), 0);
+    fn is_japanese_rejects_simplified_chinese_only_chars() {
+        for text in &["们", "这", "说"] {
+            let results = vec![result(text, 0.9, 0.10, 0.10, 0.30, 0.10)];
+            let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
+            assert_eq!(processed.len(), 0, "Expected reject for simplified: {text}");
+        }
     }
 
     #[test]

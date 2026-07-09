@@ -239,17 +239,20 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     let mut entries = std::fs::read_dir(dir)?
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| {
-            let is_png = path.extension().and_then(|ext| ext.to_str()) == Some("png");
-            let is_annotated = path
+            let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".annotated.png"));
-            is_png && !is_annotated
+                .unwrap_or("");
+            let is_png = path.extension().and_then(|ext| ext.to_str()) == Some("png");
+            let is_annotated = name.ends_with(".annotated.png");
+            let is_temp = name.starts_with("contextura-frame-");
+            is_png && !is_annotated && !is_temp
         })
         .collect::<Vec<_>>();
     entries.sort();

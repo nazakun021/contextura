@@ -89,11 +89,11 @@ impl PipelineProcessor {
             match reason {
                 crate::context::InvalidationReason::AppSwitch { from, to } => {
                     log::info!("[Context] App switch: {from} -> {to} — clearing memory");
-                    self.client.lock().await.memory.clear();
+                    self.client.lock().await.clear_memory();
                     clear_context = true;
                 }
                 crate::context::InvalidationReason::ManualReset => {
-                    self.client.lock().await.memory.clear();
+                    self.client.lock().await.clear_memory();
                     manual_reset = true;
                 }
             }
@@ -273,10 +273,11 @@ impl PipelineProcessor {
             .zip(translations.iter())
             .zip(styling_colors.iter())
             .enumerate()
-            .map(
-                |(index, ((ocr, translation), (bg, fg_color)))| TranslationBox {
+            .map(|(index, ((ocr, translation), (bg, fg_color)))| {
+                let outcome = crate::guardrails::validate_translation(&ocr.text, translation);
+                TranslationBox {
                     id: format!("{frame_id}-{index}"),
-                    translated: translation.clone(),
+                    translated: outcome.cleaned_text,
                     original: ocr.text.clone(),
                     x: ocr.bounding_box.x,
                     y: ocr.bounding_box.y,
@@ -286,8 +287,9 @@ impl PipelineProcessor {
                     bg_color: bg.to_css_color(),
                     fg_color: fg_color.to_string(),
                     confidence: ocr.confidence,
-                },
-            )
+                    is_degraded: !outcome.accepted,
+                }
+            })
             .collect::<Vec<_>>();
 
         Ok(styled_boxes)
@@ -699,5 +701,54 @@ echo '[
 
         assert!(processor.last_processed_hash.is_none());
         assert!(processor.last_payload.is_none());
+    }
+
+    #[test]
+    fn test_translation_box_degraded_mapping() {
+        let ocr_result = crate::ocr::OcrResult {
+            text: "閉じる".to_string(),
+            bounding_box: crate::ocr::Rect::new(0.0, 0.0, 10.0, 10.0),
+            confidence: 0.9,
+            is_vertical: false,
+            text_angle: 0.0,
+            is_furigana: false,
+        };
+
+        // Valid translation
+        let outcome_valid = crate::guardrails::validate_translation(&ocr_result.text, "Close");
+        let box_valid = TranslationBox {
+            id: "box-1".to_string(),
+            translated: outcome_valid.cleaned_text,
+            original: ocr_result.text.clone(),
+            x: ocr_result.bounding_box.x,
+            y: ocr_result.bounding_box.y,
+            width: ocr_result.bounding_box.width,
+            height: ocr_result.bounding_box.height,
+            is_vertical: ocr_result.is_vertical,
+            bg_color: "#000000".to_string(),
+            fg_color: "#ffffff".to_string(),
+            confidence: ocr_result.confidence,
+            is_degraded: !outcome_valid.accepted,
+        };
+        assert!(!box_valid.is_degraded);
+
+        // Invalid translation (residual CJK)
+        let outcome_invalid =
+            crate::guardrails::validate_translation(&ocr_result.text, "Close (閉じる)");
+        let box_invalid = TranslationBox {
+            id: "box-2".to_string(),
+            translated: outcome_invalid.cleaned_text,
+            original: ocr_result.text.clone(),
+            x: ocr_result.bounding_box.x,
+            y: ocr_result.bounding_box.y,
+            width: ocr_result.bounding_box.width,
+            height: ocr_result.bounding_box.height,
+            is_vertical: ocr_result.is_vertical,
+            bg_color: "#000000".to_string(),
+            fg_color: "#ffffff".to_string(),
+            confidence: ocr_result.confidence,
+            is_degraded: !outcome_invalid.accepted,
+        };
+        assert!(box_invalid.is_degraded);
     }
 }

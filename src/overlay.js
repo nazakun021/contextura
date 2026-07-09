@@ -45,6 +45,9 @@ if (typeof document !== 'undefined') {
           if (box.is_vertical) {
             div.classList.add('vertical');
           }
+          if (box.is_degraded) {
+            div.classList.add('degraded');
+          }
 
           div.style.left = `${box.x}px`;
           div.style.top = `${resolved_box.adjustedY}px`;
@@ -56,7 +59,7 @@ if (typeof document !== 'undefined') {
           div.style.backgroundColor = box.bg_color;
           div.style.color = box.fg_color;
 
-          div.textContent = box.translated;
+          div.textContent = (box.is_degraded ? "⚠️ " : "") + (box.translated || "[Translation Degraded]");
           div.title = box.original; // Tooltip shows original
 
           container.appendChild(div);

@@ -21,6 +21,8 @@ pub struct TranslationBox {
     pub bg_color: String,
     pub fg_color: String,
     pub confidence: f32,
+    #[serde(default)]
+    pub is_degraded: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

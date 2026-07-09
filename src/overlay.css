@@ -183,3 +183,7 @@ html, body {
 .error-retry-btn:active {
   background: rgba(255, 255, 255, 0.5);
 }
+
+.translation-box.degraded {
+  border: 1.5px dashed #f97316 !important;
+}

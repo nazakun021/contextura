@@ -199,6 +199,11 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
             );
 
             loop {
+                let idle_sleep_duration = if thermal_monitor.on_battery {
+                    Duration::from_secs(5)
+                } else {
+                    Duration::from_secs(2)
+                };
                 let should_refresh_runtime = runtime_reload_requested || runtime_state.is_none();
 
                 if should_refresh_runtime {
@@ -209,12 +214,12 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             }) {
                                 sidecar_started = false;
                             }
-                            processor.update_settings(
-                                state.settings.debounce_ms,
-                                state.settings.motion_threshold,
-                                state.settings.pixel_diff_threshold,
-                                state.settings.edge_inset_percent,
-                            );
+                             processor.update_settings(
+                                 if thermal_monitor.on_battery { 1200 } else { state.settings.debounce_ms },
+                                 state.settings.motion_threshold,
+                                 state.settings.pixel_diff_threshold,
+                                 state.settings.edge_inset_percent,
+                             );
                             runtime_state = Some(state);
                             runtime_reload_requested = false;
                         }
@@ -325,7 +330,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                 }
                                 continue;
                             }
-                            sleep(Duration::from_secs(2)).await;
+                            sleep(idle_sleep_duration).await;
                             continue;
                         }
                     }
@@ -370,7 +375,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             }
                             continue;
                         }
-                        sleep(Duration::from_secs(2)).await;
+                        sleep(idle_sleep_duration).await;
                         continue;
                     }
                 }
@@ -516,6 +521,14 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                     if last_thermal_check.elapsed() > Duration::from_secs(30) {
                         thermal_monitor.update();
                         last_thermal_check = Instant::now();
+                        if let Some(state) = &runtime_state {
+                            processor.update_settings(
+                                if thermal_monitor.on_battery { 1200 } else { state.settings.debounce_ms },
+                                state.settings.motion_threshold,
+                                state.settings.pixel_diff_threshold,
+                                state.settings.edge_inset_percent,
+                            );
+                        }
                     }
                     if thermal_monitor.should_throttle() {
                         sleep(Duration::from_millis(500)).await;

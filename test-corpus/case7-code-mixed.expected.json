@@ -3,7 +3,7 @@
   "ocr_must_contain": ["合計値"],
   "ocr_must_not_contain": ["func", "sum", "return"],
   "ocr_boxes": [
-    { "text": "合計値", "x": 156.0, "y": 242.0, "width": 407.0, "height": 49.0 }
+    { "text": "合計値", "x": 153.3, "y": 240.0, "width": 413.3, "height": 53.3 }
   ],
   "ocr_boxes_must_not_exist": [
     { "text": "func", "x": 96.0, "y": 144.0, "width": 604.0, "height": 50.0 },

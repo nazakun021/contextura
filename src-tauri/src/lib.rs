@@ -9,9 +9,11 @@ mod sidecar;
 
 mod capture;
 mod context;
+mod guardrails;
 mod ipc;
 mod motion;
 mod ocr;
+mod script;
 mod styling;
 mod thermal;
 mod translation;

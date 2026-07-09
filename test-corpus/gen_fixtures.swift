@@ -98,6 +98,20 @@ let fixtures: [Fixture] = [
         ],
         description: "Code with mixed English syntax and Japanese comments"
     ),
+    Fixture(
+        filename: "case9-kanji-only-ui",
+        width: 640, height: 480,
+        background: NSColor(calibratedRed: 0.08, green: 0.06, blue: 0.12, alpha: 1.0),
+        textItems: [
+            TextItem(text: "設定", x: 80, y: 100, fontSize: 32, foreground: .white),
+            TextItem(text: "保存", x: 280, y: 100, fontSize: 32, foreground: .white),
+            TextItem(text: "終了", x: 480, y: 100, fontSize: 32, foreground: .white),
+            TextItem(text: "出口", x: 80, y: 240, fontSize: 32, foreground: .white),
+            TextItem(text: "注意", x: 280, y: 240, fontSize: 32, foreground: .white),
+            TextItem(text: "駅", x: 480, y: 240, fontSize: 32, foreground: .white),
+        ],
+        description: "Kanji-only UI signage and buttons with mixed characters and high confidence"
+    ),
 ]
 
 func renderFixture(_ fixture: Fixture, outputDir: URL) throws {

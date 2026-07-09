@@ -48,6 +48,61 @@ impl TranslationMemory {
     }
 }
 
+pub struct TranslationCache {
+    entries: std::collections::HashMap<String, String>,
+    order: std::collections::VecDeque<String>,
+    capacity: usize,
+}
+
+impl TranslationCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::with_capacity(capacity),
+            order: std::collections::VecDeque::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<String> {
+        if let Some(val) = self.entries.get(key) {
+            // Promote to MRU (end of order)
+            if let Some(pos) = self.order.iter().position(|x| x == key) {
+                self.order.remove(pos);
+            }
+            self.order.push_back(key.to_string());
+            Some(val.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn insert(&mut self, key: String, val: String) {
+        if self.capacity == 0 {
+            return;
+        }
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key.clone(), val);
+            if let Some(pos) = self.order.iter().position(|x| x == &key) {
+                self.order.remove(pos);
+            }
+            self.order.push_back(key);
+        } else {
+            if self.entries.len() >= self.capacity
+                && let Some(oldest) = self.order.pop_front()
+            {
+                self.entries.remove(&oldest);
+            }
+            self.entries.insert(key.clone(), val);
+            self.order.push_back(key);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranslationStrategy {
     Qwen,
@@ -88,11 +143,11 @@ impl TranslationStrategy {
             prompt.push('\n');
         }
 
-        prompt.push_str("Translate each numbered Japanese string to English.\n");
-        prompt.push_str("Output only translations, one per line, same numbered format.\n\n");
+        prompt.push_str("Translate each numbered Japanese string enclosed in <text>...</text> tags to English.\n");
+        prompt.push_str("Output only translations, one per line, same numbered format. Do not repeat the tags or include any preamble, explanations, notes, or thoughts.\n\n");
 
         for (i, s) in chunk_strings.iter().enumerate() {
-            let _ = writeln!(prompt, "{}: {}", i + 1, s);
+            let _ = writeln!(prompt, "{}: <text>{}</text>", i + 1, s);
         }
 
         prompt
@@ -177,27 +232,38 @@ impl TranslationStrategy {
             }
         }
 
-        if chunk_strings.len() == 1 && results[0].is_empty() {
-            results[0] = response_content.trim().to_string();
+        let mut failed_indices = Vec::new();
+        for (idx, text) in results.iter_mut().enumerate() {
+            let outcome = crate::guardrails::validate_translation(&chunk_strings[idx], text);
+            *text = outcome.cleaned_text;
+            if !outcome.accepted {
+                failed_indices.push(idx);
+            }
         }
 
-        let empty_indices = results
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, text)| text.is_empty().then_some(idx))
-            .collect::<Vec<_>>();
-
-        if !empty_indices.is_empty() {
+        if !failed_indices.is_empty() {
             log::warn!(
-                "[Translation] {} slots empty after batch parse, retrying individually",
-                empty_indices.len()
+                "[Translation] {} slots failed validation or empty, retrying concurrently",
+                failed_indices.len()
             );
-            for idx in empty_indices {
-                if let Ok(single) = self
-                    .translate_single_qwen(client, &chunk_strings[idx])
-                    .await
-                {
-                    results[idx] = single;
+            results = self
+                .retry_concurrently(&failed_indices, results, |idx| {
+                    let chunk_string = chunk_strings[idx].clone();
+                    async move { self.translate_single_qwen(client, &chunk_string).await }
+                })
+                .await;
+
+            // Validate retried results
+            for &idx in &failed_indices {
+                let outcome =
+                    crate::guardrails::validate_translation(&chunk_strings[idx], &results[idx]);
+                results[idx] = outcome.cleaned_text;
+                if !outcome.accepted {
+                    log::warn!(
+                        "[Translation] Slot {} failed guardrails even after retry: {:?}",
+                        idx + 1,
+                        outcome.reason
+                    );
                 }
             }
         }
@@ -258,39 +324,53 @@ impl TranslationStrategy {
             }
         }
 
-        // Check if any translations in this chunk are missing and retry individually
-        let missing_indices: Vec<usize> = chunk_strings
-            .iter()
-            .enumerate()
-            .filter_map(|(i, _)| {
-                if final_results[i].is_empty() {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut failed_indices = Vec::new();
+        for (idx, text) in final_results.iter_mut().enumerate() {
+            let outcome = crate::guardrails::validate_translation(&chunk_strings[idx], text);
+            *text = outcome.cleaned_text;
+            if !outcome.accepted {
+                failed_indices.push(idx);
+            }
+        }
 
-        if !missing_indices.is_empty() {
+        if !failed_indices.is_empty() {
             log::warn!(
-                "[Translation] {} Gemma slots empty after parallel batch, retrying individually",
-                missing_indices.len()
+                "[Translation] {} Gemma slots failed validation or empty, retrying concurrently",
+                failed_indices.len()
             );
-            for i in missing_indices {
-                let input_text = &chunk_strings[i];
-                let payload = json!({
-                    "model": "local",
-                    "messages": Self::build_translategemma_messages(
-                        history,
-                        input_text,
-                    ),
-                    "temperature": 0.1,
-                    "max_tokens": 256
-                });
-                if let Ok(res) = client.post_chat_completion(payload).await
-                    && let Ok(translation) = TranslationClient::response_text_from_completion(&res)
-                {
-                    final_results[i] = translation;
+            final_results = self
+                .retry_concurrently(&failed_indices, final_results, |i| {
+                    let input_text = chunk_strings[i].clone();
+                    let history = history.to_vec();
+                    async move {
+                        let payload = json!({
+                            "model": "local",
+                            "messages": Self::build_translategemma_messages(
+                                &history,
+                                &input_text,
+                            ),
+                            "temperature": 0.1,
+                            "max_tokens": 256
+                        });
+                        let res = client.post_chat_completion(payload).await?;
+                        TranslationClient::response_text_from_completion(&res)
+                    }
+                })
+                .await;
+
+            // Validate retried results
+            for &idx in &failed_indices {
+                let outcome = crate::guardrails::validate_translation(
+                    &chunk_strings[idx],
+                    &final_results[idx],
+                );
+                final_results[idx] = outcome.cleaned_text;
+                if !outcome.accepted {
+                    log::warn!(
+                        "[Translation] Gemma slot {} failed guardrails even after retry: {:?}",
+                        idx + 1,
+                        outcome.reason
+                    );
                 }
             }
         }
@@ -384,31 +464,45 @@ impl TranslationStrategy {
             }
         }
 
-        // Check if any translations in this chunk are missing and retry individually
-        let missing_indices: Vec<usize> = chunk_strings
-            .iter()
-            .enumerate()
-            .filter_map(|(i, _)| {
-                if final_results[i].is_empty() {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut failed_indices = Vec::new();
+        for (idx, text) in final_results.iter_mut().enumerate() {
+            let outcome = crate::guardrails::validate_translation(&chunk_strings[idx], text);
+            *text = outcome.cleaned_text;
+            if !outcome.accepted {
+                failed_indices.push(idx);
+            }
+        }
 
-        if !missing_indices.is_empty() {
+        if !failed_indices.is_empty() {
             log::warn!(
-                "[Translation] {} LFM slots empty after parallel batch, retrying individually",
-                missing_indices.len()
+                "[Translation] {} LFM slots failed validation or empty, retrying concurrently",
+                failed_indices.len()
             );
-            for i in missing_indices {
-                let input_text = &chunk_strings[i];
-                let payload = Self::build_lfm_payload(history, input_text);
-                if let Ok(res) = client.post_chat_completion(payload).await
-                    && let Ok(translation) = TranslationClient::response_text_from_completion(&res)
-                {
-                    final_results[i] = translation;
+            final_results = self
+                .retry_concurrently(&failed_indices, final_results, |i| {
+                    let input_text = chunk_strings[i].clone();
+                    let history = history.to_vec();
+                    async move {
+                        let payload = Self::build_lfm_payload(&history, &input_text);
+                        let res = client.post_chat_completion(payload).await?;
+                        TranslationClient::response_text_from_completion(&res)
+                    }
+                })
+                .await;
+
+            // Validate retried results
+            for &idx in &failed_indices {
+                let outcome = crate::guardrails::validate_translation(
+                    &chunk_strings[idx],
+                    &final_results[idx],
+                );
+                final_results[idx] = outcome.cleaned_text;
+                if !outcome.accepted {
+                    log::warn!(
+                        "[Translation] LFM slot {} failed guardrails even after retry: {:?}",
+                        idx + 1,
+                        outcome.reason
+                    );
                 }
             }
         }
@@ -465,10 +559,37 @@ impl TranslationStrategy {
 
         messages
     }
+
+    pub async fn retry_concurrently<F, Fut>(
+        &self,
+        indices: &[usize],
+        mut results: Vec<String>,
+        retry_fn: F,
+    ) -> Vec<String>
+    where
+        F: Fn(usize) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<String>>,
+    {
+        if indices.is_empty() {
+            return results;
+        }
+
+        let futures = indices.iter().map(|&idx| retry_fn(idx));
+        let retried = join_all(futures).await;
+
+        for (&idx, res) in indices.iter().zip(retried.into_iter()) {
+            if let Ok(val) = res {
+                results[idx] = val;
+            }
+        }
+
+        results
+    }
 }
 
 pub struct TranslationClient {
     pub memory: TranslationMemory,
+    pub cache: TranslationCache,
     pub(crate) port: u16,
     pub(crate) client: Client,
     pub(crate) sidecar: crate::sidecar::SidecarManager,
@@ -490,6 +611,7 @@ impl TranslationClient {
     pub fn new(max_memory_size: usize, port: u16) -> Self {
         Self {
             memory: TranslationMemory::new(max_memory_size),
+            cache: TranslationCache::new(500),
             port,
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(2))
@@ -499,6 +621,11 @@ impl TranslationClient {
             sidecar: crate::sidecar::SidecarManager::new(port),
             strategy: TranslationStrategy::Qwen,
         }
+    }
+
+    pub fn clear_memory(&mut self) {
+        self.memory.clear();
+        self.cache.clear();
     }
 
     pub fn set_strategy(&mut self, strategy_name: &str) {
@@ -655,20 +782,51 @@ impl TranslationClient {
         }
 
         let mut final_results = vec![String::new(); strings.len()];
-        let history = self.memory.as_context_slice().to_vec();
+        let mut uncached_indices = Vec::new();
+        let mut uncached_strings = Vec::new();
 
-        // Sub-batch at 15 strings to avoid hitting token limits or context window issues
-        for (chunk_idx, chunk_strings) in strings.chunks(15).enumerate() {
-            let offset = chunk_idx * 15;
-            let chunk_translations = self
-                .strategy
-                .translate_chunk(self, &history, chunk_strings)
-                .await?;
-            for (chunk_offset, translation) in chunk_translations.into_iter().enumerate() {
-                final_results[offset + chunk_offset] = translation;
+        // 1. Look up cached items
+        for (i, s) in strings.iter().enumerate() {
+            if let Some(cached) = self.cache.get(s) {
+                final_results[i] = cached;
+            } else {
+                uncached_indices.push(i);
+                uncached_strings.push(s.clone());
             }
         }
 
+        // 2. Request translations for uncached items
+        if !uncached_strings.is_empty() {
+            let history = self.memory.as_context_slice().to_vec();
+
+            // Sub-batch at 15 strings to avoid hitting token limits or context window issues
+            for (chunk_idx, chunk_strings) in uncached_strings.chunks(15).enumerate() {
+                let chunk_translations = self
+                    .strategy
+                    .translate_chunk(self, &history, chunk_strings)
+                    .await?;
+
+                let offset = chunk_idx * 15;
+                for (chunk_offset, translation) in chunk_translations.into_iter().enumerate() {
+                    let global_uncached_idx = offset + chunk_offset;
+                    if global_uncached_idx < uncached_indices.len() {
+                        let original_idx = uncached_indices[global_uncached_idx];
+                        final_results[original_idx] = translation;
+                    }
+                }
+            }
+
+            // 3. Cache the newly translated results
+            for &idx in &uncached_indices {
+                let original = &strings[idx];
+                let translated = &final_results[idx];
+                if !translated.is_empty() {
+                    self.cache.insert(original.clone(), translated.clone());
+                }
+            }
+        }
+
+        // 4. Push results to context memory
         for (i, s) in strings.iter().enumerate() {
             if !final_results[i].is_empty() {
                 self.memory.push(s.clone(), final_results[i].clone());
@@ -1018,5 +1176,84 @@ mod tests {
             super::TranslationClient::select_strategy_for_model("LFM2-350M-ENJP-MT-Q8_0"),
             "lfm"
         );
+    }
+
+    #[tokio::test]
+    async fn test_retry_concurrently() {
+        let strategy = super::TranslationStrategy::Qwen;
+        let indices = vec![1, 3];
+        let results = vec![
+            "zero".to_string(),
+            String::new(),
+            "two".to_string(),
+            String::new(),
+        ];
+
+        let updated = strategy
+            .retry_concurrently(&indices, results, |idx| async move {
+                Ok(format!("retried-{idx}"))
+            })
+            .await;
+
+        assert_eq!(updated[0], "zero");
+        assert_eq!(updated[1], "retried-1");
+        assert_eq!(updated[2], "two");
+        assert_eq!(updated[3], "retried-3");
+    }
+
+    #[test]
+    fn test_translation_cache_lru() {
+        let mut cache = super::TranslationCache::new(2);
+        cache.insert("one".to_string(), "ichi".to_string());
+        cache.insert("two".to_string(), "ni".to_string());
+
+        assert_eq!(cache.get("one").unwrap(), "ichi");
+
+        // Insert "three" which evicts "two" (since "one" was promoted by get)
+        cache.insert("three".to_string(), "san".to_string());
+
+        assert_eq!(cache.get("one").unwrap(), "ichi");
+        assert!(cache.get("two").is_none());
+        assert_eq!(cache.get("three").unwrap(), "san");
+    }
+
+    #[test]
+    fn test_translation_client_cache_and_clear() {
+        let mut client = super::TranslationClient::new(5, 59695);
+        client
+            .cache
+            .insert("閉じる".to_string(), "Close".to_string());
+        client
+            .memory
+            .push("閉じる".to_string(), "Close".to_string());
+
+        assert_eq!(client.cache.get("閉じる").unwrap(), "Close");
+        assert_eq!(client.memory.as_context_slice().len(), 1);
+
+        client.clear_memory();
+        assert!(client.cache.get("閉じる").is_none());
+        assert_eq!(client.memory.as_context_slice().len(), 0);
+    }
+
+    #[test]
+    fn test_prompt_hardening() {
+        let history = vec![];
+        let input = "設定";
+
+        // Gemma
+        let gemma_msgs =
+            super::TranslationStrategy::build_translategemma_conversation(&history, input);
+        let gemma_text = gemma_msgs[0]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(gemma_text, "設定"); // No tags for Gemma
+
+        // LFM
+        let lfm_msgs = super::TranslationStrategy::build_lfm_messages(&history, input);
+        let lfm_text = lfm_msgs[1]["content"].as_str().unwrap();
+        assert_eq!(lfm_text, "設定"); // No tags for LFM
+
+        // Qwen
+        let qwen_prompt =
+            super::TranslationStrategy::build_qwen_batch_prompt(&history, &[input.to_string()]);
+        assert!(qwen_prompt.contains("<text>設定</text>"));
     }
 }
