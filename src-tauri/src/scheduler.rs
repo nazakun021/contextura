@@ -1,10 +1,8 @@
 // src-tauri/src/scheduler.rs
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::sleep;
 
 use crossbeam_channel::{Receiver, Sender};
@@ -30,8 +28,8 @@ struct RuntimeState {
     active_model: crate::models::ModelStatus,
 }
 
-pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>(
-    app: &tauri::AppHandle,
+pub fn emit_runtime_notice<R: tauri::Runtime, S1: Into<String>, S2: Into<String>, S3: Into<String>>(
+    app: &tauri::AppHandle<R>,
     title: S1,
     message: S2,
     detail: S3,
@@ -51,19 +49,14 @@ pub fn emit_runtime_notice<S1: Into<String>, S2: Into<String>, S3: Into<String>>
     );
 }
 
-async fn run_pipeline_frame(
-    app_handle: &tauri::AppHandle,
-    processor: &crate::pipeline::PipelineProcessor,
+async fn run_pipeline_frame<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    processor: &mut crate::pipeline::PipelineProcessor,
     frame: &crate::capture::CaptureFrame,
-    frame_id: u64,
+    is_forced: bool,
     invalidation_rx: &Receiver<crate::context::InvalidationReason>,
     pipeline_tx: &Sender<PipelineCommand>,
 ) -> Option<TranslationPayload> {
-    let cache_dir = app_handle
-        .path()
-        .app_cache_dir()
-        .expect("Failed to get cache dir");
-
     let _ = app_handle.emit(
         "translation-started",
         TranslationStartedPayload {
@@ -71,43 +64,9 @@ async fn run_pipeline_frame(
         },
     );
 
-    let result = processor
-        .process_frame(&cache_dir, frame, frame_id, invalidation_rx, pipeline_tx)
-        .await;
-
-    if result.clear_context {
-        let _ = app_handle.emit("translation-clear", ());
-    }
-    if result.manual_reset {
-        emit_runtime_notice(
-            app_handle,
-            "Context Cleared",
-            "Translation memory was cleared.",
-            "New translations will start without prior context.",
-            "info",
-            2500,
-        );
-    }
-
-    if let Some(ref payload) = result.payload
-        && let Err(error) = app_handle.emit("translation-update", payload)
-    {
-        log::error!("[IPC] Failed to emit translation-update: {error}");
-    }
-
-    result.payload
-}
-
-fn emit_cached_translation_payload(
-    app_handle: &tauri::AppHandle,
-    payload: &TranslationPayload,
-) -> bool {
-    if let Err(error) = app_handle.emit("translation-update", payload) {
-        log::error!("[IPC] Failed to emit cached translation-update: {error}");
-        false
-    } else {
-        true
-    }
+    processor
+        .handle_frame(app_handle, frame, is_forced, invalidation_rx, pipeline_tx)
+        .await
 }
 
 fn load_runtime_state(app_dir: &std::path::Path) -> anyhow::Result<RuntimeState> {
@@ -197,15 +156,15 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
     thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Tokio runtime should initialize");
         let sidecar_port = find_available_local_port().expect("localhost port should be available");
-        let client = Arc::new(AsyncMutex::new(crate::translation::TranslationClient::new(
+
+        let mut translation_manager = crate::translation::TranslationManager::new(
             config.initial_memory_size,
             sidecar_port,
-        )));
+        );
+
+        let client = Arc::clone(&translation_manager.client);
         let client_clone = Arc::clone(&client);
         let app_handle_sidecar = config.app_handle.clone();
-        let active_model_path = Arc::new(AsyncMutex::new(PathBuf::new()));
-        let active_model_key = Arc::new(AsyncMutex::new(String::new()));
-        let active_model_strategy = Arc::new(AsyncMutex::new(Option::<String>::None));
 
         // Start Window Tracker on its own thread
         let mut window_tracker_task = config.window_tracker;
@@ -214,70 +173,15 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
         });
 
         rt.block_on(async move {
-            let app_dir = crate::settings::Settings::dir().expect("Failed to get app directory");
-            let watchdog_client = Arc::clone(&client);
-            let watchdog_app_handle = app_handle_sidecar.clone();
-            let watchdog_model_path = Arc::clone(&active_model_path);
-            let watchdog_model_key = Arc::clone(&active_model_key);
-            let watchdog_model_strategy = Arc::clone(&active_model_strategy);
-            tokio::spawn(async move {
-                let mut consecutive_failures = 0u8;
-                loop {
-                    sleep(Duration::from_secs(5)).await;
-                    let model_path = watchdog_model_path.lock().await.clone();
-                    let model_key = watchdog_model_key.lock().await.clone();
-                    let model_strategy = watchdog_model_strategy.lock().await.clone();
-                    if model_path.as_os_str().is_empty() {
-                        continue;
-                    }
+            // Start the watchdog internally once inside the Tokio runtime context
+            translation_manager.start_watchdog(config.app_handle.clone());
 
-                    let mut guard = watchdog_client.lock().await;
-                    if guard.wait_for_runtime_ready().await.is_err() {
-                        consecutive_failures += 1;
-                        log::warn!(
-                            "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
-                        );
-                        if consecutive_failures >= 3 {
-                            log::warn!("[Watchdog] Restarting unresponsive sidecar...");
-                            let restart_res = guard.start_sidecar(
-                                &watchdog_app_handle,
-                                &model_path,
-                                &model_key,
-                                model_strategy.as_deref(),
-                            );
-                            if let Err(error) = restart_res {
-                                log::error!("[Watchdog] Failed to restart sidecar: {error}");
-                                emit_runtime_notice(
-                                    &watchdog_app_handle,
-                                    "Translation Engine Restart Failed",
-                                    "Watchdog failed to restart the translation engine.",
-                                    error.to_string(),
-                                    "error",
-                                    0, // Persistent!
-                                );
-                            } else {
-                                emit_runtime_notice(
-                                    &watchdog_app_handle,
-                                    "Translation Engine Restarted",
-                                    "The local translation engine became unresponsive and was restarted.",
-                                    model_path.display().to_string(),
-                                    "warning",
-                                    5000,
-                                );
-                            }
-                            consecutive_failures = 0;
-                        }
-                    } else {
-                        consecutive_failures = 0;
-                    }
-                }
-            });
+            let app_dir = crate::settings::Settings::dir().expect("Failed to get app directory");
 
             let mut failure_count = 0u32;
             let mut sidecar_started = false;
             let mut warned_missing_model = false;
             let mut active_model_id = String::new();
-            let mut frame_id: u64 = 0;
             let mut last_thermal_check = Instant::now().checked_sub(Duration::from_secs(31)).unwrap_or_else(Instant::now);
             let mut runtime_state: Option<RuntimeState> = None;
             let mut runtime_reload_requested = true;
@@ -339,9 +243,11 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                 };
                 let active_model = state.active_model.clone();
 
-                *active_model_path.lock().await = active_model.path.clone();
-                *active_model_key.lock().await = active_model.entry.id.clone();
-                *active_model_strategy.lock().await = active_model.entry.strategy.clone();
+                translation_manager.update_model_state(
+                    &active_model.path,
+                    &active_model.entry.id,
+                    active_model.entry.strategy.clone(),
+                ).await;
 
                 if !active_model.installed {
                     if !warned_missing_model {
@@ -475,9 +381,6 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                 let mut pending_force_scan = false;
                 let mut latest_frame: Option<crate::capture::CaptureFrame> = None;
                 let mut last_frame_at = Instant::now();
-                let mut was_scrolling = false;
-                let mut last_processed_hash: Option<u64> = None;
-                let mut last_payload: Option<TranslationPayload> = None;
 
                 let (pipeline_tokio_tx, mut pipeline_tokio_rx) = tokio::sync::mpsc::channel(16);
                 let pipeline_rx_sync = config.pipeline_rx.clone();
@@ -514,40 +417,15 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                         log::info!(
                                             "[Pipeline] Force scan requested on cached frame"
                                         );
-                                        let cached_rgba = &frame.buffer.data;
-                                        let cached_thumbnail = processor.motion_detector.downsample(
-                                            cached_rgba,
-                                            frame.buffer.width,
-                                            frame.buffer.height,
-                                        );
-                                        let frame_hash = crate::motion::compute_thumbnail_hash(&cached_thumbnail);
-                                        if last_processed_hash == Some(frame_hash)
-                                            && let Some(payload) = last_payload.as_ref()
-                                        {
-                                            log::debug!(
-                                                "[Pipeline] Force scan frame identical to last processed, reusing cached payload"
-                                            );
-                                            let _ = emit_cached_translation_payload(
-                                                &app_handle_sidecar,
-                                                payload,
-                                            );
-                                        } else {
-                                            let current_frame_id = frame_id;
-                                            frame_id += 1;
-                                            if let Some(payload) = run_pipeline_frame(
-                                                &app_handle_sidecar,
-                                                &processor,
-                                                &frame,
-                                                current_frame_id,
-                                                &config.invalidation_rx,
-                                                &config.pipeline_tx,
-                                            )
-                                            .await
-                                            {
-                                                last_processed_hash = Some(frame_hash);
-                                                last_payload = Some(payload);
-                                            }
-                                        }
+                                        let _ = run_pipeline_frame(
+                                            &app_handle_sidecar,
+                                            &mut processor,
+                                            &frame,
+                                            true,
+                                            &config.invalidation_rx,
+                                            &config.pipeline_tx,
+                                        )
+                                        .await;
                                         pending_force_scan = false;
                                     } else {
                                         log::info!(
@@ -565,7 +443,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                 PipelineCommand::Shutdown => {
                                     log::info!("[Pipeline] Shutdown requested");
                                     config.display_manager.stop();
-                                    client_clone.lock().await.shutdown_sidecar();
+                                    translation_manager.shutdown().await;
 
                                     if let Ok(cache_dir) = config.app_handle.path().app_cache_dir() {
                                         crate::snapshot::cleanup_stale_temp_frames(&cache_dir);
@@ -590,51 +468,26 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
 
                             match debounce_event {
                                 DebounceEvent::MotionDetected => {
-                                    if !was_scrolling {
+                                    if !processor.was_scrolling {
                                         let _ = app_handle_sidecar.emit("translation-clear", ());
-                                        was_scrolling = true;
+                                        processor.was_scrolling = true;
                                     }
                                 }
                                 DebounceEvent::Triggered => {
-                                    was_scrolling = false;
-                                    let rgba_data = &frame.buffer.data;
-                                    let thumbnail = processor.motion_detector.downsample(
-                                        rgba_data,
-                                        frame.buffer.width,
-                                        frame.buffer.height,
-                                    );
-                                    let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
-                                    if last_processed_hash == Some(frame_hash)
-                                        && let Some(payload) = last_payload.as_ref()
-                                    {
-                                        log::debug!(
-                                            "[Pipeline] Frame identical to last processed, reusing cached payload"
-                                        );
-                                        let _ = emit_cached_translation_payload(
-                                            &app_handle_sidecar,
-                                            payload,
-                                        );
-                                        continue;
-                                    }
-                                    let current_frame_id = frame_id;
-                                    frame_id += 1;
-                                    if let Some(payload) = run_pipeline_frame(
+                                    processor.was_scrolling = false;
+                                    let _ = run_pipeline_frame(
                                         &app_handle_sidecar,
-                                        &processor,
+                                        &mut processor,
                                         &frame,
-                                        current_frame_id,
+                                        is_forced,
                                         &config.invalidation_rx,
                                         &config.pipeline_tx,
                                     )
-                                    .await
-                                    {
-                                        last_processed_hash = Some(frame_hash);
-                                        last_payload = Some(payload);
-                                    }
+                                    .await;
                                 }
                                 DebounceEvent::None => {
                                     if !matches!(processor.debounce.state, crate::motion::DebounceState::Scrolling) {
-                                        was_scrolling = false;
+                                        processor.was_scrolling = false;
                                     }
                                 }
                             }
@@ -643,21 +496,16 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             let debounce_event = processor.debounce.update(0.0);
                             if matches!(debounce_event, DebounceEvent::Triggered) && let Some(frame) = latest_frame.as_ref() {
                                 log::info!("[Pipeline] Debounce triggered on static screen");
-                                was_scrolling = false;
-                                let current_frame_id = frame_id;
-                                frame_id += 1;
-                                if let Some(payload) = run_pipeline_frame(
+                                processor.was_scrolling = false;
+                                let _ = run_pipeline_frame(
                                     &app_handle_sidecar,
-                                    &processor,
+                                    &mut processor,
                                     frame,
-                                    current_frame_id,
+                                    false,
                                     &config.invalidation_rx,
                                     &config.pipeline_tx,
                                 )
-                                .await
-                                {
-                                    last_payload = Some(payload);
-                                }
+                                .await;
                             }
                         }
                     }
@@ -729,6 +577,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::Mutex as AsyncMutex;
 
     fn temp_app_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now()

@@ -124,6 +124,8 @@ impl ModelManifest {
                 model.strategy = Some(
                     if model.id.to_ascii_lowercase().contains("translategemma") {
                         "gemma".to_string()
+                    } else if model.id.to_ascii_lowercase().contains("lfm") || model.id.to_ascii_lowercase().contains("350m") {
+                        "lfm".to_string()
                     } else {
                         "qwen".to_string()
                     },
@@ -281,7 +283,12 @@ fn prettify_label(id: &str) -> String {
 
 fn infer_tier(id: &str) -> String {
     let lowercase = id.to_ascii_lowercase();
-    if lowercase.contains("0.6b") || lowercase.contains("1b") || lowercase.contains("small") {
+    if lowercase.contains("0.6b")
+        || lowercase.contains("1b")
+        || lowercase.contains("350m")
+        || lowercase.contains("lfm")
+        || lowercase.contains("small")
+    {
         "Standard".to_string()
     } else if lowercase.contains("quality")
         || lowercase.contains("4b")
@@ -439,5 +446,29 @@ mod tests {
 
         assert_eq!(gemma_entry.strategy.as_deref(), Some("gemma"));
         assert_eq!(qwen_entry.strategy.as_deref(), Some("qwen"));
+    }
+
+    #[test]
+    fn test_lfm2_model_tier_and_strategy() {
+        let app_dir = temp_app_dir("lfm2-test");
+        let settings = Settings {
+            active_model: "LFM2-350M-ENJP-MT-Q8_0".to_string(),
+            ..Settings::default()
+        };
+        fs::write(
+            app_dir.join("models").join("LFM2-350M-ENJP-MT-Q8_0.gguf"),
+            b"lfm2-bytes",
+        )
+        .expect("lfm2 model file should be written");
+
+        let manifest = ModelManifest::load(&app_dir, &settings).expect("manifest should load");
+        let lfm_entry = manifest
+            .models
+            .iter()
+            .find(|m| m.id.contains("LFM2-350M"))
+            .unwrap();
+
+        assert_eq!(lfm_entry.tier, "Standard");
+        assert_eq!(lfm_entry.strategy.as_deref(), Some("lfm"));
     }
 }

@@ -113,22 +113,41 @@ impl OcrEngine {
 
     pub fn recognize(
         &self,
-        png_path: &Path,
-        screen_width: f32,
-        screen_height: f32,
+        rgba_data: &[u8],
+        width: u32,
+        height: u32,
         scale_factor: f32,
+        cache_dir: &Path,
+        frame_id: u64,
     ) -> anyhow::Result<Vec<OcrResult>> {
+        let png_path = crate::snapshot::save_frame_as_png(
+            rgba_data,
+            width as usize,
+            height as usize,
+            frame_id,
+            cache_dir,
+        )?;
+
         let child = Command::new(&self.vision_helper_path)
-            .arg(png_path)
+            .arg(&png_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| {
+                let _ = std::fs::remove_file(&png_path);
                 format!(
                     "Failed to launch vision-helper at {}",
                     self.vision_helper_path.display()
                 )
-            })?;
+            });
+
+        let child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = std::fs::remove_file(&png_path);
+                return Err(e);
+            }
+        };
 
         let child_pid = child.id();
         let (tx, rx) = mpsc::channel();
@@ -138,12 +157,19 @@ impl OcrEngine {
         });
 
         let output = match rx.recv_timeout(OCR_HELPER_TIMEOUT) {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => anyhow::bail!("vision-helper I/O error: {error}"),
+            Ok(Ok(output)) => {
+                let _ = std::fs::remove_file(&png_path);
+                output
+            }
+            Ok(Err(error)) => {
+                let _ = std::fs::remove_file(&png_path);
+                anyhow::bail!("vision-helper I/O error: {error}");
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = Command::new("kill")
                     .args(["-KILL", &child_pid.to_string()])
                     .status();
+                let _ = std::fs::remove_file(&png_path);
                 anyhow::bail!(
                     "vision-helper timed out after {}s while reading {}",
                     OCR_HELPER_TIMEOUT.as_secs(),
@@ -151,6 +177,7 @@ impl OcrEngine {
                 );
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = std::fs::remove_file(&png_path);
                 anyhow::bail!("vision-helper worker disconnected before producing output");
             }
         };
@@ -187,7 +214,13 @@ impl OcrEngine {
             })
             .collect();
 
-        Ok(self.process_vision_results(results, screen_width, screen_height, scale_factor))
+        #[allow(clippy::cast_precision_loss)]
+        Ok(self.process_vision_results(
+            results,
+            width as f32,
+            height as f32,
+            scale_factor,
+        ))
     }
 
     pub fn process_vision_results(
@@ -653,5 +686,39 @@ mod tests {
             let processed = engine(false).process_vision_results(results, 100.0, 100.0, 1.0);
             assert_eq!(processed.len(), 0, "Expected string to be rejected: {text}");
         }
+    }
+
+    #[test]
+    fn test_ocr_engine_recognize_raw_buffer() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("ocr_recognize_test_{unique}"));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let engine = OcrEngine::new(false, PathBuf::from("non-existent-vision-helper"));
+        let rgba_data = vec![0; 400]; // 10x10 RGBA image
+
+        let res = engine.recognize(
+            &rgba_data,
+            10,
+            10,
+            1.0,
+            &temp_dir,
+            9999,
+        );
+
+        // It should return an error because the helper binary does not exist
+        assert!(res.is_err());
+
+        // But the temporary frame file must have been deleted/cleaned up!
+        let expected_temp_file = temp_dir.join("contextura-frame-9999.png");
+        assert!(
+            !expected_temp_file.exists(),
+            "Expected temporary frame to be deleted after recognition attempt"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

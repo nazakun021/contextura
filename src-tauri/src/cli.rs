@@ -212,9 +212,11 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     )?;
     translation_client.wait_for_ready().await?;
 
-    let (width, height) = image::image_dimensions(input)?;
-    #[allow(clippy::cast_precision_loss)]
-    let ocr_results = ocr_engine.recognize(input, width as f32, height as f32, 1.0)?;
+    let img = image::open(input)?.to_rgba8();
+    let (width, height) = img.dimensions();
+    let rgba_data = img.as_raw();
+    let cache_dir = input.parent().unwrap_or(Path::new("."));
+    let ocr_results = ocr_engine.recognize(rgba_data, width, height, 1.0, cache_dir, 1)?;
     let texts = ocr_results
         .iter()
         .map(|result| result.text.clone())
@@ -282,9 +284,11 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
         let expected_path = png.with_extension("expected.json");
         let expected =
             serde_json::from_str::<CorpusExpectation>(&std::fs::read_to_string(&expected_path)?)?;
-        let (width, height) = image::image_dimensions(&png)?;
-        #[allow(clippy::cast_precision_loss)]
-        let ocr_results = ocr_engine.recognize(&png, width as f32, height as f32, 1.0)?;
+        let img = image::open(&png)?.to_rgba8();
+        let (width, height) = img.dimensions();
+        let rgba_data = img.as_raw();
+        let cache_dir = png.parent().unwrap_or(Path::new("."));
+        let ocr_results = ocr_engine.recognize(rgba_data, width, height, 1.0, cache_dir, 1)?;
         let ocr_text = ocr_results
             .iter()
             .map(|result| result.text.as_str())

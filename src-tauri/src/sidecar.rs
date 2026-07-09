@@ -66,6 +66,10 @@ impl SidecarManager {
             args.push("--no-jinja".to_string());
             args.push("--parallel".to_string());
             args.push("4".to_string());
+        } else if strategy_lower.contains("lfm") {
+            args.push("--jinja".to_string());
+            args.push("--parallel".to_string());
+            args.push("4".to_string());
         } else {
             args.push("--jinja".to_string());
         }
@@ -73,9 +77,9 @@ impl SidecarManager {
         args
     }
 
-    pub fn start(
+    pub fn start<R: tauri::Runtime>(
         &mut self,
-        app: &tauri::AppHandle,
+        app: &tauri::AppHandle<R>,
         model_path: &Path,
         model_id: &str,
         strategy: Option<&str>,
@@ -87,13 +91,7 @@ impl SidecarManager {
             let _ = child.kill();
         }
 
-        let strategy_name = strategy.unwrap_or_else(|| {
-            if model_id.to_ascii_lowercase().contains("translategemma") {
-                "gemma"
-            } else {
-                "qwen"
-            }
-        });
+        let strategy_name = strategy.unwrap_or_else(|| crate::translation::TranslationClient::select_strategy_for_model(model_id));
 
         let resource_dir = app
             .path()
@@ -314,6 +312,22 @@ mod tests {
         assert!(args.contains(&"9999".to_string()));
         assert!(args.contains(&"--no-jinja".to_string()));
         assert!(!args.contains(&"--jinja".to_string()));
+        assert!(args.contains(&"--parallel".to_string()));
+        assert!(args.contains(&"4".to_string()));
+    }
+
+    #[test]
+    fn test_lfm_launch_arguments() {
+        let manager = SidecarManager::new(1234);
+        let model_path = Path::new("/path/to/lfm-model.gguf");
+        let args = manager.build_launch_args(model_path, "lfm");
+
+        assert!(args.contains(&"--model".to_string()));
+        assert!(args.contains(&"/path/to/lfm-model.gguf".to_string()));
+        assert!(args.contains(&"--port".to_string()));
+        assert!(args.contains(&"1234".to_string()));
+        assert!(args.contains(&"--jinja".to_string()));
+        assert!(!args.contains(&"--no-jinja".to_string()));
         assert!(args.contains(&"--parallel".to_string()));
         assert!(args.contains(&"4".to_string()));
     }

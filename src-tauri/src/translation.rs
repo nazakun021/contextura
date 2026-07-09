@@ -3,6 +3,9 @@
 use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex as AsyncMutex;
 use std::collections::VecDeque;
 use std::fmt::Write;
 use std::time::Duration;
@@ -49,6 +52,7 @@ impl TranslationMemory {
 pub enum TranslationStrategy {
     Qwen,
     Gemma,
+    Lfm,
 }
 
 impl TranslationStrategy {
@@ -65,6 +69,10 @@ impl TranslationStrategy {
             }
             Self::Gemma => {
                 self.translate_gemma_chunk(client, history, chunk_strings)
+                    .await
+            }
+            Self::Lfm => {
+                self.translate_lfm_chunk(client, history, chunk_strings)
                     .await
             }
         }
@@ -350,6 +358,119 @@ impl TranslationStrategy {
         messages.extend(Self::build_translategemma_conversation(history, input_text));
         messages
     }
+
+    async fn translate_lfm_chunk(
+        self,
+        client: &TranslationClient,
+        history: &[(String, String)],
+        chunk_strings: &[String],
+    ) -> anyhow::Result<Vec<String>> {
+        let mut final_results = vec![String::new(); chunk_strings.len()];
+        let mut request_futures = Vec::with_capacity(chunk_strings.len());
+
+        for input_text in chunk_strings {
+            let payload = Self::build_lfm_payload(history, input_text);
+            request_futures.push(client.post_chat_completion(payload));
+        }
+
+        // Process all requests in the chunk in parallel
+        let chunk_responses = join_all(request_futures).await;
+
+        for (chunk_offset, res_result) in chunk_responses.into_iter().enumerate() {
+            if let Ok(res) = res_result
+                && let Ok(translation) = TranslationClient::response_text_from_completion(&res)
+            {
+                final_results[chunk_offset] = translation;
+            }
+        }
+
+        // Check if any translations in this chunk are missing and retry individually
+        let missing_indices: Vec<usize> = chunk_strings
+            .iter()
+            .enumerate()
+            .filter_map(|(i, _)| {
+                if final_results[i].is_empty() {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !missing_indices.is_empty() {
+            log::warn!(
+                "[Translation] {} LFM slots empty after parallel batch, retrying individually",
+                missing_indices.len()
+            );
+            for i in missing_indices {
+                let input_text = &chunk_strings[i];
+                let payload = Self::build_lfm_payload(history, input_text);
+                if let Ok(res) = client.post_chat_completion(payload).await
+                    && let Ok(translation) = TranslationClient::response_text_from_completion(&res)
+                {
+                    final_results[i] = translation;
+                }
+            }
+        }
+
+        let still_missing = chunk_strings
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| final_results[*i].is_empty())
+            .map(|(i, _)| i + 1)
+            .collect::<Vec<_>>();
+
+        if !still_missing.is_empty() {
+            anyhow::bail!("LFM parallel batch failed for slots {still_missing:?}");
+        }
+
+        Ok(final_results)
+    }
+
+    pub fn build_lfm_payload(
+        history: &[(String, String)],
+        input_text: &str,
+    ) -> Value {
+        json!({
+            "model": "local",
+            "messages": Self::build_lfm_messages(history, input_text),
+            "temperature": 0.5,
+            "repeat_penalty": 1.05,
+            "min_p": 0.1,
+            "max_tokens": 256
+        })
+    }
+
+    pub fn build_lfm_messages(
+        history: &[(String, String)],
+        input_text: &str,
+    ) -> Vec<Value> {
+        let mut messages = vec![json!({
+            "role": "system",
+            "content": "Translate to English."
+        })];
+
+        let keep = history.len().min(6);
+        let history_slice = &history[history.len().saturating_sub(keep)..];
+
+        for (source_text, translated_text) in history_slice {
+            messages.push(json!({
+                "role": "user",
+                "content": source_text
+            }));
+            messages.push(json!({
+                "role": "assistant",
+                "content": translated_text
+            }));
+        }
+
+        messages.push(json!({
+            "role": "user",
+            "content": input_text
+        }));
+
+        messages
+    }
 }
 
 pub struct TranslationClient {
@@ -361,6 +482,17 @@ pub struct TranslationClient {
 }
 
 impl TranslationClient {
+    pub fn select_strategy_for_model(model_id: &str) -> &str {
+        let id_lower = model_id.to_ascii_lowercase();
+        if id_lower.contains("translategemma") {
+            "gemma"
+        } else if id_lower.contains("lfm") || id_lower.contains("350m") {
+            "lfm"
+        } else {
+            "qwen"
+        }
+    }
+
     pub fn new(max_memory_size: usize, port: u16) -> Self {
         Self {
             memory: TranslationMemory::new(max_memory_size),
@@ -378,6 +510,7 @@ impl TranslationClient {
     pub fn set_strategy(&mut self, strategy_name: &str) {
         self.strategy = match strategy_name.to_ascii_lowercase().as_str() {
             "gemma" | "translategemma" => TranslationStrategy::Gemma,
+            "lfm" => TranslationStrategy::Lfm,
             _ => TranslationStrategy::Qwen,
         };
     }
@@ -446,20 +579,14 @@ impl TranslationClient {
         Ok(text)
     }
 
-    pub fn start_sidecar(
+    pub fn start_sidecar<R: tauri::Runtime>(
         &mut self,
-        app: &tauri::AppHandle,
+        app: &tauri::AppHandle<R>,
         model_path: &std::path::Path,
         model_id: &str,
         strategy: Option<&str>,
     ) -> anyhow::Result<()> {
-        let strategy_name = strategy.unwrap_or_else(|| {
-            if model_id.to_ascii_lowercase().contains("translategemma") {
-                "gemma"
-            } else {
-                "qwen"
-            }
-        });
+        let strategy_name = strategy.unwrap_or_else(|| Self::select_strategy_for_model(model_id));
         self.set_strategy(strategy_name);
         self.sidecar.start(app, model_path, model_id, strategy)
     }
@@ -473,6 +600,8 @@ impl TranslationClient {
         let strategy_name = strategy.unwrap_or_else(|| {
             if model_id.to_ascii_lowercase().contains("translategemma") {
                 "gemma"
+            } else if model_id.to_ascii_lowercase().contains("lfm") || model_id.to_ascii_lowercase().contains("350m") {
+                "lfm"
             } else {
                 "qwen"
             }
@@ -551,6 +680,117 @@ impl TranslationClient {
         }
 
         Ok(final_results)
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct WatchdogState {
+    pub path: PathBuf,
+    pub id: String,
+    pub strategy: Option<String>,
+}
+
+pub struct TranslationManager {
+    pub client: Arc<AsyncMutex<TranslationClient>>,
+    pub watchdog_state: Arc<AsyncMutex<WatchdogState>>,
+    pub watchdog_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl TranslationManager {
+    pub fn new(max_memory_size: usize, port: u16) -> Self {
+        let client = Arc::new(AsyncMutex::new(TranslationClient::new(max_memory_size, port)));
+        Self {
+            client,
+            watchdog_state: Arc::new(AsyncMutex::new(WatchdogState::default())),
+            watchdog_handle: None,
+        }
+    }
+
+    pub async fn update_model_state(
+        &mut self,
+        path: &Path,
+        id: &str,
+        strategy: Option<String>,
+    ) {
+        let mut state = self.watchdog_state.lock().await;
+        state.path = path.to_path_buf();
+        state.id = id.to_string();
+        state.strategy = strategy;
+    }
+
+    pub fn start_watchdog<R: tauri::Runtime + 'static>(&mut self, app: tauri::AppHandle<R>) {
+        if self.watchdog_handle.is_some() {
+            return;
+        }
+
+        let client = Arc::clone(&self.client);
+        let watchdog_state = Arc::clone(&self.watchdog_state);
+        let app_handle = app;
+
+        let handle = tokio::spawn(async move {
+            let mut consecutive_failures = 0u8;
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                let (model_path, model_id, model_strategy) = {
+                    let state = watchdog_state.lock().await;
+                    (state.path.clone(), state.id.clone(), state.strategy.clone())
+                };
+
+                if model_path.as_os_str().is_empty() {
+                    continue;
+                }
+
+                let mut guard = client.lock().await;
+                if guard.wait_for_runtime_ready().await.is_err() {
+                    consecutive_failures += 1;
+                    log::warn!(
+                        "[Watchdog] Sidecar health check failed ({consecutive_failures}/3)"
+                    );
+                    if consecutive_failures >= 3 {
+                        log::warn!("[Watchdog] Restarting unresponsive sidecar...");
+                        let restart_res = guard.start_sidecar(
+                            &app_handle,
+                            &model_path,
+                            &model_id,
+                            model_strategy.as_deref(),
+                        );
+                        if let Err(error) = restart_res {
+                            log::error!("[Watchdog] Failed to restart sidecar: {error}");
+                            crate::scheduler::emit_runtime_notice(
+                                &app_handle,
+                                "Translation Engine Restart Failed",
+                                "Watchdog failed to restart the translation engine.",
+                                error.to_string(),
+                                "error",
+                                0,
+                            );
+                        } else {
+                            crate::scheduler::emit_runtime_notice(
+                                &app_handle,
+                                "Translation Engine Restarted",
+                                "The local translation engine became unresponsive and was restarted.",
+                                model_path.display().to_string(),
+                                "warning",
+                                5000,
+                            );
+                        }
+                        consecutive_failures = 0;
+                    }
+                } else {
+                    consecutive_failures = 0;
+                }
+            }
+        });
+
+        self.watchdog_handle = Some(handle);
+    }
+
+    pub async fn shutdown(&mut self) {
+        if let Some(handle) = self.watchdog_handle.take() {
+            handle.abort();
+        }
+        self.client.lock().await.shutdown_sidecar();
     }
 }
 
@@ -663,6 +903,49 @@ mod tests {
 
         client.set_strategy("gemma");
         assert_eq!(client.strategy, super::TranslationStrategy::Gemma);
+
+        client.set_strategy("lfm");
+        assert_eq!(client.strategy, super::TranslationStrategy::Lfm);
+    }
+
+    #[test]
+    fn test_lfm_messages_format() {
+        let history = vec![
+            ("はい".to_string(), "Yes.".to_string()),
+            ("いいえ".to_string(), "No.".to_string()),
+        ];
+        let messages = super::TranslationStrategy::build_lfm_messages(&history, "こんにちは");
+
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "Translate to English.");
+
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "はい");
+
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "Yes.");
+
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "いいえ");
+
+        assert_eq!(messages[4]["role"], "assistant");
+        assert_eq!(messages[4]["content"], "No.");
+
+        assert_eq!(messages[5]["role"], "user");
+        assert_eq!(messages[5]["content"], "こんにちは");
+    }
+
+    #[test]
+    fn test_lfm_payload_sampling() {
+        let payload = super::TranslationStrategy::build_lfm_payload(&[], "こんにちは");
+
+        assert_eq!(payload["temperature"], 0.5);
+        assert_eq!(payload["repeat_penalty"], 1.05);
+        assert_eq!(payload["min_p"], 0.1);
+        assert_eq!(payload["max_tokens"], 256);
+        assert_eq!(payload["model"], "local");
+        assert!(payload["messages"].is_array());
     }
 
     #[test]
@@ -700,5 +983,37 @@ mod tests {
 
         memory.clear();
         assert!(memory.as_context_slice().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_translation_manager_watchdog_lifecycle() {
+        let mut manager = super::TranslationManager::new(5, 8765);
+        {
+            let state = manager.watchdog_state.lock().await;
+            assert!(state.path.as_os_str().is_empty());
+        }
+
+        manager.update_model_state(
+            std::path::Path::new("/path/to/model.gguf"),
+            "model-123",
+            Some("lfm".to_string()),
+        ).await;
+
+        {
+            let state = manager.watchdog_state.lock().await;
+            assert_eq!(state.path, std::path::Path::new("/path/to/model.gguf"));
+            assert_eq!(state.id, "model-123");
+            assert_eq!(state.strategy, Some("lfm".to_string()));
+        }
+
+        manager.shutdown().await;
+        assert!(manager.watchdog_handle.is_none());
+    }
+
+    #[test]
+    fn test_strategy_fallback_from_model_id() {
+        assert_eq!(super::TranslationClient::select_strategy_for_model("shisa-v2.1-llama3.2-3b-GGUF"), "qwen");
+        assert_eq!(super::TranslationClient::select_strategy_for_model("translategemma-4b-it.Q4_K_M"), "gemma");
+        assert_eq!(super::TranslationClient::select_strategy_for_model("LFM2-350M-ENJP-MT-Q8_0"), "lfm");
     }
 }
