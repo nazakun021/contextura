@@ -60,6 +60,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Single-display capture            | ✅     | Core display capture and targeting is fully implemented and verified                                                                |
 | ocr_boxes golden tests            | ✅     | Integration testing framework supports coordinate checking; `test-corpus` fixtures are active in the `--test-suite` path            |
 | Runtime latency instrumentation   | ✅     | Pipeline and translation stages emit `[Latency]` debug logs for OCR, concurrent stage, and chat completion timing                   |
+| Wire-to-wire smoke harness        | ✅     | `scripts/smoke-wire-to-wire.sh` automates compile/test gates and `--debug-cli` OCR→translation verification against `test-corpus`   |
 
 ### Still pending
 

@@ -1,0 +1,13 @@
+{
+  "input": "/Users/infinite/Developer/contextura/test-corpus/case1-dialog.png",
+  "ocr": [
+    "勇者よ、魔王を倒せ！",
+    "はい",
+    "いいえ"
+  ],
+  "translations": [
+    "You brave hero, defeat the Demon King!",
+    "- Yes.",
+    "- No."
+  ]
+}

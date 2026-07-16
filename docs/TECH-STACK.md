@@ -40,8 +40,7 @@ graph TD
 - **Overlay Capture Exclusion**: Prefers direct window exclusion for Contextura-owned windows, and the overlay window is also marked `NSWindowSharingType::None`.
 - **Deduplication Strategy**: OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
 - **Debounce Resilience**: Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
-- **File-I/O Avoidance in OCR Hot Path**: Runtime OCR no longer depends on per-frame temp-frame file writes; PNG payloads are streamed to the helper.
-- **In-Memory OCR Handoff**: OCR no longer depends on per-frame cache-file roundtrips in the runtime hot path; PNG payloads are piped directly to the helper.
+- **In-Memory OCR Handoff**: Runtime OCR no longer depends on per-frame temp-frame file roundtrips in the hot path; PNG payloads are streamed directly to the helper.
 - **Content Security Policy**: CSP hardening is planned; current Tauri config sets `app.security.csp` to null and should be tightened before production release.
 
 ---

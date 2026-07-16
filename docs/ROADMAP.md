@@ -36,5 +36,6 @@ Scale the application and prepare for a public beta.
 Close remaining production-readiness gaps.
 
 - **Manual End-to-End Smoke Verification** [🟡]: Required live pass with a valid local model and real Japanese content.
+- **Automated Wire-To-Wire Smoke Harness** [✅]: `scripts/smoke-wire-to-wire.sh` now validates compile/test gates plus OCR→translation CLI probes against `test-corpus`.
 - **Updater Signing Public Key** [🟡]: Configure `plugins.updater.pubkey` before production release.
 - **Frontend CSP Hardening** [🟡]: Replace null CSP with restrictive policy for packaged app windows.

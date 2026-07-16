@@ -15,6 +15,28 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 Current workspace status at last verification: Rust test suite reports 107 passing tests.
 
+## Automated Wire-To-Wire Smoke Test
+
+Run the repository smoke harness that follows this verification guide end-to-end:
+
+```bash
+./scripts/smoke-wire-to-wire.sh
+```
+
+Quick mode (skips clippy, still runs build checks + single PNG probe + full corpus suite):
+
+```bash
+./scripts/smoke-wire-to-wire.sh --quick
+```
+
+What this verifies automatically:
+
+1. Rust compile/test gates.
+2. Single-image OCR + translation probe through `--debug-cli`.
+3. Full `test-corpus` OCR + translation suite through `--debug-cli --test-suite`.
+
+This is the recommended default smoke pass before any manual GUI validation.
+
 If you changed Rust runtime code, also run clippy:
 
 ```bash

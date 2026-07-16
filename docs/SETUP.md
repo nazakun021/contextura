@@ -24,7 +24,7 @@ For Contextura to work end-to-end, all of these must be true:
 3. A compatible local GGUF model exists on disk.
 4. `llama-server` starts and responds on `127.0.0.1:8765`.
 5. The app captures a frame.
-6. OCR helper runs successfully on the saved frame.
+6. OCR helper runs successfully on runtime-captured frame data.
 7. Translation runs.
 8. The overlay receives IPC events and renders boxes.
 
@@ -196,7 +196,7 @@ Then verify this behavior:
 1. Scroll or move the content.
 2. Stop moving.
 3. Wait about 300ms.
-4. The app should save a screenshot, run OCR, translate text, and show overlay boxes.
+4. The app should trigger OCR, translate text, and show overlay boxes.
 
 ## 9. Check The Fastest Debug Signals
 
@@ -227,7 +227,7 @@ If the image is black, empty, or wrong:
 
 ### C. Does OCR run?
 
-If a PNG exists but nothing translates, the next suspect is `vision-helper`.
+If capture triggers but nothing translates, the next suspect is `vision-helper`.
 
 Current known status in this workspace:
 
@@ -310,7 +310,7 @@ You can trigger a frame pass (`Cmd+Shift+R`) and observe OCR/latency logs.
 
 ### Stage 3: OCR helper works
 
-The standalone helper succeeds on the saved frame and returns OCR boxes.
+The standalone helper succeeds on a test PNG and returns OCR boxes.
 
 ### Stage 4: Translation works
 
