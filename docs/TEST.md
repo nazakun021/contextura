@@ -15,6 +15,21 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 Current workspace status at last verification: Rust test suite reports 107 passing tests.
 
+## Local Pre-Push Lint Automation
+
+Install repository-managed git hooks once:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+After installation, every `git push` automatically runs:
+
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --all-targets --all-features -- -D warnings -D clippy::perf`
+
+If either check fails, the push is blocked locally.
+
 ## Automated Wire-To-Wire Smoke Test
 
 Run the repository smoke harness that follows this verification guide end-to-end:

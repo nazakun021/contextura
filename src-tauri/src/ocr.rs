@@ -121,7 +121,8 @@ impl OcrEngine {
         _cache_dir: &Path,
         _frame_id: u64,
     ) -> anyhow::Result<Vec<OcrResult>> {
-        let png_bytes = crate::snapshot::encode_frame_as_png(rgba_data, width as usize, height as usize)?;
+        let png_bytes =
+            crate::snapshot::encode_frame_as_png(rgba_data, width as usize, height as usize)?;
 
         let child = Command::new(&self.vision_helper_path)
             .arg("--stdin")
