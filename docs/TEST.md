@@ -1,6 +1,6 @@
 # TEST.md — Verification Guide
 
-**Last Updated:** 2026-07-06
+**Last Updated:** 2026-07-16
 
 Use this file when you want the shortest path to verify that Contextura still works after code or model changes.
 
@@ -13,6 +13,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
+Current workspace status at last verification: Rust test suite reports 106 passing tests.
+
 If you changed Rust runtime code, also run clippy:
 
 ```bash
@@ -21,7 +23,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 
 ## Translation Sidecar Probe
 
-Start the bundled sidecar against the default TranslateGemma model (use `--no-jinja` to avoid chat template compilation errors with TranslateGemma):
+Start the bundled sidecar against the default TranslateGemma model (TranslateGemma strategy uses `--no-jinja`; Qwen/LFM strategies use `--jinja`):
 
 ```bash
 ./src-tauri/binaries/llama-server-aarch64-apple-darwin \

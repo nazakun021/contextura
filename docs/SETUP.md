@@ -1,6 +1,6 @@
 # Contextura macOS Setup Guide
 
-**Last Updated:** 2026-04-26
+**Last Updated:** 2026-07-16
 
 This is the full setup checklist for getting Contextura from a fresh clone to a meaningful local smoke test.
 
@@ -72,11 +72,11 @@ ScreenCaptureKit
 
 Important files:
 
-- [src-tauri/src/lib.rs](/Users/infinite/Programming/contextura/src-tauri/src/lib.rs:88): main runtime wiring
-- [src-tauri/src/capture.rs](/Users/infinite/Programming/contextura/src-tauri/src/capture.rs:1): screen capture
-- [src-tauri/src/ocr.rs](/Users/infinite/Programming/contextura/src-tauri/src/ocr.rs:1): OCR helper integration
-- [src-tauri/src/translation.rs](/Users/infinite/Programming/contextura/src-tauri/src/translation.rs:59): sidecar startup and translation requests
-- [src/overlay.js](/Users/infinite/Programming/contextura/src/overlay.js:1): frontend rendering of results
+- [src-tauri/src/lib.rs](../src-tauri/src/lib.rs): main runtime wiring
+- [src-tauri/src/capture.rs](../src-tauri/src/capture.rs): screen capture
+- [src-tauri/src/ocr.rs](../src-tauri/src/ocr.rs): OCR helper integration
+- [src-tauri/src/translation.rs](../src-tauri/src/translation.rs): sidecar startup and translation requests
+- [src/overlay.js](../src/overlay.js): frontend rendering of results
 
 If you are new to macOS development, think of this app as three parts:
 
@@ -164,7 +164,7 @@ Run:
   --n-gpu-layers 99 \
   --ctx-size 1024 \
   --host 127.0.0.1 \
-  --jinja
+  --no-jinja
 ```
 
 In another terminal:
@@ -237,7 +237,7 @@ Current known issue in this workspace:
 
 Likely area:
 
-- [src-tauri/src/ocr.rs](/Users/infinite/Programming/contextura/src-tauri/src/ocr.rs:58)
+- [src-tauri/src/ocr.rs](../src-tauri/src/ocr.rs)
 
 ### D. Does translation run?
 
@@ -249,7 +249,7 @@ If OCR is working but translations do not appear:
 
 Likely area:
 
-- [src-tauri/src/translation.rs](/Users/infinite/Programming/contextura/src-tauri/src/translation.rs:137)
+- [src-tauri/src/translation.rs](../src-tauri/src/translation.rs)
 
 ### E. Does the overlay receive events?
 
@@ -262,7 +262,7 @@ The frontend listens for:
 
 See:
 
-- [src/overlay.js](/Users/infinite/Programming/contextura/src/overlay.js:8)
+- [src/overlay.js](../src/overlay.js)
 
 If backend logs look fine but nothing appears onscreen, the bug is probably in event delivery or DOM rendering.
 
@@ -282,6 +282,7 @@ Implemented:
 - `Cmd+Shift+T`: toggle overlay
 - `Cmd+Shift+R`: force immediate OCR/translation
 - `Cmd+Shift+M`: clear translation memory
+- `Cmd+Shift+G`: cycle to next installed model and restart runtime
 - `Cmd+Shift+Q`: quit app
 
 Not implemented yet:
@@ -290,7 +291,7 @@ Not implemented yet:
 
 Source:
 
-- [src-tauri/src/hotkeys.rs](/Users/infinite/Programming/contextura/src-tauri/src/hotkeys.rs:1)
+- [src-tauri/src/hotkeys.rs](../src-tauri/src/hotkeys.rs)
 
 For debugging, `Cmd+Shift+R` is your most useful shortcut.
 
@@ -409,11 +410,11 @@ That loop is enough to get this app from "compiles" to "actually useful."
 
 ## 17. Useful Repo Docs
 
-- [README.md](/Users/infinite/Programming/contextura/README.md:1)
-- [SPEC.md](/Users/infinite/Programming/contextura/SPEC.md:1)
-- [TECH-STACK.md](/Users/infinite/Developer/contextura/docs/TECH-STACK.md)
-- [MISSION.md](/Users/infinite/Developer/contextura/docs/MISSION.md)
-- [ROADMAP.md](/Users/infinite/Developer/contextura/docs/ROADMAP.md)
+- [README.md](../README.md)
+- [docs/SPEC.md](SPEC.md)
+- [docs/TECH-STACK.md](TECH-STACK.md)
+- [docs/MISSION.md](MISSION.md)
+- [docs/ROADMAP.md](ROADMAP.md)
 
 ## 18. If You Feel Stuck
 

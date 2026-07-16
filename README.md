@@ -62,7 +62,7 @@ huggingface-cli download mradermacher/translategemma-4b-it-GGUF \
   --local-dir ~/Library/Application\ Support/contextura/models/
 ```
 
-_(Alternative decoder-only Gwen GGUF models can also be placed here; Contextura supports model-specific Jinja prompting automatically)._
+_(Alternative decoder-only Qwen GGUF models can also be placed here; Contextura selects translation strategy and sidecar launch flags automatically per model family.)_
 
 ### 4. Grant Permissions
 
@@ -97,6 +97,8 @@ Contextura is verified by both unit/integration tests and a live E2E runner.
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
+
+Current workspace verification status: Rust test suite reports 106 passing tests.
 
 ### Run Golden-File Integration Suite
 
@@ -153,3 +155,8 @@ Contextura does not write temporary frames to shared `/tmp` spaces. Captured fra
 - **Storage Path:** `~/Library/Caches/com.contextura.app/`
 - **Temporary Snapshots:** `contextura-frame-{id}.png` (cleaned up automatically)
 - **Latest Debug Snapshot:** `contextura-frame-latest.png`
+
+## Release Hardening Notes
+
+- **Updater signing key:** Updater endpoints are configured, but `plugins.updater.pubkey` is still empty in `src-tauri/tauri.conf.json` and must be set before production release.
+- **Content Security Policy:** The current Tauri config sets `app.security.csp` to null; define a restrictive CSP before production release.

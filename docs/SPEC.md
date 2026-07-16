@@ -1,7 +1,7 @@
 # SPEC.md — Contextura
 
-**Version:** 2.1.0  
-**Last Updated:** 2026-07-06  
+**Version:** 2.1.1  
+**Last Updated:** 2026-07-16  
 **Target:** macOS 13+ on Apple Silicon
 
 ## Summary
@@ -24,47 +24,49 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 ### Code-integrated features
 
-| Area                            | Status | Notes                                                                                                    |
-| ------------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
-| Tauri app bootstrap             | ✅     | `main.rs` stays thin; `lib.rs` owns runtime bootstrap and command registration                          |
-| Screen capture                  | ✅     | Single display, explicit BGRA; capture excludes own windows                                             |
-| Motion detection and debounce   | ✅     | xxHash-based thumbnail deduplication; DebounceStateMachine wired into frame loop                        |
-| Unified RGBA conversion         | ✅     | BGRA→RGBA swap happens once at capture boundary; downstream modules consume unified RGBA                 |
-| Secure snapshot storage         | ✅     | Snapshot frames written to app-private cache dir; `/tmp` debug copy is opt-in only                      |
-| OCR subprocess                  | ✅     | Bundled `vision-helper` validates input frames and returns OCR JSON; failure treated as real error       |
-| Pluggable translation strategy  | ✅     | TranslateGemma and Qwen strategies are pluggable; new strategies don't require touching client internals |
-| Translation sidecar             | ✅     | Health check, watchdog restart, fail-loud error IPC on repeated failures                                 |
-| Concurrent pipeline             | ✅     | Styling color-sampling and LLM translation run concurrently; results merged before overlay update        |
-| Dynamic styling                 | ✅     | WCAG-based foreground/background selection from RGBA pixels                                              |
-| IPC to overlay                  | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`                   |
-| Fail-loud error UI              | ✅     | Persistent error card rendered in overlay on `translation-error`; prompts manual retry                   |
-| Smart overlay presentation      | ✅     | CSS fade-in/out transitions, skeleton loaders, horizontal/vertical collision avoidance                   |
-| Event-driven capture loop       | ✅     | `tokio::select!` over frame channel, command channel, and async debounce timer                          |
-| Deterministic settings reload   | ✅     | 60-second timer removed; settings reload immediately on pipeline commands                                |
-| Overlay toggle hotkey           | ✅     | `Cmd+Shift+T`                                                                                            |
-| Force OCR hotkey                | ✅     | `Cmd+Shift+R`; bypasses debounce and runs against latest cached frame                                   |
-| Manual memory reset             | ✅     | `Cmd+Shift+M`                                                                                            |
-| Model cycling hotkey            | ✅     | `Cmd+Shift+G` cycles to next installed local model and restarts the runtime                             |
-| Tray primary actions            | ✅     | Toggle, translate now, clear context                                                                     |
-| Context invalidation            | ✅     | App switch clears memory and overlay                                                                     |
-| Watchdog                        | ✅     | Restarts sidecar after 3 consecutive health failures                                                     |
-| Overlay capture exclusion       | ✅     | Excludes own windows from capture; overlay marked `NSWindowSharingType::None`                           |
-| Wizard screens 1–4              | ✅     | Setup flow covers permissions, model, controls, ready state                                              |
-| Real CLI OCR/translation path   | ✅     | Code path is live and end-to-end verified using local LLM sidecar                        |
-| Golden-file integration runner  | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; 79 tests pass           |
-| Capture restart handling        | ✅     | Stalled capture stream triggers rebuild                                                                   |
-| Thermal + battery awareness     | ✅     | Thermal API + `pmset -g batt`                                                                            |
-| Optional Sentry                 | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                |
-| Updater signing pubkey support  | ✅     | `tauri.conf.json` updater structure is fully configured and ready for production key injection            |
-| Quality-tier policy + model cycle| ✅     | Model switching and tier categorization (Standard/Quality/Custom) are fully implemented in `models.rs`    |
-| Single-display capture          | ✅     | Core display capture and targeting is fully implemented and verified                                     |
-| ocr_boxes golden tests          | ✅     | Integration testing framework supports coordinate checking; `test-corpus` is live with 79 unit tests      |
+| Area                              | Status | Notes                                                                                                                               |
+| --------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Tauri app bootstrap               | ✅     | `main.rs` stays thin; `lib.rs` owns runtime bootstrap and command registration                                                      |
+| Screen capture                    | ✅     | Single display, explicit BGRA; capture excludes own windows                                                                         |
+| Motion detection and debounce     | ✅     | xxHash-based thumbnail deduplication; DebounceStateMachine wired into frame loop                                                    |
+| Unified RGBA conversion           | ✅     | BGRA→RGBA swap happens once at capture boundary; downstream modules consume unified RGBA                                            |
+| Secure snapshot storage           | ✅     | Snapshot frames written to app-private cache dir; `/tmp` debug copy is opt-in only                                                  |
+| OCR subprocess                    | ✅     | Bundled `vision-helper` validates input frames and returns OCR JSON; failure treated as real error                                  |
+| Pluggable translation strategy    | ✅     | TranslateGemma and Qwen strategies are pluggable; new strategies don't require touching client internals                            |
+| Translation sidecar               | ✅     | Health check, watchdog restart, fail-loud error IPC on repeated failures                                                            |
+| Concurrent pipeline               | ✅     | Styling color-sampling and LLM translation run concurrently; results merged before overlay update                                   |
+| Dynamic styling                   | ✅     | WCAG-based foreground/background selection from RGBA pixels                                                                         |
+| IPC to overlay                    | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`                                               |
+| Fail-loud error UI                | ✅     | Persistent error card rendered in overlay on `translation-error`; prompts manual retry                                              |
+| Smart overlay presentation        | ✅     | CSS fade-in/out transitions, skeleton loaders, horizontal/vertical collision avoidance                                              |
+| Event-driven capture loop         | ✅     | `tokio::select!` over frame channel, command channel, and async debounce timer                                                      |
+| Deterministic settings reload     | ✅     | 60-second timer removed; settings reload immediately on pipeline commands                                                           |
+| Overlay toggle hotkey             | ✅     | `Cmd+Shift+T`                                                                                                                       |
+| Force OCR hotkey                  | ✅     | `Cmd+Shift+R`; bypasses debounce and runs against latest cached frame                                                               |
+| Manual memory reset               | ✅     | `Cmd+Shift+M`                                                                                                                       |
+| Model cycling hotkey              | ✅     | `Cmd+Shift+G` cycles to next installed local model and restarts the runtime                                                         |
+| Tray primary actions              | ✅     | Toggle, translate now, clear context                                                                                                |
+| Context invalidation              | ✅     | App switch clears memory and overlay                                                                                                |
+| Watchdog                          | ✅     | Restarts sidecar after 3 consecutive health failures                                                                                |
+| Overlay capture exclusion         | ✅     | Excludes own windows from capture; overlay marked `NSWindowSharingType::None`                                                       |
+| Wizard screens 1–4                | ✅     | Setup flow covers permissions, model, controls, ready state                                                                         |
+| Real CLI OCR/translation path     | ✅     | Code path is live and end-to-end verified using local LLM sidecar                                                                   |
+| Golden-file integration runner    | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; Rust test suite currently reports 106 passing tests |
+| Capture restart handling          | ✅     | Stalled capture stream triggers rebuild                                                                                             |
+| Thermal + battery awareness       | ✅     | Thermal API + `pmset -g batt`                                                                                                       |
+| Optional Sentry                   | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                                           |
+| Updater signing pubkey support    | ⚠️     | Updater endpoints are configured, but `plugins.updater.pubkey` is currently empty in `tauri.conf.json`                              |
+| Quality-tier policy + model cycle | ✅     | Model switching and tier categorization (Standard/Quality/Custom) are fully implemented in `models.rs`                              |
+| Single-display capture            | ✅     | Core display capture and targeting is fully implemented and verified                                                                |
+| ocr_boxes golden tests            | ✅     | Integration testing framework supports coordinate checking; `test-corpus` fixtures are active in the `--test-suite` path            |
 
 ### Still pending
 
-| Area                                 | Status | Notes                                                                              |
-| ------------------------------------ | ------ | ---------------------------------------------------------------------------------- |
-| Manual end-to-end smoke verification | [-]    | Required with a valid local model and real Japanese screen content                  |
+| Area                                 | Status | Notes                                                              |
+| ------------------------------------ | ------ | ------------------------------------------------------------------ |
+| Manual end-to-end smoke verification | [-]    | Required with a valid local model and real Japanese screen content |
+| Updater signing key injection        | [-]    | Set `plugins.updater.pubkey` before production release             |
+| Frontend CSP hardening               | [-]    | `app.security.csp` is currently null in Tauri config               |
 
 ## Non-Negotiable Model Constraint
 
@@ -123,7 +125,7 @@ Unsupported in this architecture:
 
 - Binary: bundled `llama-server`
 - Bind address: `127.0.0.1:8765`
-- Required launch arg: `--jinja`
+- Required launch arg by strategy: `--no-jinja` for TranslateGemma; `--jinja` for Qwen/LFM
 - TranslateGemma strategy: sequential structured chat requests per string within each chunk
 - Qwen strategy: numbered batched translation with rolling context memory and `/no_think`
 - Active strategy is selected from the active model ID
@@ -139,25 +141,25 @@ Unsupported in this architecture:
 
 ## Module Responsibilities
 
-| File                           | Responsibility                                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `src-tauri/src/lib.rs`         | Orchestration, Tauri bootstrap, command registration; thin runtime shell                          |
-| `src-tauri/src/scheduler.rs`   | Event-driven pipeline loop (`tokio::select!`), debounce, concurrent styling+translation dispatch  |
-| `src-tauri/src/models.rs`      | Model manifest loading, active-model resolution, model switching                                  |
-| `src-tauri/src/capture.rs`     | ScreenCaptureKit capture, BGRA→RGBA unified conversion at capture boundary                        |
-| `src-tauri/src/motion.rs`      | xxHash-based thumbnail deduplication, DebounceStateMachine                                        |
-| `src-tauri/src/snapshot.rs`    | Secure cache-dir snapshot writes, BGRA→RGBA swap helper                                           |
-| `src-tauri/src/ocr.rs`         | OCR subprocess, coordinate conversion, CJK filtering, post-processing                             |
-| `src-tauri/src/translation.rs` | Pluggable strategy dispatch (TranslateGemma / Qwen), health polling, batching, memory             |
-| `src-tauri/src/styling.rs`     | Contrast-aware overlay styling from RGBA pixels                                                   |
-| `src-tauri/src/ipc.rs`         | Payload types for all frontend IPC events including `TranslationErrorPayload`                     |
-| `src-tauri/src/context.rs`     | App-switch invalidation                                                                           |
-| `src-tauri/src/thermal.rs`     | Thermal and battery throttling signals                                                            |
-| `src-tauri/src/hotkeys.rs`     | Global shortcuts                                                                                  |
-| `src-tauri/src/tray.rs`        | Tray menu behavior                                                                                |
-| `src-tauri/src/path_resolver.rs` | Binary path resolution, available-port discovery                                                |
-| `src-tauri/src/cli.rs`         | Debug-CLI and `--test-suite` golden-file runner                                                   |
-| `src/overlay.js`               | Frontend event handling, collision avoidance, fade transitions, skeleton loaders, error card      |
+| File                             | Responsibility                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `src-tauri/src/lib.rs`           | Orchestration, Tauri bootstrap, command registration; thin runtime shell                         |
+| `src-tauri/src/scheduler.rs`     | Event-driven pipeline loop (`tokio::select!`), debounce, concurrent styling+translation dispatch |
+| `src-tauri/src/models.rs`        | Model manifest loading, active-model resolution, model switching                                 |
+| `src-tauri/src/capture.rs`       | ScreenCaptureKit capture, BGRA→RGBA unified conversion at capture boundary                       |
+| `src-tauri/src/motion.rs`        | xxHash-based thumbnail deduplication, DebounceStateMachine                                       |
+| `src-tauri/src/snapshot.rs`      | Secure cache-dir snapshot writes, BGRA→RGBA swap helper                                          |
+| `src-tauri/src/ocr.rs`           | OCR subprocess, coordinate conversion, CJK filtering, post-processing                            |
+| `src-tauri/src/translation.rs`   | Pluggable strategy dispatch (TranslateGemma / Qwen), health polling, batching, memory            |
+| `src-tauri/src/styling.rs`       | Contrast-aware overlay styling from RGBA pixels                                                  |
+| `src-tauri/src/ipc.rs`           | Payload types for all frontend IPC events including `TranslationErrorPayload`                    |
+| `src-tauri/src/context.rs`       | App-switch invalidation                                                                          |
+| `src-tauri/src/thermal.rs`       | Thermal and battery throttling signals                                                           |
+| `src-tauri/src/hotkeys.rs`       | Global shortcuts                                                                                 |
+| `src-tauri/src/tray.rs`          | Tray menu behavior                                                                               |
+| `src-tauri/src/path_resolver.rs` | Binary path resolution, available-port discovery                                                 |
+| `src-tauri/src/cli.rs`           | Debug-CLI and `--test-suite` golden-file runner                                                  |
+| `src/overlay.js`                 | Frontend event handling, collision avoidance, fade transitions, skeleton loaders, error card     |
 
 ## Verification Expectations
 
@@ -167,4 +169,4 @@ Rust verification is necessary but not sufficient. A feature is only operational
 2. A valid local decoder-only GGUF model present
 3. A successful live translation pass over real Japanese content
 
-The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The 79 Rust unit tests cover all core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.
+The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The Rust suite currently reports 106 passing tests across core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.

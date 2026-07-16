@@ -31,69 +31,72 @@ graph TD
 
 ## Key Runtime Decisions
 
-* **Capture Format**: Pixel format is explicitly `BGRA`.
-* **Snapshot Encoding**: Converts BGRA to RGBA once and reuses that RGBA buffer for styling.
-* **Scale Factor**: Derived dynamically from ScreenCaptureKit display metadata, not hardcoded.
-* **Model-Specific Prompting**: Qwen-style numbered batches with `/no_think`, or TranslateGemma structured chat requests without `/no_think`.
-* **Cached Frame Path**: Force scan reuses the latest cached capture frame instead of waiting for another stream tick.
-* **Watchdog Protection**: Restarts `llama-server` after repeated failed health checks.
-* **Context Invalidation**: Memory is cleared on app switch and manual reset.
-* **Overlay Capture Exclusion**: Prefers direct window exclusion for Contextura-owned windows, and the overlay window is also marked `NSWindowSharingType::None`.
-* **Deduplication Strategy**: OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
-* **Debounce Resilience**: Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
-* **Secure Temporary Files**: Frames are written to the app's secure, private Cache directory, ensuring multi-user security.
-* **Content Security Policy**: A restrictive Content Security Policy (CSP) must be implemented in the frontend HTML documents to mitigate injection risks, despite the offline nature of the app.
-
+- **Capture Format**: Pixel format is explicitly `BGRA`.
+- **Snapshot Encoding**: Converts BGRA to RGBA once and reuses that RGBA buffer for styling.
+- **Scale Factor**: Derived dynamically from ScreenCaptureKit display metadata, not hardcoded.
+- **Model-Specific Prompting**: Qwen-style numbered batches with `/no_think`, or TranslateGemma structured chat requests without `/no_think`.
+- **Cached Frame Path**: Force scan reuses the latest cached capture frame instead of waiting for another stream tick.
+- **Watchdog Protection**: Restarts `llama-server` after repeated failed health checks.
+- **Context Invalidation**: Memory is cleared on app switch and manual reset.
+- **Overlay Capture Exclusion**: Prefers direct window exclusion for Contextura-owned windows, and the overlay window is also marked `NSWindowSharingType::None`.
+- **Deduplication Strategy**: OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
+- **Debounce Resilience**: Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
+- **Secure Temporary Files**: Frames are written to the app's secure, private Cache directory, ensuring multi-user security.
+- **Content Security Policy**: CSP hardening is planned; current Tauri config sets `app.security.csp` to null and should be tightened before production release.
 
 ---
 
 ## Module Responsibilities
 
-| File | Responsibility | Status |
-| :--- | :--- | :--- |
-| `src-tauri/src/lib.rs` | Tauri setup, main runtime loop, and coordination | Active |
-| `src-tauri/src/capture.rs` | ScreenCaptureKit capture and frame extraction | Active |
-| `src-tauri/src/motion.rs` | Motion detection and debounce calculations | Active |
-| `src-tauri/src/ocr.rs` | OCR subprocess (`vision-helper`) integration, coordinates, and filtering | Active |
-| `src-tauri/src/translation.rs` | Sidecar lifecycle, health checks, batching, and LLM completions | Active |
-| `src-tauri/src/styling.rs` | WCAG contrast-aware overlay styling | Active |
-| `src-tauri/src/context.rs` | App-switch invalidation of context memory | Active |
-| `src-tauri/src/thermal.rs` | Thermal state and battery throttling signals | Active |
-| `src-tauri/src/hotkeys.rs` | Global shortcut listeners | Active |
-| `src-tauri/src/tray.rs` | Tray menus and primary action bindings | Active |
-| `src-tauri/src/ipc.rs` | Event payload types sent to the overlay | Active |
-| `src-tauri/src/downloader.rs` | Model download helper | Present but not integrated |
-| `src-tauri/src/cli.rs` | CLI parsing for tests and debug mode | Active |
+| File                           | Responsibility                                                           | Status                                                                |
+| :----------------------------- | :----------------------------------------------------------------------- | :-------------------------------------------------------------------- |
+| `src-tauri/src/lib.rs`         | Tauri setup, main runtime loop, and coordination                         | Active                                                                |
+| `src-tauri/src/capture.rs`     | ScreenCaptureKit capture and frame extraction                            | Active                                                                |
+| `src-tauri/src/motion.rs`      | Motion detection and debounce calculations                               | Active                                                                |
+| `src-tauri/src/ocr.rs`         | OCR subprocess (`vision-helper`) integration, coordinates, and filtering | Active                                                                |
+| `src-tauri/src/translation.rs` | Sidecar lifecycle, health checks, batching, and LLM completions          | Active                                                                |
+| `src-tauri/src/styling.rs`     | WCAG contrast-aware overlay styling                                      | Active                                                                |
+| `src-tauri/src/context.rs`     | App-switch invalidation of context memory                                | Active                                                                |
+| `src-tauri/src/thermal.rs`     | Thermal state and battery throttling signals                             | Active                                                                |
+| `src-tauri/src/hotkeys.rs`     | Global shortcut listeners                                                | Active                                                                |
+| `src-tauri/src/tray.rs`        | Tray menus and primary action bindings                                   | Active                                                                |
+| `src-tauri/src/ipc.rs`         | Event payload types sent to the overlay                                  | Active                                                                |
+| `src-tauri/src/downloader.rs`  | Model download helper                                                    | Implemented helper; full in-app workflow integration is still pending |
+| `src-tauri/src/cli.rs`         | CLI parsing for tests and debug mode                                     | Active                                                                |
 
 ---
 
 ## Frontend Layout
 
 The frontend remains static and framework-free:
-* `src/index.html` — Transparent overlay frame
-* `src/overlay.js` — IPC listener and box renderer
-* `src/overlay.css` — Box layouts and animations
-* `src/wizard.html` — First-run setup screens (1–4)
-* `src/help.html` — Documentation and keyboard shortcuts reference
+
+- `src/index.html` — Transparent overlay frame
+- `src/overlay.js` — IPC listener and box renderer
+- `src/overlay.css` — Box layouts and animations
+- `src/wizard.html` — First-run setup screens (1–4)
+- `src/help.html` — Documentation and keyboard shortcuts reference
 
 The overlay listens for:
-* `translation-started`
-* `translation-update`
-* `translation-clear`
-* `translation-error`
+
+- `translation-started`
+- `translation-update`
+- `translation-clear`
+- `translation-error`
 
 ---
 
 ## Sidecars
 
 ### `vision-helper`
-* **Source**: Swift binary in `src-tauri/src/bin/vision-helper.swift`.
-* **Framework**: Uses Apple Vision OCR.
-* **Pipeline**: Accepts an image path, validates that the file is readable/non-empty, and returns JSON OCR boxes on success.
-* **Selection**: Inspects multiple Vision candidates per observation and favors Japanese/CJK text when present.
+
+- **Source**: Swift binary in `src-tauri/src/bin/vision-helper.swift`.
+- **Framework**: Uses Apple Vision OCR.
+- **Pipeline**: Accepts an image path, validates that the file is readable/non-empty, and returns JSON OCR boxes on success.
+- **Selection**: Inspects multiple Vision candidates per observation and favors Japanese/CJK text when present.
 
 ### `llama-server`
-* **Lifecycle**: Managed sidecar running on `127.0.0.1:8765`.
-* **Requirement**: Requires a decoder-only GGUF model.
-* **Default Target**: `translategemma-4b-it.Q4_K_M.gguf` under the application support directory.
-* **Recovery**: Restarted by the Rust watchdog on repeated health-check failures.
+
+- **Lifecycle**: Managed sidecar running on `127.0.0.1:8765`.
+- **Requirement**: Requires a decoder-only GGUF model.
+- **Default Target**: `translategemma-4b-it.Q4_K_M.gguf` under the application support directory.
+- **Recovery**: Restarted by the Rust watchdog on repeated health-check failures.
