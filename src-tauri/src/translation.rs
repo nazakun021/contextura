@@ -577,7 +577,7 @@ impl TranslationStrategy {
         let futures = indices.iter().map(|&idx| retry_fn(idx));
         let retried = join_all(futures).await;
 
-        for (&idx, res) in indices.iter().zip(retried.into_iter()) {
+        for (&idx, res) in indices.iter().zip(retried) {
             if let Ok(val) = res {
                 results[idx] = val;
             }
