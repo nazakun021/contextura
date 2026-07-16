@@ -26,22 +26,17 @@ struct VisionHelper {
         // Vision text recognition is unreliable in this standalone helper unless Cocoa is initialized first.
         _ = NSApplication.shared
 
-        guard CommandLine.arguments.count >= 2 else {
-            fail("Missing image path argument", code: 64)
-        }
-
-        let imageURL = URL(fileURLWithPath: CommandLine.arguments[1])
-        guard FileManager.default.fileExists(atPath: imageURL.path) else {
-            fail("Input image does not exist at \(imageURL.path)", code: 66)
-        }
-        guard fileSize(at: imageURL) > 0 else {
-            fail("Input image is empty at \(imageURL.path)", code: 65)
-        }
+        let imageSource = resolveImageSource()
 
         let request = configuredRequest()
 
         do {
-            try perform(request: request, imageURL: imageURL)
+            switch imageSource {
+            case let .file(imageURL):
+                try perform(request: request, imageURL: imageURL)
+            case let .data(imageData):
+                try perform(request: request, imageData: imageData)
+            }
         } catch let VisionHelperError.requestFailed(urlError, cgImageError) {
             fputs(
                 "vision-helper: Vision request failed. url_handler=\(urlError); cgimage_handler=\(cgImageError)\n",
@@ -122,6 +117,58 @@ struct VisionHelper {
                 throw VisionHelperError.requestFailed(urlError: urlError, cgImageError: error)
             }
         }
+    }
+
+    private static func perform(
+        request: VNRecognizeTextRequest,
+        imageData: Data
+    ) throws {
+        do {
+            try VNImageRequestHandler(data: imageData).perform([request])
+            return
+        } catch {
+            let dataError = error
+
+            do {
+                guard let image = NSImage(data: imageData),
+                      let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                    throw VisionHelperError.cgImageDecodeFailed("stdin payload")
+                }
+                try VNImageRequestHandler(cgImage: cgImage).perform([request])
+                return
+            } catch {
+                throw VisionHelperError.requestFailed(urlError: dataError, cgImageError: error)
+            }
+        }
+    }
+
+    private enum ImageSource {
+        case file(URL)
+        case data(Data)
+    }
+
+    private static func resolveImageSource() -> ImageSource {
+        guard CommandLine.arguments.count >= 2 else {
+            fail("Missing image path argument (or --stdin)", code: 64)
+        }
+
+        let sourceArg = CommandLine.arguments[1]
+        if sourceArg == "--stdin" {
+            let input = FileHandle.standardInput.readDataToEndOfFile()
+            guard !input.isEmpty else {
+                fail("Input image is empty on stdin", code: 65)
+            }
+            return .data(input)
+        }
+
+        let imageURL = URL(fileURLWithPath: sourceArg)
+        guard FileManager.default.fileExists(atPath: imageURL.path) else {
+            fail("Input image does not exist at \(imageURL.path)", code: 66)
+        }
+        guard fileSize(at: imageURL) > 0 else {
+            fail("Input image is empty at \(imageURL.path)", code: 65)
+        }
+        return .file(imageURL)
     }
 
     private static func selectBestCandidate(

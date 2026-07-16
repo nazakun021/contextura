@@ -2,6 +2,7 @@
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -117,24 +118,18 @@ impl OcrEngine {
         width: u32,
         height: u32,
         scale_factor: f32,
-        cache_dir: &Path,
-        frame_id: u64,
+        _cache_dir: &Path,
+        _frame_id: u64,
     ) -> anyhow::Result<Vec<OcrResult>> {
-        let png_path = crate::snapshot::save_frame_as_png(
-            rgba_data,
-            width as usize,
-            height as usize,
-            frame_id,
-            cache_dir,
-        )?;
+        let png_bytes = crate::snapshot::encode_frame_as_png(rgba_data, width as usize, height as usize)?;
 
         let child = Command::new(&self.vision_helper_path)
-            .arg(&png_path)
+            .arg("--stdin")
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| {
-                let _ = std::fs::remove_file(&png_path);
                 format!(
                     "Failed to launch vision-helper at {}",
                     self.vision_helper_path.display()
@@ -144,10 +139,19 @@ impl OcrEngine {
         let child = match child {
             Ok(c) => c,
             Err(e) => {
-                let _ = std::fs::remove_file(&png_path);
                 return Err(e);
             }
         };
+
+        let mut child = child;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(&png_bytes)
+                .with_context(|| "Failed to send PNG payload to vision-helper stdin")?;
+        } else {
+            anyhow::bail!("vision-helper stdin was not available");
+        }
 
         let child_pid = child.id();
         let (tx, rx) = mpsc::channel();
@@ -157,27 +161,20 @@ impl OcrEngine {
         });
 
         let output = match rx.recv_timeout(OCR_HELPER_TIMEOUT) {
-            Ok(Ok(output)) => {
-                let _ = std::fs::remove_file(&png_path);
-                output
-            }
+            Ok(Ok(output)) => output,
             Ok(Err(error)) => {
-                let _ = std::fs::remove_file(&png_path);
                 anyhow::bail!("vision-helper I/O error: {error}");
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = Command::new("kill")
                     .args(["-KILL", &child_pid.to_string()])
                     .status();
-                let _ = std::fs::remove_file(&png_path);
                 anyhow::bail!(
-                    "vision-helper timed out after {}s while reading {}",
-                    OCR_HELPER_TIMEOUT.as_secs(),
-                    png_path.display()
+                    "vision-helper timed out after {}s while processing stdin image",
+                    OCR_HELPER_TIMEOUT.as_secs()
                 );
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = std::fs::remove_file(&png_path);
                 anyhow::bail!("vision-helper worker disconnected before producing output");
             }
         };
@@ -526,6 +523,48 @@ mod tests {
         assert_eq!(processed.len(), 2);
         assert_eq!(processed[0].text, "日本のだ");
         assert_eq!(processed[1].text, "日本語のだ");
+    }
+
+    #[test]
+    fn recognize_should_support_stdin_helper_contract() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("contextura-ocr-stdin-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+
+        let helper_path = temp_dir.join("mock-vision-helper-stdin.sh");
+        let script = r#"#!/bin/sh
+if [ "$1" != "--stdin" ]; then
+  echo "expected --stdin" >&2
+  exit 64
+fi
+bytes=$(wc -c | tr -d ' ')
+if [ "$bytes" -le 0 ]; then
+  echo "expected non-empty stdin" >&2
+  exit 65
+fi
+echo '[{"text":"日本語のは","confidence":1.0,"x":0.1,"y":0.1,"width":0.5,"height":0.2,"text_angle":0.0}]'
+"#;
+
+        std::fs::write(&helper_path, script).expect("mock helper should be written");
+        let chmod_status = std::process::Command::new("chmod")
+            .args(["+x", helper_path.to_str().expect("utf8 path")])
+            .status()
+            .expect("chmod should run");
+        assert!(chmod_status.success());
+
+        let engine = OcrEngine::new(false, helper_path);
+        let rgba = vec![0u8; 16 * 16 * 4];
+        let recognized = engine
+            .recognize(&rgba, 16, 16, 1.0, &temp_dir, 1)
+            .expect("stdin OCR recognition should succeed");
+
+        assert_eq!(recognized.len(), 1);
+        assert_eq!(recognized[0].text, "日本語のは");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

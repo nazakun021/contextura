@@ -1,7 +1,8 @@
 // src-tauri/src/snapshot.rs
 
 use image::ColorType;
-use std::path::{Path, PathBuf};
+use image::ImageEncoder;
+use std::path::Path;
 
 /// Swaps BGRA channels to RGBA in-place.
 pub fn swap_bgra_to_rgba_inplace(buffer: &mut [u8]) {
@@ -11,33 +12,22 @@ pub fn swap_bgra_to_rgba_inplace(buffer: &mut [u8]) {
 }
 
 /// Encodes an RGBA pixel buffer to a temporary PNG file.
-pub fn save_frame_as_png(
+pub fn encode_frame_as_png(
     rgba_data: &[u8],
     width: usize,
     height: usize,
-    frame_id: u64,
-    cache_dir: &Path,
-) -> anyhow::Result<PathBuf> {
-    let path = cache_dir.join(format!("contextura-frame-{frame_id}.png"));
-    let latest_path = cache_dir.join("contextura-frame-latest.png");
-
-    image::save_buffer(
-        &path,
-        rgba_data,
-        u32::try_from(width)?,
-        u32::try_from(height)?,
-        ColorType::Rgba8,
-    )?;
-    // Keep the latest captured frame on disk for manual inspection/debugging.
-    let _ = image::save_buffer(
-        &latest_path,
-        rgba_data,
-        u32::try_from(width)?,
-        u32::try_from(height)?,
-        ColorType::Rgba8,
-    );
-
-    Ok(path)
+) -> anyhow::Result<Vec<u8>> {
+    let mut png_bytes = Vec::new();
+    {
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+        encoder.write_image(
+            rgba_data,
+            u32::try_from(width)?,
+            u32::try_from(height)?,
+            ColorType::Rgba8,
+        )?;
+    }
+    Ok(png_bytes)
 }
 
 /// Deletes stale temporary frame files from the cache directory.
@@ -77,7 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn test_save_and_cleanup_frames() {
+    fn test_encode_and_cleanup_frames() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -90,15 +80,19 @@ mod tests {
         std::fs::write(&unrelated_path, "important data").unwrap();
 
         let rgba_data = vec![0; 400]; // 10x10 RGBA image
-        let path = save_frame_as_png(&rgba_data, 10, 10, 9999, &temp_dir).unwrap();
+        let png_bytes = encode_frame_as_png(&rgba_data, 10, 10).unwrap();
+        let path = temp_dir.join("contextura-frame-9999.png");
+        let latest = temp_dir.join("contextura-frame-latest.png");
+        std::fs::write(&path, &png_bytes).unwrap();
+        std::fs::write(&latest, &png_bytes).unwrap();
 
         // Verify that the frame is correctly saved in the specified cache directory
         assert!(path.exists(), "Expected snapshot to exist at {path:?}");
-        assert!(temp_dir.join("contextura-frame-latest.png").exists());
+        assert!(latest.exists());
 
         cleanup_stale_temp_frames(&temp_dir);
         assert!(!path.exists());
-        assert!(!temp_dir.join("contextura-frame-latest.png").exists());
+        assert!(!latest.exists());
 
         // Verify that unrelated file was NOT deleted
         assert!(

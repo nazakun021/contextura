@@ -105,6 +105,41 @@ pub struct MotionDetector {
 }
 
 impl MotionDetector {
+    fn downsample_into_impl(
+        rgba_pixels: &[u8],
+        full_width: usize,
+        full_height: usize,
+        thumb_width: usize,
+        thumb_height: usize,
+        thumbnail: &mut [u8],
+    ) {
+        if thumbnail.len() != thumb_width * thumb_height {
+            return;
+        }
+
+        let x_step = full_width as f32 / thumb_width as f32;
+        let y_step = full_height as f32 / thumb_height as f32;
+
+        for ty in 0..thumb_height {
+            for tx in 0..thumb_width {
+                let fx = (tx as f32 * x_step) as usize;
+                let fy = (ty as f32 * y_step) as usize;
+
+                let rgba_idx = (fy * full_width + fx) * 4;
+                if rgba_idx + 2 < rgba_pixels.len() {
+                    let r = rgba_pixels[rgba_idx];
+                    let g = rgba_pixels[rgba_idx + 1];
+                    let b = rgba_pixels[rgba_idx + 2];
+
+                    // Simple grayscale conversion: 0.299R + 0.587G + 0.114B
+                    let gray =
+                        (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) as u8;
+                    thumbnail[ty * thumb_width + tx] = gray;
+                }
+            }
+        }
+    }
+
     pub fn new(pixel_diff_threshold: u8, edge_inset_percent: u32) -> Self {
         Self {
             pixel_diff_threshold,
@@ -212,45 +247,67 @@ impl MotionDetector {
         size
     }
 
+    pub fn downsample_into(
+        &self,
+        rgba_pixels: &[u8],
+        full_width: usize,
+        full_height: usize,
+        thumbnail: &mut [u8],
+    ) {
+        Self::downsample_into_impl(
+            rgba_pixels,
+            full_width,
+            full_height,
+            self.width,
+            self.height,
+            thumbnail,
+        );
+    }
+
     pub fn downsample(&self, rgba_pixels: &[u8], full_width: usize, full_height: usize) -> Vec<u8> {
         let mut thumbnail = vec![0u8; self.width * self.height];
-
-        let x_step = full_width as f32 / self.width as f32;
-        let y_step = full_height as f32 / self.height as f32;
-
-        for ty in 0..self.height {
-            for tx in 0..self.width {
-                let fx = (tx as f32 * x_step) as usize;
-                let fy = (ty as f32 * y_step) as usize;
-
-                let rgba_idx = (fy * full_width + fx) * 4;
-                if rgba_idx + 2 < rgba_pixels.len() {
-                    let r = rgba_pixels[rgba_idx];
-                    let g = rgba_pixels[rgba_idx + 1];
-                    let b = rgba_pixels[rgba_idx + 2];
-
-                    // Simple grayscale conversion: 0.299R + 0.587G + 0.114B
-                    let gray =
-                        (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) as u8;
-                    thumbnail[ty * self.width + tx] = gray;
-                }
-            }
-        }
+        self.downsample_into(rgba_pixels, full_width, full_height, &mut thumbnail);
         thumbnail
     }
 
-    pub fn process_thumbnail(&mut self, current: &[u8]) -> f32 {
-        // Double-buffering copy
-        self.curr_thumbnail.copy_from_slice(current);
+    /// Process a full RGBA frame directly into the internal thumbnail buffers.
+    /// Returns `(motion_ratio, thumbnail_hash)`.
+    pub fn process_frame(
+        &mut self,
+        rgba_pixels: &[u8],
+        full_width: usize,
+        full_height: usize,
+    ) -> (f32, u64) {
+        let width = self.width;
+        let height = self.height;
 
-        // Compute diff
+        // Fill current thumbnail without intermediate allocation.
+        Self::downsample_into_impl(
+            rgba_pixels,
+            full_width,
+            full_height,
+            self.width,
+            self.height,
+            &mut self.curr_thumbnail,
+        );
+        let hash = compute_thumbnail_hash(&self.curr_thumbnail);
+
+        // Compute diff against previous thumbnail.
         let mask = self.compute_diff_mask(&self.prev_thumbnail, &self.curr_thumbnail);
         let ratio = self.largest_contiguous_region(&mask);
 
-        // Swap buffers for next frame
+        // Swap buffers for next frame.
         std::mem::swap(&mut self.prev_thumbnail, &mut self.curr_thumbnail);
 
-        ratio
+        // Keep sizes consistent in case internal parameters ever change.
+        if self.prev_thumbnail.len() != width * height
+            || self.curr_thumbnail.len() != width * height
+        {
+            self.prev_thumbnail.resize(width * height, 0);
+            self.curr_thumbnail.resize(width * height, 0);
+        }
+
+        (ratio, hash)
     }
 }
 

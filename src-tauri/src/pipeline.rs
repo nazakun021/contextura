@@ -2,6 +2,7 @@
 
 use rayon::prelude::*;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -9,6 +10,8 @@ use crate::capture::CaptureFrame;
 use crate::ipc::{TranslationBox, TranslationPayload};
 use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::styling::StylingEngine;
+
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(1500);
 
 pub struct PipelineProcessor {
     pub(crate) motion_detector: MotionDetector,
@@ -19,6 +22,9 @@ pub struct PipelineProcessor {
     pub last_payload: Option<TranslationPayload>,
     pub frame_id: u64,
     pub was_scrolling: bool,
+    pub current_frame_hash: Option<u64>,
+    pub last_health_check: Option<Instant>,
+    pub last_health_ok: bool,
 }
 
 impl PipelineProcessor {
@@ -39,6 +45,9 @@ impl PipelineProcessor {
             last_payload: None,
             frame_id: 0,
             was_scrolling: false,
+            current_frame_hash: None,
+            last_health_check: None,
+            last_health_ok: true,
         }
     }
 
@@ -59,10 +68,10 @@ impl PipelineProcessor {
         }
 
         let rgba_data = &frame.buffer.data;
-        let thumbnail =
+        let (motion_ratio, frame_hash) =
             self.motion_detector
-                .downsample(rgba_data, frame.buffer.width, frame.buffer.height);
-        let motion_ratio = self.motion_detector.process_thumbnail(&thumbnail);
+                .process_frame(rgba_data, frame.buffer.width, frame.buffer.height);
+        self.current_frame_hash = Some(frame_hash);
         self.debounce.update(motion_ratio)
     }
 
@@ -75,6 +84,7 @@ impl PipelineProcessor {
         invalidation_rx: &crossbeam_channel::Receiver<crate::context::InvalidationReason>,
         pipeline_tx: &crossbeam_channel::Sender<crate::scheduler::PipelineCommand>,
     ) -> Option<TranslationPayload> {
+        let frame_started_at = Instant::now();
         let cache_dir = app_handle
             .path()
             .app_cache_dir()
@@ -120,10 +130,12 @@ impl PipelineProcessor {
 
         // 2. Compute motion duplicate hash
         let rgba_data = &frame.buffer.data;
-        let thumbnail =
-            self.motion_detector
-                .downsample(rgba_data, frame.buffer.width, frame.buffer.height);
-        let frame_hash = crate::motion::compute_thumbnail_hash(&thumbnail);
+        let frame_hash = self.current_frame_hash.unwrap_or_else(|| {
+            let thumbnail =
+                self.motion_detector
+                    .downsample(rgba_data, frame.buffer.width, frame.buffer.height);
+            crate::motion::compute_thumbnail_hash(&thumbnail)
+        });
         if !is_forced
             && self.last_processed_hash == Some(frame_hash)
             && let Some(ref payload) = self.last_payload
@@ -133,20 +145,33 @@ impl PipelineProcessor {
             return Some(payload.clone());
         }
 
-        // 3. Pre-flight health check
-        if self.client.lock().await.quick_health_check().await.is_err() {
-            log::warn!(
-                "[Translation] Pre-flight health check failed — skipping frame and requesting runtime reload"
-            );
-            let _ = pipeline_tx.try_send(crate::scheduler::PipelineCommand::ReloadRuntime {
-                reason: "health check failed before batch".to_string(),
-            });
+        // 3. Pre-flight health check (throttled to avoid per-frame localhost RTT)
+        let now = Instant::now();
+        let should_check_health = self
+            .last_health_check
+            .is_none_or(|last| now.saturating_duration_since(last) >= HEALTH_CHECK_INTERVAL);
+
+        if should_check_health {
+            self.last_health_check = Some(now);
+            self.last_health_ok = self.client.lock().await.quick_health_check().await.is_ok();
+            if !self.last_health_ok {
+                log::warn!(
+                    "[Translation] Pre-flight health check failed — skipping frame and requesting runtime reload"
+                );
+                let _ = pipeline_tx.try_send(crate::scheduler::PipelineCommand::ReloadRuntime {
+                    reason: "health check failed before batch".to_string(),
+                });
+                return None;
+            }
+        } else if !self.last_health_ok {
+            // Recent check already failed; avoid extra work until scheduler reload path recovers.
             return None;
         }
 
         // 4. Run OCR
         let current_frame_id = self.frame_id;
         self.frame_id += 1;
+        let ocr_started_at = Instant::now();
 
         #[allow(clippy::cast_possible_truncation)]
         let ocr_results = self.ocr_engine.recognize(
@@ -165,6 +190,7 @@ impl PipelineProcessor {
                 return None;
             }
         };
+        let ocr_elapsed = ocr_started_at.elapsed();
 
         if ocr_results.is_empty() {
             log::debug!("[OCR] No CJK text found in frame {current_frame_id}");
@@ -186,9 +212,22 @@ impl PipelineProcessor {
             Ok(boxes) => boxes,
             Err(error) => {
                 log::error!("[Pipeline] Concurrent styling and translation failed: {error}");
+                let _ = pipeline_tx.try_send(crate::scheduler::PipelineCommand::ReloadRuntime {
+                    reason: format!("translation pipeline failed: {error}"),
+                });
                 return None;
             }
         };
+
+        let frame_elapsed = frame_started_at.elapsed();
+        log::debug!(
+            "[Latency] frame={} forced={} ocr_ms={} total_ms={} boxes={}",
+            current_frame_id,
+            is_forced,
+            ocr_elapsed.as_millis(),
+            frame_elapsed.as_millis(),
+            styled_boxes.len()
+        );
 
         let payload = TranslationPayload {
             boxes: styled_boxes,
@@ -219,20 +258,30 @@ impl PipelineProcessor {
             return Ok(vec![]);
         }
 
+        let concurrent_started_at = Instant::now();
+
         let texts = ocr_results
             .iter()
             .map(|result| result.text.clone())
             .collect::<Vec<_>>();
 
-        // styling sampling in Rayon threadpool
-        let ocr_results_clone = ocr_results.to_vec();
-        let rgba_data_clone = rgba_data.to_vec();
-        let styling_task = tokio::task::spawn_blocking(move || {
-            ocr_results_clone
-                .par_iter()
+        // Start translation immediately so local compute can overlap the network/LLM wait.
+        let translation_client = Arc::clone(&self.client);
+        let translation_texts = texts.clone();
+        let translation_task = tokio::spawn(async move {
+            let mut guard = translation_client.lock().await;
+            guard.translate_batch(&translation_texts).await
+        });
+
+        // Compute styling colors without cloning the full RGBA buffer.
+        // For tiny batches, sequential processing is usually faster than Rayon dispatch.
+        let styling_started_at = Instant::now();
+        let styling_colors = if ocr_results.len() < 3 {
+            ocr_results
+                .iter()
                 .map(|ocr| {
                     let bg = StylingEngine::sample_rect_ring(
-                        &rgba_data_clone,
+                        rgba_data,
                         buf_width,
                         buf_height,
                         ocr.bounding_box.x,
@@ -245,20 +294,32 @@ impl PipelineProcessor {
                     (bg, fg_color)
                 })
                 .collect::<Vec<_>>()
-        });
+        } else {
+            ocr_results
+                .par_iter()
+                .map(|ocr| {
+                    let bg = StylingEngine::sample_rect_ring(
+                        rgba_data,
+                        buf_width,
+                        buf_height,
+                        ocr.bounding_box.x,
+                        ocr.bounding_box.y,
+                        ocr.bounding_box.width,
+                        ocr.bounding_box.height,
+                        scale,
+                    );
+                    let fg_color = StylingEngine::get_fg_color(bg.r, bg.g, bg.b);
+                    (bg, fg_color)
+                })
+                .collect::<Vec<_>>()
+        };
+        let styling_elapsed = styling_started_at.elapsed();
 
-        // concurrent translation request
-        let (translations_res, styling_res) = tokio::join!(
-            async {
-                let mut guard = self.client.lock().await;
-                guard.translate_batch(&texts).await
-            },
-            styling_task
-        );
-
-        let translations = translations_res?;
-        let styling_colors =
-            styling_res.map_err(|e| anyhow::anyhow!("Styling thread join failed: {e}"))?;
+        let translation_wait_started_at = Instant::now();
+        let translations = translation_task
+            .await
+            .map_err(|e| anyhow::anyhow!("Translation task join failed: {e}"))??;
+        let translation_wait_elapsed = translation_wait_started_at.elapsed();
 
         if translations.len() != ocr_results.len() {
             anyhow::bail!(
@@ -291,6 +352,15 @@ impl PipelineProcessor {
                 }
             })
             .collect::<Vec<_>>();
+
+        log::debug!(
+            "[Latency] frame={} concurrent_ms={} styling_ms={} translation_join_wait_ms={} strings={}",
+            frame_id,
+            concurrent_started_at.elapsed().as_millis(),
+            styling_elapsed.as_millis(),
+            translation_wait_elapsed.as_millis(),
+            ocr_results.len()
+        );
 
         Ok(styled_boxes)
     }

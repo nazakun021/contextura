@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::sleep;
 
@@ -661,12 +661,19 @@ impl TranslationClient {
         let mut last_error = String::from("unknown error");
 
         for attempt in 1..=2 {
+            let attempt_started_at = Instant::now();
             let response = self.client.post(&url).json(&payload).send().await;
             match response {
                 Ok(response) => {
                     let status = response.status();
                     let body = response.text().await?;
                     if status.is_success() {
+                        log::debug!(
+                            "[Latency] chat_completion attempt={} status={} elapsed_ms={}",
+                            attempt,
+                            status,
+                            attempt_started_at.elapsed().as_millis()
+                        );
                         return serde_json::from_str(&body).map_err(|error| {
                             anyhow::anyhow!(
                                 "llama-server returned invalid JSON: {error}; body: {}",
@@ -674,9 +681,20 @@ impl TranslationClient {
                             )
                         });
                     }
+                    log::debug!(
+                        "[Latency] chat_completion attempt={} status={} elapsed_ms={}",
+                        attempt,
+                        status,
+                        attempt_started_at.elapsed().as_millis()
+                    );
                     last_error = format!("llama-server returned HTTP {status}: {}", body.trim());
                 }
                 Err(error) => {
+                    log::debug!(
+                        "[Latency] chat_completion attempt={} error elapsed_ms={}",
+                        attempt,
+                        attempt_started_at.elapsed().as_millis()
+                    );
                     last_error = error.to_string();
                 }
             }
