@@ -63,7 +63,7 @@ Your app flow today is:
 ScreenCaptureKit
   -> capture.rs
   -> motion.rs
-  -> save PNG to Cache Dir
+  -> encode PNG in memory
   -> vision-helper
   -> translation.rs
   -> IPC events
@@ -202,15 +202,14 @@ Then verify this behavior:
 
 When the app seems broken, check these in order.
 
-### A. Was a frame captured?
+### A. Was a frame processed?
 
-Look for:
+Check runtime logs for OCR/latency entries after a trigger:
 
-```text
-~/Library/Caches/com.contextura.app/contextura-frame-latest.png
-```
+- `[OCR]` errors for helper failures
+- `[Latency]` entries for per-frame timing
 
-If that file does not appear after a trigger, the issue is before OCR.
+If no frame-processing logs appear after a trigger, the issue is before OCR.
 
 Likely area:
 
@@ -230,9 +229,9 @@ If the image is black, empty, or wrong:
 
 If a PNG exists but nothing translates, the next suspect is `vision-helper`.
 
-Current known issue in this workspace:
+Current known status in this workspace:
 
-- the checked-in `test-corpus/*.png` files are real screenshots and are verified automatically by the test suite
+- the checked-in corpus expectations are verified automatically by the test suite
 - live GUI verification is still required after the latest runtime fixes
 
 Likely area:
@@ -271,7 +270,7 @@ If backend logs look fine but nothing appears onscreen, the bug is probably in e
 As of 2026-04-26, the codebase is beyond the original wiring phase:
 
 - capture, motion gating, styling, IPC, hotkeys, model switching, and watchdog recovery are all present
-- `~/Library/Caches/com.contextura.app/contextura-frame-latest.png` is produced for debugging
+- OCR handoff to `vision-helper` is now done via in-memory PNG bytes over stdin
 - TranslateGemma-specific request formatting, AppKit capture protection, shared RGBA styling input, and the inertial-scroll debounce fix are in code
 - the bundled `test-corpus/` PNG files are real screenshots and form a fully verified golden regression suite
 
@@ -307,11 +306,7 @@ cargo tauri dev
 
 ### Stage 2: Capture works
 
-You can see:
-
-```text
-~/Library/Caches/com.contextura.app/contextura-frame-latest.png
-```
+You can trigger a frame pass (`Cmd+Shift+R`) and observe OCR/latency logs.
 
 ### Stage 3: OCR helper works
 
@@ -374,9 +369,9 @@ Follow these in order.
 ### Immediate
 
 1. Run the app with the default TranslateGemma model.
-2. Confirm `~/Library/Caches/com.contextura.app/contextura-frame-latest.png` is generated.
-3. Confirm a real Japanese screen produces overlay translations.
-4. Confirm `Cmd+Shift+R` works during a live session.
+2. Confirm a real Japanese screen produces overlay translations.
+3. Confirm `Cmd+Shift+R` works during a live session.
+4. Confirm `[Latency]` log entries appear during translation cycles.
 
 ### After That
 
@@ -402,7 +397,7 @@ Use this loop:
 3. Run `cargo test --manifest-path src-tauri/Cargo.toml`.
 4. Launch `cargo tauri dev`.
 5. Test on a real Japanese screen.
-6. Check `~/Library/Caches/com.contextura.app/contextura-frame-latest.png`.
+6. Check runtime logs for `[Latency]` and `[OCR]` entries.
 7. Read logs.
 8. Repeat.
 
@@ -422,7 +417,7 @@ When the app fails, answer these five questions first:
 
 1. Did the app build?
 2. Did macOS allow screen recording?
-3. Did a PNG appear in `~/Library/Caches/com.contextura.app/`?
+3. Did a translation cycle trigger after `Cmd+Shift+R`?
 4. Did `llama-server` return `{"status":"ok"}`?
 5. Did `translation-update` reach the overlay?
 

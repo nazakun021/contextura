@@ -28,6 +28,8 @@ Scale the application and prepare for a public beta.
 - **Single-Display Capture Hardening** [✅]: Display targeting is robust and dynamic for the current single-display runtime contract.
 - **Memory Tiers & Quality Gates** [✅]: Quality/Standard/Custom model tiers classification integrated in manifest loading.
 - **Extended Model Manifests** [✅]: Qwen-style decoder GGUF models are supported as lightweight alternatives.
+- **In-Memory OCR Handoff** [✅]: Runtime OCR now streams PNG bytes to `vision-helper --stdin`, removing per-frame file-path handoff in the hot path.
+- **Latency Tracepoints** [✅]: `[Latency]` debug logs now cover OCR stage, concurrent styling+translation stage, and chat completion request timing.
 
 ## Phase 4: Release Hardening (In Progress)
 

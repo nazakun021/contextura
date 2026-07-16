@@ -7,8 +7,7 @@ Contextura uses a hybrid architecture combining Rust for orchestration and syste
 ```mermaid
 graph TD
     SCK[macOS ScreenCaptureKit] -->|Frames| Rust[Rust Orchestrator - Tauri v2]
-    Rust -->|Write Temp Frame| Disk[Disk App Cache]
-    Disk -->|Read Frame| Swift[Swift vision-helper Subprocess]
+    Rust -->|PNG bytes via stdin| Swift[Swift vision-helper Subprocess]
     Swift -->|Return OCR JSON| Rust
     Rust -->|Text Blocks| LLM[llama-server Sidecar]
     LLM -->|Local GGUF TranslateGemma| Rust
@@ -20,8 +19,8 @@ graph TD
 1. **Stream Capture**: `capture.rs` starts an `SCStream` for the display. Frames are copied out of the pixel buffer as BGRA bytes.
 2. **Motion Detection**: `motion.rs` downsamples frames to `160x90` grayscale and computes the motion ratio.
 3. **Debounce Gate**: `DebounceStateMachine` decides whether to clear overlays, wait, or trigger a scan based on screen settling (200ms default).
-4. **Snapshotting**: On trigger or manual force-scan, the orchestrator (`lib.rs`) converts BGRA to RGBA once, writes `contextura-frame-{id}.png` to the secure App Cache directory, and updates `contextura-frame-latest.png` there.
-5. **OCR Subprocess**: `ocr.rs` invokes `vision-helper` with the PNG path, handles timeouts, and converts Vision relative coordinates to overlay coordinates.
+4. **Snapshot Encoding**: On trigger or manual force-scan, the orchestrator (`lib.rs`) converts BGRA to RGBA once. `ocr.rs` encodes that frame to PNG bytes in memory.
+5. **OCR Subprocess**: `ocr.rs` invokes `vision-helper --stdin`, streams PNG bytes through stdin, handles timeouts, and converts Vision relative coordinates to overlay coordinates.
 6. **Sidecar Translation**: `translation.rs` formats request payloads depending on active model: sequential completions for `TranslateGemma` or numbered batched completions for Qwen.
 7. **Styling**: `styling.rs` samples background colors from the RGBA buffer and determines WCAG-compliant high-contrast foreground colors.
 8. **IPC Update**: `ipc.rs` structures payloads and emits Tauri events (`translation-started`, `translation-update`, `translation-clear`, `translation-error`) to the overlay window.
@@ -41,7 +40,8 @@ graph TD
 - **Overlay Capture Exclusion**: Prefers direct window exclusion for Contextura-owned windows, and the overlay window is also marked `NSWindowSharingType::None`.
 - **Deduplication Strategy**: OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
 - **Debounce Resilience**: Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
-- **Secure Temporary Files**: Frames are written to the app's secure, private Cache directory, ensuring multi-user security.
+- **File-I/O Avoidance in OCR Hot Path**: Runtime OCR no longer depends on per-frame temp-frame file writes; PNG payloads are streamed to the helper.
+- **In-Memory OCR Handoff**: OCR no longer depends on per-frame cache-file roundtrips in the runtime hot path; PNG payloads are piped directly to the helper.
 - **Content Security Policy**: CSP hardening is planned; current Tauri config sets `app.security.csp` to null and should be tightened before production release.
 
 ---
@@ -63,6 +63,7 @@ graph TD
 | `src-tauri/src/ipc.rs`         | Event payload types sent to the overlay                                  | Active                                                                |
 | `src-tauri/src/downloader.rs`  | Model download helper                                                    | Implemented helper; full in-app workflow integration is still pending |
 | `src-tauri/src/cli.rs`         | CLI parsing for tests and debug mode                                     | Active                                                                |
+| `src-tauri/src/snapshot.rs`    | In-memory PNG encoding and stale temp-frame cleanup utilities            | Active                                                                |
 
 ---
 
@@ -91,7 +92,7 @@ The overlay listens for:
 
 - **Source**: Swift binary in `src-tauri/src/bin/vision-helper.swift`.
 - **Framework**: Uses Apple Vision OCR.
-- **Pipeline**: Accepts an image path, validates that the file is readable/non-empty, and returns JSON OCR boxes on success.
+- **Pipeline**: Accepts stdin PNG bytes (`--stdin`) for runtime OCR and supports image-path input for compatibility/testing. Returns JSON OCR boxes on success.
 - **Selection**: Inspects multiple Vision candidates per observation and favors Japanese/CJK text when present.
 
 ### `llama-server`

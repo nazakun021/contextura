@@ -13,7 +13,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Current workspace status at last verification: Rust test suite reports 106 passing tests.
+Current workspace status at last verification: Rust test suite reports 107 passing tests.
 
 If you changed Rust runtime code, also run clippy:
 
@@ -65,12 +65,12 @@ lsof -ti:8765 | xargs kill -9 2>/dev/null
 
 ## OCR And CLI Probe
 
-After the app has captured at least one frame, verify the OCR/translation path on the saved PNG in the application's secure cache directory:
+Verify the OCR/translation path on a chosen PNG file (runtime OCR now streams in-memory PNG bytes to `vision-helper --stdin`):
 
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml -- \
   --debug-cli \
-  --input ~/Library/Caches/com.contextura.app/contextura-frame-latest.png \
+  --input /absolute/path/to/sample.png \
   --pretty
 ```
 
@@ -88,7 +88,7 @@ Use a real screen containing Japanese text and confirm:
 
 1. `cargo tauri dev` launches successfully.
 2. Screen Recording permission is granted.
-3. `contextura-frame-latest.png` appears in `~/Library/Caches/com.contextura.app/` after a capture trigger.
+3. A translation cycle runs successfully after a capture trigger (`Cmd+Shift+R` is the quickest probe).
 4. `Cmd+Shift+R` forces an immediate scan on the cached frame.
 5. Overlay text appears aligned over the original CJK content.
 6. `Cmd+Shift+M` clears translation memory and visible overlay state.

@@ -1,6 +1,6 @@
 # SPEC.md — Contextura
 
-**Version:** 2.1.1  
+**Version:** 2.2.0  
 **Last Updated:** 2026-07-16  
 **Target:** macOS 13+ on Apple Silicon
 
@@ -30,8 +30,8 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Screen capture                    | ✅     | Single display, explicit BGRA; capture excludes own windows                                                                         |
 | Motion detection and debounce     | ✅     | xxHash-based thumbnail deduplication; DebounceStateMachine wired into frame loop                                                    |
 | Unified RGBA conversion           | ✅     | BGRA→RGBA swap happens once at capture boundary; downstream modules consume unified RGBA                                            |
-| Secure snapshot storage           | ✅     | Snapshot frames written to app-private cache dir; `/tmp` debug copy is opt-in only                                                  |
-| OCR subprocess                    | ✅     | Bundled `vision-helper` validates input frames and returns OCR JSON; failure treated as real error                                  |
+| In-memory snapshot encoding       | ✅     | Runtime encodes PNG payloads in memory for OCR stdin transport; no file-path dependency in OCR hot path                             |
+| OCR subprocess                    | ✅     | Bundled `vision-helper` validates input frames and returns OCR JSON; helper now supports stdin transport (`--stdin`)                |
 | Pluggable translation strategy    | ✅     | TranslateGemma and Qwen strategies are pluggable; new strategies don't require touching client internals                            |
 | Translation sidecar               | ✅     | Health check, watchdog restart, fail-loud error IPC on repeated failures                                                            |
 | Concurrent pipeline               | ✅     | Styling color-sampling and LLM translation run concurrently; results merged before overlay update                                   |
@@ -51,7 +51,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Overlay capture exclusion         | ✅     | Excludes own windows from capture; overlay marked `NSWindowSharingType::None`                                                       |
 | Wizard screens 1–4                | ✅     | Setup flow covers permissions, model, controls, ready state                                                                         |
 | Real CLI OCR/translation path     | ✅     | Code path is live and end-to-end verified using local LLM sidecar                                                                   |
-| Golden-file integration runner    | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; Rust test suite currently reports 106 passing tests |
+| Golden-file integration runner    | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; Rust test suite currently reports 107 passing tests |
 | Capture restart handling          | ✅     | Stalled capture stream triggers rebuild                                                                                             |
 | Thermal + battery awareness       | ✅     | Thermal API + `pmset -g batt`                                                                                                       |
 | Optional Sentry                   | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                                           |
@@ -59,6 +59,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Quality-tier policy + model cycle | ✅     | Model switching and tier categorization (Standard/Quality/Custom) are fully implemented in `models.rs`                              |
 | Single-display capture            | ✅     | Core display capture and targeting is fully implemented and verified                                                                |
 | ocr_boxes golden tests            | ✅     | Integration testing framework supports coordinate checking; `test-corpus` fixtures are active in the `--test-suite` path            |
+| Runtime latency instrumentation   | ✅     | Pipeline and translation stages emit `[Latency]` debug logs for OCR, concurrent stage, and chat completion timing                   |
 
 ### Still pending
 
@@ -108,14 +109,14 @@ Unsupported in this architecture:
 
 ### Snapshotting
 
-- Secure storage: `~/Library/Caches/com.contextura.app/frames/` (app-private, not world-readable)
-- Optional debug file: `/tmp/contextura-frame-latest.png` (disabled unless debug flag is set)
-- Channel order: BGRA input converted to RGBA **once** at the capture boundary; all downstream modules (motion gate, snapshot, styling) consume RGBA
+- Channel order: BGRA input converted to RGBA **once** at the capture boundary; downstream modules consume RGBA
+- OCR transport: RGBA frames are PNG-encoded in memory and streamed to `vision-helper` over stdin
+- Snapshot files are no longer required in the OCR hot path
 
 ### OCR
 
 - Binary: bundled `vision-helper`
-- Input: PNG path
+- Input: stdin PNG bytes (`--stdin`) in runtime path; PNG file path remains supported for compatibility
 - Output: JSON array of text boxes with normalized Vision coordinates
 - Failure mode: missing, empty, corrupt, timed-out, or non-zero helper runs are treated as OCR errors, not as empty OCR results
 - Candidate selection: helper inspects multiple Vision candidates per observation and favors Japanese/CJK text when available
@@ -148,7 +149,7 @@ Unsupported in this architecture:
 | `src-tauri/src/models.rs`        | Model manifest loading, active-model resolution, model switching                                 |
 | `src-tauri/src/capture.rs`       | ScreenCaptureKit capture, BGRA→RGBA unified conversion at capture boundary                       |
 | `src-tauri/src/motion.rs`        | xxHash-based thumbnail deduplication, DebounceStateMachine                                       |
-| `src-tauri/src/snapshot.rs`      | Secure cache-dir snapshot writes, BGRA→RGBA swap helper                                          |
+| `src-tauri/src/snapshot.rs`      | In-memory PNG encoder, stale temp-frame cleanup helpers, BGRA→RGBA swap helper                   |
 | `src-tauri/src/ocr.rs`           | OCR subprocess, coordinate conversion, CJK filtering, post-processing                            |
 | `src-tauri/src/translation.rs`   | Pluggable strategy dispatch (TranslateGemma / Qwen), health polling, batching, memory            |
 | `src-tauri/src/styling.rs`       | Contrast-aware overlay styling from RGBA pixels                                                  |
@@ -169,4 +170,4 @@ Rust verification is necessary but not sufficient. A feature is only operational
 2. A valid local decoder-only GGUF model present
 3. A successful live translation pass over real Japanese content
 
-The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The Rust suite currently reports 106 passing tests across core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.
+The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The Rust suite currently reports 107 passing tests across core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.
