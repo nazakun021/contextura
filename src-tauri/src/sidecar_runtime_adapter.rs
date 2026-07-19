@@ -36,11 +36,7 @@ impl SidecarRuntimeClient for crate::translation::TranslationClient {
         strategy: Option<&str>,
     ) -> anyhow::Result<()> {
         crate::translation::TranslationClient::start_sidecar(
-            self,
-            app,
-            model_path,
-            model_id,
-            strategy,
+            self, app, model_path, model_id, strategy,
         )
     }
 
@@ -53,7 +49,9 @@ impl SidecarRuntimeClient for crate::translation::TranslationClient {
     fn wait_for_ready_retry_boxed(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
-        Box::pin(crate::translation::TranslationClient::wait_for_ready_retry(self))
+        Box::pin(crate::translation::TranslationClient::wait_for_ready_retry(
+            self,
+        ))
     }
 
     fn wait_for_runtime_ready_boxed(
@@ -177,9 +175,7 @@ impl SidecarRuntimeAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        SidecarRuntimeAdapter, SidecarRuntimeClient,
-    };
+    use super::{SidecarRuntimeAdapter, SidecarRuntimeClient};
     use crate::models::{ModelEntry, ModelStatus};
     use crate::runtime_coordinator::{RuntimeLoopState, RuntimeState};
     use std::future::Future;
@@ -370,7 +366,9 @@ mod tests {
     #[tokio::test]
     async fn ensure_ready_starts_then_waits() {
         let adapter = SidecarRuntimeAdapter;
-        let client = Arc::new(AsyncMutex::new(crate::translation::TranslationClient::new(1, 8765)));
+        let client = Arc::new(AsyncMutex::new(crate::translation::TranslationClient::new(
+            1, 8765,
+        )));
         let loop_state = fake_loop_state();
         let runtime_coordinator = FakeRuntimeCoordinator;
         let app = tauri::test::mock_app();

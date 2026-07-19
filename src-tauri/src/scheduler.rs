@@ -8,9 +8,7 @@ use tokio::time::sleep;
 use crossbeam_channel::{Receiver, Sender};
 use tauri::{Emitter, Manager};
 
-use crate::ipc::{
-    TranslationErrorPayload, TranslationPayload, WizardStatusPayload,
-};
+use crate::ipc::{TranslationErrorPayload, TranslationPayload, WizardStatusPayload};
 use crate::models::ModelManifest;
 use crate::path_resolver::find_available_local_port;
 use crate::runtime_coordinator::RuntimeCoordinator;

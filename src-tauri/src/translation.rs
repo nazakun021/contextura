@@ -913,18 +913,24 @@ impl TranslationManager {
                 }
 
                 let mut guard = client.lock().await;
-                if sidecar_runtime.wait_until_runtime_ready(&mut *guard).await.is_err() {
+                if sidecar_runtime
+                    .wait_until_runtime_ready(&mut *guard)
+                    .await
+                    .is_err()
+                {
                     consecutive_failures += 1;
                     log::warn!("[Watchdog] Sidecar health check failed ({consecutive_failures}/3)");
                     if consecutive_failures >= 3 {
                         log::warn!("[Watchdog] Restarting unresponsive sidecar...");
-                        let restart_res = sidecar_runtime.recover_runtime(
-                            &mut *guard,
-                            &app_handle,
-                            &model_path,
-                            &model_id,
-                            model_strategy.as_deref(),
-                        ).await;
+                        let restart_res = sidecar_runtime
+                            .recover_runtime(
+                                &mut *guard,
+                                &app_handle,
+                                &model_path,
+                                &model_id,
+                                model_strategy.as_deref(),
+                            )
+                            .await;
                         if let Err(error) = restart_res {
                             log::error!("[Watchdog] Failed to restart sidecar: {error}");
                             crate::scheduler::emit_runtime_notice(
