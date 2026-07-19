@@ -1,6 +1,6 @@
 # Contextura macOS Setup Guide
 
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-07-19
 
 This is the full setup checklist for getting Contextura from a fresh clone to a meaningful local smoke test.
 
@@ -267,7 +267,7 @@ If backend logs look fine but nothing appears onscreen, the bug is probably in e
 
 ## 10. Current Reality Check
 
-As of 2026-04-26, the codebase is beyond the original wiring phase:
+As of 2026-07-19, the codebase is beyond the original wiring phase:
 
 - capture, motion gating, styling, IPC, hotkeys, model switching, and watchdog recovery are all present
 - OCR handoff to `vision-helper` is now done via in-memory PNG bytes over stdin
@@ -393,13 +393,14 @@ Follow these in order.
 Use this loop:
 
 1. Make one small change.
-2. Run `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings`.
-3. Run `cargo test --manifest-path src-tauri/Cargo.toml`.
-4. Launch `cargo tauri dev`.
-5. Test on a real Japanese screen.
-6. Check runtime logs for `[Latency]` and `[OCR]` entries.
-7. Read logs.
-8. Repeat.
+2. Install local pre-push hooks once: `./scripts/install-git-hooks.sh`.
+3. Run `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings`.
+4. Run `cargo test --manifest-path src-tauri/Cargo.toml`.
+5. Launch `cargo tauri dev`.
+6. Test on a real Japanese screen.
+7. Check runtime logs for `[Latency]` and `[OCR]` entries.
+8. Read logs.
+9. Repeat.
 
 That loop is enough to get this app from "compiles" to "actually useful."
 

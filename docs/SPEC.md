@@ -1,7 +1,7 @@
 # SPEC.md — Contextura
 
 **Version:** 2.2.0  
-**Last Updated:** 2026-07-16  
+**Last Updated:** 2026-07-19  
 **Target:** macOS 13+ on Apple Silicon
 
 ## Summary

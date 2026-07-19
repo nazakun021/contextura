@@ -1,6 +1,6 @@
 # TEST.md — Verification Guide
 
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-07-19
 
 Use this file when you want the shortest path to verify that Contextura still works after code or model changes.
 
@@ -22,6 +22,8 @@ Install repository-managed git hooks once:
 ```bash
 ./scripts/install-git-hooks.sh
 ```
+
+This configures `core.hooksPath` to `.githooks` for the current repository.
 
 After installation, every `git push` automatically runs:
 
