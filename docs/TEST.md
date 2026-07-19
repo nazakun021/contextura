@@ -13,7 +13,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Current workspace status at last verification: Rust test suite reports 107 passing tests.
+Current workspace status at last verification: Rust test suite reports 135 passing tests, and `./scripts/smoke-wire-to-wire.sh --quick` passed.
 
 ## Local Pre-Push Lint Automation
 
@@ -51,6 +51,9 @@ What this verifies automatically:
 1. Rust compile/test gates.
 2. Single-image OCR + translation probe through `--debug-cli`.
 3. Full `test-corpus` OCR + translation suite through `--debug-cli --test-suite`.
+4. Rich `translation-started` and `translation-update` phase contract remains compatible with the runtime pipeline.
+
+Most recent local verification in this workspace used `--quick` mode successfully after the Sidecar lifecycle, OCR split, and IPC started-phase refactors.
 
 This is the recommended default smoke pass before any manual GUI validation.
 
@@ -130,11 +133,12 @@ Use a real screen containing Japanese text and confirm:
 3. A translation cycle runs successfully after a capture trigger (`Cmd+Shift+R` is the quickest probe).
 4. `Cmd+Shift+R` forces an immediate scan on the cached frame.
 5. Overlay text appears aligned over the original CJK content.
-6. `Cmd+Shift+M` clears translation memory and visible overlay state.
-7. The overlay window does not show up inside the captured debug frame.
-8. **App Switching**: Verify switching apps clears overlay content and resets translation context as expected.
-9. **Debounce Settle**: Verify the debounce behavior feels closer to the intended `200ms` settle time and no longer resets during active scrolling.
-10. **Tray Controls**: Verify tray actions (toggle overlay, translate now, clear context) behave correctly.
-11. **Watchdog Recovery**: Simulate a sidecar failure (e.g., run `pkill llama-server`) and confirm the watchdog restart notice is visible in the overlay and recovery completes successfully.
+6. Loading/skeleton state appears before final translated boxes on a real translation cycle.
+7. `Cmd+Shift+M` clears translation memory and visible overlay state.
+8. The overlay window does not show up inside the captured debug frame.
+9. **App Switching**: Verify switching apps clears overlay content and resets translation context as expected.
+10. **Debounce Settle**: Verify the debounce behavior feels closer to the intended `200ms` settle time and no longer resets during active scrolling.
+11. **Tray Controls**: Verify tray actions (toggle overlay, translate now, clear context) behave correctly.
+12. **Watchdog Recovery**: Simulate a sidecar failure (e.g., run `pkill llama-server`) and confirm the watchdog restart notice is visible in the overlay and recovery completes successfully.
 
 Do not mark the app as verified if only the Rust checks passed. End-to-end confirmation still requires a live GUI run with a valid local model.

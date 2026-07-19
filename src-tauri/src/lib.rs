@@ -1,6 +1,7 @@
 #![allow(unknown_lints)]
 #![allow(clippy::duration_suboptimal_units)]
 
+mod async_bridge;
 mod cli;
 mod downloader;
 mod models;
@@ -13,15 +14,21 @@ mod guardrails;
 mod ipc;
 mod motion;
 mod ocr;
+mod ocr_backend;
+mod ocr_post_processor;
 mod script;
 mod styling;
 mod thermal;
 mod translation;
 
+mod capture_loop_driver;
 mod hotkeys;
 mod path_resolver;
 mod pipeline;
+mod runtime_coordinator;
+mod runtime_executor;
 mod scheduler;
+mod sidecar_runtime_adapter;
 mod snapshot;
 mod tray;
 

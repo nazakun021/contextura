@@ -34,6 +34,17 @@ pub struct TranslationPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PendingTranslationBox {
+    pub id: String,
+    pub original: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub is_vertical: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranslationErrorPayload {
     pub message: String,
     #[serde(default)]
@@ -49,6 +60,9 @@ pub struct TranslationErrorPayload {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranslationStartedPayload {
     pub display_id: u32,
+    pub frame_id: u64,
+    #[serde(default)]
+    pub boxes: Vec<PendingTranslationBox>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

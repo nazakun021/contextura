@@ -7,7 +7,9 @@ use tauri::{Emitter, Manager};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::capture::CaptureFrame;
-use crate::ipc::{TranslationBox, TranslationPayload};
+use crate::ipc::{
+    PendingTranslationBox, TranslationBox, TranslationPayload, TranslationStartedPayload,
+};
 use crate::motion::{DebounceEvent, DebounceStateMachine, MotionDetector};
 use crate::styling::StylingEngine;
 
@@ -196,6 +198,25 @@ impl PipelineProcessor {
             log::debug!("[OCR] No CJK text found in frame {current_frame_id}");
             return None;
         }
+
+        let started_payload = TranslationStartedPayload {
+            display_id: frame.display_id,
+            frame_id: current_frame_id,
+            boxes: ocr_results
+                .iter()
+                .enumerate()
+                .map(|(index, ocr)| PendingTranslationBox {
+                    id: format!("{current_frame_id}-{index}"),
+                    original: ocr.text.clone(),
+                    x: ocr.bounding_box.x,
+                    y: ocr.bounding_box.y,
+                    width: ocr.bounding_box.width,
+                    height: ocr.bounding_box.height,
+                    is_vertical: ocr.is_vertical,
+                })
+                .collect(),
+        };
+        let _ = app_handle.emit("translation-started", started_payload);
 
         // 5. Run concurrent styling and translation
         let styled_boxes = match self

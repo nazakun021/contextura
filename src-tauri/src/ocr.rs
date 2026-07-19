@@ -1,20 +1,7 @@
 // src-tauri/src/ocr.rs
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
-
-const MIN_CONFIDENCE: f32 = 0.3;
-const FURIGANA_HEIGHT_RATIO: f32 = 0.4;
-const FURIGANA_HORIZONTAL_OVERLAP: f32 = 0.70;
-const OCR_HELPER_TIMEOUT: Duration = Duration::from_secs(8);
-const DUPLICATE_IOU_THRESHOLD: f32 = 0.8;
-const DUPLICATE_CONTAINMENT_THRESHOLD: f32 = 0.9;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionHelperResult {
@@ -70,25 +57,25 @@ impl Rect {
         (overlap_width / self_width) >= threshold_percent
     }
 
-    fn area(&self) -> f32 {
+    pub(crate) fn area(&self) -> f32 {
         self.width * self.height
     }
 
-    fn right(&self) -> f32 {
+    pub(crate) fn right(&self) -> f32 {
         self.x + self.width
     }
 
-    fn bottom(&self) -> f32 {
+    pub(crate) fn bottom(&self) -> f32 {
         self.y + self.height
     }
 
-    fn intersection_area(&self, other: &Rect) -> f32 {
+    pub(crate) fn intersection_area(&self, other: &Rect) -> f32 {
         let x_overlap = 0.0f32.max(self.right().min(other.right()) - self.x.max(other.x));
         let y_overlap = 0.0f32.max(self.bottom().min(other.bottom()) - self.y.max(other.y));
         x_overlap * y_overlap
     }
 
-    fn intersection_ratio(&self, other: &Rect) -> f32 {
+    pub(crate) fn intersection_ratio(&self, other: &Rect) -> f32 {
         let intersection = self.intersection_area(other);
         let smaller_area = self.area().min(other.area());
         if smaller_area <= 0.0 {
@@ -100,15 +87,15 @@ impl Rect {
 }
 
 pub struct OcrEngine {
-    furigana_suppression: bool,
-    vision_helper_path: PathBuf,
+    post_processor: crate::ocr_post_processor::OcrPostProcessor,
+    backend: crate::ocr_backend::VisionHelperBackend,
 }
 
 impl OcrEngine {
     pub fn new(furigana_suppression: bool, vision_helper_path: PathBuf) -> Self {
         Self {
-            furigana_suppression,
-            vision_helper_path,
+            post_processor: crate::ocr_post_processor::OcrPostProcessor::new(furigana_suppression),
+            backend: crate::ocr_backend::VisionHelperBackend::new(vision_helper_path),
         }
     }
 
@@ -118,277 +105,42 @@ impl OcrEngine {
         width: u32,
         height: u32,
         scale_factor: f32,
-        _cache_dir: &Path,
-        _frame_id: u64,
+        cache_dir: &Path,
+        frame_id: u64,
     ) -> anyhow::Result<Vec<OcrResult>> {
-        let png_bytes =
-            crate::snapshot::encode_frame_as_png(rgba_data, width as usize, height as usize)?;
-
-        let child = Command::new(&self.vision_helper_path)
-            .arg("--stdin")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "Failed to launch vision-helper at {}",
-                    self.vision_helper_path.display()
-                )
-            });
-
-        let child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-
-        let mut child = child;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(&png_bytes)
-                .with_context(|| "Failed to send PNG payload to vision-helper stdin")?;
-        } else {
-            anyhow::bail!("vision-helper stdin was not available");
-        }
-
-        let child_pid = child.id();
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let output = child.wait_with_output();
-            let _ = tx.send(output);
-        });
-
-        let output = match rx.recv_timeout(OCR_HELPER_TIMEOUT) {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
-                anyhow::bail!("vision-helper I/O error: {error}");
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                let _ = Command::new("kill")
-                    .args(["-KILL", &child_pid.to_string()])
-                    .status();
-                anyhow::bail!(
-                    "vision-helper timed out after {}s while processing stdin image",
-                    OCR_HELPER_TIMEOUT.as_secs()
-                );
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                anyhow::bail!("vision-helper worker disconnected before producing output");
-            }
-        };
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "vision-helper failed with status {}: {}",
-                output.status,
-                stderr.trim()
-            );
-        }
-
-        let raw: Vec<VisionHelperResult> = serde_json::from_slice(&output.stdout)
-            .with_context(|| "vision-helper returned invalid JSON".to_string())?;
-
-        let results: Vec<OcrResult> = raw
-            .into_iter()
-            .filter_map(|r| {
-                let text = Self::sanitize_text(&r.text);
-                if text.is_empty() {
-                    return None;
-                }
-
-                let is_vertical = r.text_angle.abs() > std::f32::consts::PI / 4.0;
-                Some(OcrResult {
-                    text,
-                    confidence: r.confidence,
-                    bounding_box: Rect::new(r.x, r.y, r.width, r.height),
-                    text_angle: r.text_angle,
-                    is_vertical,
-                    is_furigana: false,
-                })
-            })
-            .collect();
+        let results = self
+            .backend
+            .recognize(rgba_data, width, height, cache_dir, frame_id)?;
 
         #[allow(clippy::cast_precision_loss)]
-        Ok(self.process_vision_results(results, width as f32, height as f32, scale_factor))
+        Ok(self
+            .post_processor
+            .process(results, width as f32, height as f32, scale_factor))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn process_vision_results(
         &self,
-        mut results: Vec<OcrResult>,
+        results: Vec<OcrResult>,
         screen_width: f32,
         screen_height: f32,
         scale_factor: f32,
     ) -> Vec<OcrResult> {
-        // 1. Coordinate Conversion (Bottom-left origin to Top-left logical)
-        for result in &mut results {
-            let mut x = result.bounding_box.x * screen_width;
-            let mut y = (1.0 - result.bounding_box.y - result.bounding_box.height) * screen_height;
-            let mut width = result.bounding_box.width * screen_width;
-            let mut height = result.bounding_box.height * screen_height;
-
-            x /= scale_factor;
-            y /= scale_factor;
-            width /= scale_factor;
-            height /= scale_factor;
-
-            result.bounding_box = Rect::new(x, y, width, height);
-        }
-
-        // 2. Furigana Suppression
-        if self.furigana_suppression {
-            let mut to_mark_furigana = Vec::new();
-
-            for (i, candidate) in results.iter().enumerate() {
-                for (j, parent) in results.iter().enumerate() {
-                    if i == j {
-                        continue;
-                    }
-
-                    // Box height < 40% of overlapping box height -> furigana
-                    if candidate.bounding_box.height
-                        < (parent.bounding_box.height * FURIGANA_HEIGHT_RATIO)
-                        && candidate.bounding_box.overlaps_horizontally(
-                            &parent.bounding_box,
-                            FURIGANA_HORIZONTAL_OVERLAP,
-                        )
-                    {
-                        to_mark_furigana.push(i);
-                        break;
-                    }
-                }
-            }
-
-            for idx in to_mark_furigana {
-                results[idx].is_furigana = true;
-            }
-        }
-
-        let mut filtered_results = results
+        let observations = results
             .into_iter()
-            .filter(|res| {
-                if res.is_furigana {
-                    return false;
-                }
-                let counts = crate::script::count_script_chars(&res.text);
-                let is_single_kanji_only =
-                    counts.kanji == 1 && counts.hiragana == 0 && counts.katakana == 0;
-                let conf_floor = if is_single_kanji_only {
-                    0.75
-                } else {
-                    MIN_CONFIDENCE
-                };
-
-                res.confidence >= conf_floor && Self::is_japanese(&res.text)
+            .map(|result| crate::ocr_backend::RawOcrObservation {
+                text: result.text,
+                confidence: result.confidence,
+                bounding_box: result.bounding_box,
+                text_angle: result.text_angle,
             })
-            .collect::<Vec<_>>();
-
-        filtered_results.sort_by(Self::reading_order_cmp);
-
-        let mut deduped_results: Vec<OcrResult> = Vec::new();
-        for res in filtered_results {
-            if let Some(existing) = deduped_results
-                .iter_mut()
-                .find(|existing| Self::is_duplicate_detection(existing, &res))
-            {
-                if res.confidence > existing.confidence {
-                    *existing = res;
-                }
-                continue;
-            }
-
-            deduped_results.push(res);
-        }
-
-        deduped_results
+            .collect();
+        self.post_processor
+            .process(observations, screen_width, screen_height, scale_factor)
     }
 
-    fn is_likely_misread_dash(text: &str) -> bool {
-        if !text.contains('ー') {
-            return false;
-        }
-        let stripped_of_mark: String = text.chars().filter(|&c| c != 'ー').collect();
-        let has_digits_or_ascii = stripped_of_mark
-            .chars()
-            .any(|c| c.is_alphanumeric() && c.is_ascii());
-        let has_real_japanese = text
-            .chars()
-            .any(|c| matches!(c, '\u{3040}'..='\u{309F}' | '\u{4E00}'..='\u{9FFF}'));
-        has_digits_or_ascii && !has_real_japanese
-    }
-
-    fn is_japanese(text: &str) -> bool {
-        if Self::is_likely_misread_dash(text) {
-            return false;
-        }
-        matches!(
-            crate::script::classify_script(text),
-            crate::script::ScriptVerdict::Accept
-        )
-    }
-
-    fn calculate_iou(a: &Rect, b: &Rect) -> f32 {
-        let intersection = a.intersection_area(b);
-        let area_a = a.area();
-        let area_b = b.area();
-        let union = area_a + area_b - intersection;
-        if union <= 0.0 {
-            0.0
-        } else {
-            intersection / union
-        }
-    }
-
-    fn sanitize_text(text: &str) -> String {
+    pub(crate) fn sanitize_text(text: &str) -> String {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-
-    fn is_duplicate_detection(existing: &OcrResult, candidate: &OcrResult) -> bool {
-        existing.text == candidate.text
-            && (Self::calculate_iou(&existing.bounding_box, &candidate.bounding_box)
-                >= DUPLICATE_IOU_THRESHOLD
-                || existing
-                    .bounding_box
-                    .intersection_ratio(&candidate.bounding_box)
-                    >= DUPLICATE_CONTAINMENT_THRESHOLD)
-    }
-
-    fn reading_order_cmp(a: &OcrResult, b: &OcrResult) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-
-        const EPSILON: f32 = 4.0;
-
-        if a.is_vertical && b.is_vertical {
-            if (a.bounding_box.x - b.bounding_box.x).abs() > EPSILON {
-                return b
-                    .bounding_box
-                    .x
-                    .partial_cmp(&a.bounding_box.x)
-                    .unwrap_or(Ordering::Equal);
-            }
-
-            return a
-                .bounding_box
-                .y
-                .partial_cmp(&b.bounding_box.y)
-                .unwrap_or(Ordering::Equal);
-        }
-
-        if (a.bounding_box.y - b.bounding_box.y).abs() > EPSILON {
-            return a
-                .bounding_box
-                .y
-                .partial_cmp(&b.bounding_box.y)
-                .unwrap_or(Ordering::Equal);
-        }
-
-        a.bounding_box
-            .x
-            .partial_cmp(&b.bounding_box.x)
-            .unwrap_or(Ordering::Equal)
     }
 }
 

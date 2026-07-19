@@ -30,6 +30,9 @@ Scale the application and prepare for a public beta.
 - **Extended Model Manifests** [✅]: Qwen-style decoder GGUF models are supported as lightweight alternatives.
 - **In-Memory OCR Handoff** [✅]: Runtime OCR now streams PNG bytes to `vision-helper --stdin`, removing per-frame file-path handoff in the hot path.
 - **Latency Tracepoints** [✅]: `[Latency]` debug logs now cover OCR stage, concurrent styling+translation stage, and chat completion request timing.
+- **Sidecar Lifecycle Deepening** [✅]: Startup, readiness, runtime health, and recovery now route through dedicated lifecycle seams instead of scheduler-owned inline logic.
+- **OCR Backend/Post-Processor Split** [✅]: OCR acquisition and OCR filtering now live behind separate modules while preserving the existing facade.
+- **Phase-Aware Started Payload** [✅]: `translation-started` now carries pending box geometry and source text metadata for richer Overlay loading-state behavior.
 
 ## Phase 4: Release Hardening (In Progress)
 

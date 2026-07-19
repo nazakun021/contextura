@@ -20,10 +20,10 @@ graph TD
 2. **Motion Detection**: `motion.rs` downsamples frames to `160x90` grayscale and computes the motion ratio.
 3. **Debounce Gate**: `DebounceStateMachine` decides whether to clear overlays, wait, or trigger a scan based on screen settling (200ms default).
 4. **Snapshot Encoding**: On trigger or manual force-scan, the orchestrator (`lib.rs`) converts BGRA to RGBA once. `ocr.rs` encodes that frame to PNG bytes in memory.
-5. **OCR Subprocess**: `ocr.rs` invokes `vision-helper --stdin`, streams PNG bytes through stdin, handles timeouts, and converts Vision relative coordinates to overlay coordinates.
+5. **OCR Subprocess**: `ocr_backend.rs` invokes `vision-helper --stdin`, streams PNG bytes through stdin, handles timeouts, and returns raw observations to `ocr_post_processor.rs` for coordinate conversion and filtering.
 6. **Sidecar Translation**: `translation.rs` formats request payloads depending on active model: sequential completions for `TranslateGemma` or numbered batched completions for Qwen.
 7. **Styling**: `styling.rs` samples background colors from the RGBA buffer and determines WCAG-compliant high-contrast foreground colors.
-8. **IPC Update**: `ipc.rs` structures payloads and emits Tauri events (`translation-started`, `translation-update`, `translation-clear`, `translation-error`) to the overlay window.
+8. **IPC Update**: `ipc.rs` structures payloads and emits Tauri events (`translation-started`, `translation-update`, `translation-clear`, `translation-error`) to the overlay window. `translation-started` now carries pending box geometry and source text metadata.
 9. **Rendering**: `src/overlay.js` receives the IPC events and renders the styled translation boxes in the transparent HTML overlay DOM.
 
 ---
@@ -47,22 +47,26 @@ graph TD
 
 ## Module Responsibilities
 
-| File                           | Responsibility                                                           | Status                                                                |
-| :----------------------------- | :----------------------------------------------------------------------- | :-------------------------------------------------------------------- |
-| `src-tauri/src/lib.rs`         | Tauri setup, main runtime loop, and coordination                         | Active                                                                |
-| `src-tauri/src/capture.rs`     | ScreenCaptureKit capture and frame extraction                            | Active                                                                |
-| `src-tauri/src/motion.rs`      | Motion detection and debounce calculations                               | Active                                                                |
-| `src-tauri/src/ocr.rs`         | OCR subprocess (`vision-helper`) integration, coordinates, and filtering | Active                                                                |
-| `src-tauri/src/translation.rs` | Sidecar lifecycle, health checks, batching, and LLM completions          | Active                                                                |
-| `src-tauri/src/styling.rs`     | WCAG contrast-aware overlay styling                                      | Active                                                                |
-| `src-tauri/src/context.rs`     | App-switch invalidation of context memory                                | Active                                                                |
-| `src-tauri/src/thermal.rs`     | Thermal state and battery throttling signals                             | Active                                                                |
-| `src-tauri/src/hotkeys.rs`     | Global shortcut listeners                                                | Active                                                                |
-| `src-tauri/src/tray.rs`        | Tray menus and primary action bindings                                   | Active                                                                |
-| `src-tauri/src/ipc.rs`         | Event payload types sent to the overlay                                  | Active                                                                |
-| `src-tauri/src/downloader.rs`  | Model download helper                                                    | Implemented helper; full in-app workflow integration is still pending |
-| `src-tauri/src/cli.rs`         | CLI parsing for tests and debug mode                                     | Active                                                                |
-| `src-tauri/src/snapshot.rs`    | In-memory PNG encoding and stale temp-frame cleanup utilities            | Active                                                                |
+| File                                       | Responsibility                                                    | Status                                                                |
+| :----------------------------------------- | :---------------------------------------------------------------- | :-------------------------------------------------------------------- |
+| `src-tauri/src/lib.rs`                     | Tauri setup, main runtime loop, and coordination                  | Active                                                                |
+| `src-tauri/src/capture.rs`                 | ScreenCaptureKit capture and frame extraction                     | Active                                                                |
+| `src-tauri/src/motion.rs`                  | Motion detection and debounce calculations                        | Active                                                                |
+| `src-tauri/src/ocr.rs`                     | OCR facade over backend acquisition and text post-processing      | Active                                                                |
+| `src-tauri/src/ocr_backend.rs`             | Vision helper adapter, stdin transport, timeout/kill, JSON decode | Active                                                                |
+| `src-tauri/src/ocr_post_processor.rs`      | Coordinate conversion, filtering, reading order, dedup            | Active                                                                |
+| `src-tauri/src/translation.rs`             | Translation strategy dispatch, batching, memory, watchdog owner   | Active                                                                |
+| `src-tauri/src/sidecar_runtime_adapter.rs` | Sidecar lifecycle seam for start, ready, runtime health, recovery | Active                                                                |
+| `src-tauri/src/runtime_executor.rs`        | Runtime shell over Sidecar readiness execution                    | Active                                                                |
+| `src-tauri/src/styling.rs`                 | WCAG contrast-aware overlay styling                               | Active                                                                |
+| `src-tauri/src/context.rs`                 | App-switch invalidation of context memory                         | Active                                                                |
+| `src-tauri/src/thermal.rs`                 | Thermal state and battery throttling signals                      | Active                                                                |
+| `src-tauri/src/hotkeys.rs`                 | Global shortcut listeners                                         | Active                                                                |
+| `src-tauri/src/tray.rs`                    | Tray menus and primary action bindings                            | Active                                                                |
+| `src-tauri/src/ipc.rs`                     | Event payload types sent to the overlay                           | Active                                                                |
+| `src-tauri/src/downloader.rs`              | Model download helper                                             | Implemented helper; full in-app workflow integration is still pending |
+| `src-tauri/src/cli.rs`                     | CLI parsing for tests and debug mode                              | Active                                                                |
+| `src-tauri/src/snapshot.rs`                | In-memory PNG encoding and stale temp-frame cleanup utilities     | Active                                                                |
 
 ---
 
@@ -91,7 +95,7 @@ The overlay listens for:
 
 - **Source**: Swift binary in `src-tauri/src/bin/vision-helper.swift`.
 - **Framework**: Uses Apple Vision OCR.
-- **Pipeline**: Accepts stdin PNG bytes (`--stdin`) for runtime OCR and supports image-path input for compatibility/testing. Returns JSON OCR boxes on success.
+- **Pipeline**: Accepts stdin PNG bytes (`--stdin`) for runtime OCR and supports image-path input for compatibility/testing. Returns raw OCR observations which are then filtered by the post-processor.
 - **Selection**: Inspects multiple Vision candidates per observation and favors Japanese/CJK text when present.
 
 ### `llama-server`

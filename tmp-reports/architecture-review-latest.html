@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — Contextura</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deepmod { background: linear-gradient(135deg, #0f172a, #1e293b); color: #e2e8f0; }
+      .shallowmod { background: #fff; border: 1px solid #e2e8f0; }
+      .mass-shallow { background: repeating-linear-gradient(180deg, #fff, #fff 8px, #fee2e2 8px, #fee2e2 16px); }
+      .mass-deep { background: repeating-linear-gradient(180deg, #0f172a, #0f172a 12px, #1e293b 12px, #1e293b 24px); }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-6xl mx-auto px-6 py-12 space-y-12">
+      <header class="space-y-4">
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <h1 class="text-4xl font-semibold tracking-tight">Contextura architecture review</h1>
+          <div class="text-sm text-slate-500">2026-07-19</div>
+        </div>
+        <div class="flex flex-wrap gap-3 text-xs uppercase tracking-wider text-slate-600">
+          <span class="px-2 py-1 rounded bg-white border border-slate-200">solid box = module</span>
+          <span class="px-2 py-1 rounded bg-white border border-slate-200">dashed edge = seam</span>
+          <span class="px-2 py-1 rounded bg-white border border-slate-200">red = leakage</span>
+          <span class="px-2 py-1 rounded bg-white border border-slate-200">dark mass = deep module</span>
+        </div>
+      </header>
+
+      <section class="grid lg:grid-cols-[1.2fr_0.8fr] gap-6 items-start">
+        <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <pre class="mermaid">
+flowchart LR
+  O[Orchestrator\nlib.rs] --> S[scheduler.rs]
+  S --> CLD[capture_loop_driver.rs]
+  S --> RC[runtime_coordinator.rs]
+  S --> RE[runtime_executor.rs]
+  RE --> SRA[sidecar_runtime_adapter.rs]
+  SRA --> T[translation.rs]
+  S --> P[pipeline.rs]
+  P --> OCR[ocr.rs]
+  P --> IPC[ipc.rs]
+  IPC --> OV[overlay.js]
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+  classDef warn fill:#fff7ed,color:#9a3412,stroke:#f59e0b;
+  class CLD,RC,RE,SRA deep;
+  class OCR,IPC,OV warn;
+          </pre>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
+          <h2 class="text-lg font-semibold">Delta from previous review</h2>
+          <ul class="list-disc pl-5 space-y-2 text-sm text-slate-700">
+            <li>Control-plane depth is materially better: async bridge, capture-loop state, runtime policy, and sidecar execution all moved behind seams.</li>
+            <li>The highest leverage friction is no longer scheduler-first; it is now concentrated in the OCR Pass, Sidecar lifecycle, and the IPC Event to Overlay seam.</li>
+            <li>The next deepening work should prefer seams where one interface still hides too much implementation depth.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="candidates" class="space-y-10">
+        <article id="cand-1" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-semibold">Deepen the Sidecar lifecycle module</h2>
+            <div class="flex gap-2 text-xs font-semibold uppercase tracking-wide">
+              <span class="px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700">ports & adapters</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600">src-tauri/src/runtime_executor.rs · src-tauri/src/sidecar_runtime_adapter.rs · src-tauri/src/translation.rs · src-tauri/src/sidecar.rs</div>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="space-y-3">
+              <div class="text-sm font-semibold uppercase tracking-wider text-slate-500">Before</div>
+              <div class="rounded-xl p-4 mass-shallow h-80 flex flex-col justify-between">
+                <div class="space-y-2 text-sm">
+                  <div class="border border-red-200 rounded p-2 bg-white">runtime_executor</div>
+                  <div class="border border-red-200 rounded p-2 bg-white">sidecar_runtime_adapter</div>
+                  <div class="border border-red-200 rounded p-2 bg-white">translation</div>
+                  <div class="border border-red-200 rounded p-2 bg-white">sidecar</div>
+                </div>
+                <div class="text-xs text-slate-600">Policy still leaks across the seam: strategy choice, launch args, and readiness behavior live in different modules.</div>
+              </div>
+            </div>
+            <div class="space-y-3">
+              <div class="text-sm font-semibold uppercase tracking-wider text-slate-500">After</div>
+              <div class="rounded-xl p-4 deepmod h-80 flex flex-col justify-between border border-slate-700">
+                <div class="border border-slate-500 rounded p-3 bg-slate-900/40">SidecarLifecycle interface</div>
+                <div class="text-sm text-slate-300">One deep module owns start_for_model, ready mode, restart semantics, strategy-driven launch policy, and health behavior.</div>
+                <div class="text-xs text-slate-400">Translation Client depends on one interface. RuntimeExecutor becomes thinner.</div>
+              </div>
+            </div>
+          </div>
+          <div class="grid md:grid-cols-3 gap-4 text-sm">
+            <div><b>Problem</b><br/>The current interface is still shallow; the adapter mostly forwards and the implementation depth remains split.</div>
+            <div><b>Solution</b><br/>Collapse lifecycle policy into one deep module behind a single SidecarLifecycle interface.</div>
+            <div><b>Benefits</b><ul class="list-disc pl-5 mt-1"><li>locality: startup bugs concentrate</li><li>leverage: one interface, many call sites</li><li>tests hit one seam</li></ul></div>
+          </div>
+        </article>
+
+        <article id="cand-2" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-semibold">Split OCR Pass into backend adapter and post-processor</h2>
+            <div class="flex gap-2 text-xs font-semibold uppercase tracking-wide">
+              <span class="px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600">src-tauri/src/ocr.rs · src-tauri/src/pipeline.rs</div>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div class="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-2">Before</div>
+              <div class="space-y-2">
+                <div class="border border-red-200 rounded p-2 bg-white">stdin PNG handoff</div>
+                <div class="border border-red-200 rounded p-2 bg-white">timeout / kill policy</div>
+                <div class="border border-red-200 rounded p-2 bg-white">JSON parse</div>
+                <div class="border border-red-200 rounded p-2 bg-white">confidence / furigana / script / dedup</div>
+              </div>
+            </div>
+            <div class="rounded-xl border border-slate-700 deepmod p-4">
+              <div class="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-2">After</div>
+              <div class="space-y-2">
+                <div class="border border-slate-500 rounded p-2">OcrBackend adapter</div>
+                <div class="border border-slate-500 rounded p-2">OcrPostProcessor deep module</div>
+              </div>
+              <div class="text-sm text-slate-300 mt-4">One seam for acquisition, one module for linguistic depth.</div>
+            </div>
+          </div>
+          <div class="grid md:grid-cols-3 gap-4 text-sm">
+            <div><b>Problem</b><br/>One module hides too much implementation depth behind one shallow recognize interface.</div>
+            <div><b>Solution</b><br/>Separate backend adapter from text heuristics without changing pipeline behavior.</div>
+            <div><b>Benefits</b><ul class="list-disc pl-5 mt-1"><li>locality: OCR bugs stop mixing</li><li>leverage: backend swaps get easier</li><li>tests survive refactors</li></ul></div>
+          </div>
+        </article>
+
+        <article id="cand-3" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-semibold">Deepen the IPC Event to Overlay seam</h2>
+            <div class="flex gap-2 text-xs font-semibold uppercase tracking-wide">
+              <span class="px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700">local-substitutable</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600">src-tauri/src/ipc.rs · src-tauri/src/pipeline.rs · src/overlay.js</div>
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <pre class="mermaid">
+sequenceDiagram
+  participant P as Pipeline
+  participant I as IPC interface
+  participant O as Overlay
+  P->>I: translation-started(display only)
+  I->>O: sparse phase signal
+  P->>I: translation-update(styled boxes)
+  I->>O: rich render payload
+  O-->>O: infer missing state
+            </pre>
+          </div>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm">Before: frontend implementation depth exceeds interface depth; Overlay infers phase from sparse payloads.</div>
+            <div class="rounded-xl border border-emerald-700 deepmod p-4 text-sm">After: a phase-aware adapter emits explicit started, update, clear, and error payload contracts with stable depth.</div>
+          </div>
+          <div class="grid md:grid-cols-3 gap-4 text-sm">
+            <div><b>Problem</b><br/>The seam is shallow and phase semantics leak into the frontend implementation.</div>
+            <div><b>Solution</b><br/>Add a phase-aware IPC interface and versioned payload depth.</div>
+            <div><b>Benefits</b><ul class="list-disc pl-5 mt-1"><li>locality: render state is explicit</li><li>leverage: UX evolution is safer</li><li>tests hit phase transitions</li></ul></div>
+          </div>
+          <div class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm"><b>ADR note:</b> directly advances ADR-0008 and ADR-0009 instead of contradicting them.</div>
+        </article>
+
+        <article id="cand-4" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-semibold">Unify Runtime State and AppPaths behind one interface</h2>
+            <div class="flex gap-2 text-xs font-semibold uppercase tracking-wide">
+              <span class="px-2 py-1 rounded bg-fuchsia-100 text-fuchsia-800">Worth exploring</span>
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700">adapter</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600">src-tauri/src/settings.rs · src-tauri/src/path_resolver.rs · src-tauri/src/lib.rs · src-tauri/src/scheduler.rs</div>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">Before: callers must know whether a path lives behind Settings or PathResolver. The seam is shallow because environment choice leaks.</div>
+            <div class="rounded-xl border border-slate-700 deepmod p-4 text-sm">After: one AppPaths / RuntimeConfig interface owns settings path, model path, cache path, and binary lookup locality.</div>
+          </div>
+          <div class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm"><b>ADR note:</b> preserve ADR-0011 behavior; no timer-based reloads.</div>
+        </article>
+
+        <article id="cand-5" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <h2 class="text-2xl font-semibold">Create one RuntimeActionDispatcher below Hotkeys and Tray</h2>
+            <div class="flex gap-2 text-xs font-semibold uppercase tracking-wide">
+              <span class="px-2 py-1 rounded bg-fuchsia-100 text-fuchsia-800">Worth exploring</span>
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700">ports & adapters</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600">src-tauri/src/hotkeys.rs · src-tauri/src/tray.rs · src-tauri/src/scheduler.rs · src-tauri/src/context.rs</div>
+          <div class="grid md:grid-cols-2 gap-6">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">Before: two shallow adapters map user intent to runtime effects separately.</div>
+            <div class="rounded-xl border border-slate-700 deepmod p-4 text-sm">After: HotkeyAdapter and TrayAdapter both hit one deep action interface with strong locality.</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-2xl border border-emerald-300 bg-emerald-50 p-6 shadow-sm space-y-3">
+        <h2 class="text-2xl font-semibold">Top recommendation</h2>
+        <p><b>Deepen the Sidecar lifecycle module</b> first.</p>
+        <p class="text-sm text-slate-700">Why: the control-plane shell is already much deeper than before. The highest leverage is now where the interface still mostly forwards while the implementation depth stays fragmented: startup policy, launch args, strategy choice, and readiness semantics across the Sidecar stack.</p>
+        <a href="#cand-1" class="text-sm text-emerald-700 underline">Jump to candidate</a>
+      </section>
+    </main>
+  </body>
+</html>

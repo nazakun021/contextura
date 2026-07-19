@@ -64,7 +64,8 @@ ScreenCaptureKit
   -> capture.rs
   -> motion.rs
   -> encode PNG in memory
-  -> vision-helper
+  -> ocr_backend.rs / vision-helper
+  -> ocr_post_processor.rs
   -> translation.rs
   -> IPC events
   -> src/overlay.js
@@ -74,8 +75,12 @@ Important files:
 
 - [src-tauri/src/lib.rs](../src-tauri/src/lib.rs): main runtime wiring
 - [src-tauri/src/capture.rs](../src-tauri/src/capture.rs): screen capture
-- [src-tauri/src/ocr.rs](../src-tauri/src/ocr.rs): OCR helper integration
-- [src-tauri/src/translation.rs](../src-tauri/src/translation.rs): sidecar startup and translation requests
+- [src-tauri/src/ocr.rs](../src-tauri/src/ocr.rs): OCR facade
+- [src-tauri/src/ocr_backend.rs](../src-tauri/src/ocr_backend.rs): OCR helper transport and process adapter
+- [src-tauri/src/ocr_post_processor.rs](../src-tauri/src/ocr_post_processor.rs): OCR filtering and reading-order logic
+- [src-tauri/src/translation.rs](../src-tauri/src/translation.rs): translation strategies and watchdog ownership
+- [src-tauri/src/sidecar_runtime_adapter.rs](../src-tauri/src/sidecar_runtime_adapter.rs): Sidecar lifecycle seam
+- [src-tauri/src/runtime_executor.rs](../src-tauri/src/runtime_executor.rs): runtime shell over Sidecar readiness execution
 - [src/overlay.js](../src/overlay.js): frontend rendering of results
 
 If you are new to macOS development, think of this app as three parts:
@@ -270,7 +275,9 @@ If backend logs look fine but nothing appears onscreen, the bug is probably in e
 As of 2026-07-19, the codebase is beyond the original wiring phase:
 
 - capture, motion gating, styling, IPC, hotkeys, model switching, and watchdog recovery are all present
-- OCR handoff to `vision-helper` is now done via in-memory PNG bytes over stdin
+- OCR handoff to `vision-helper` is now done via in-memory PNG bytes over stdin, with post-processing isolated in its own module
+- Sidecar startup, readiness, runtime health, and recovery now route through dedicated lifecycle seams instead of one scheduler-owned block
+- `translation-started` now carries pending box geometry and source text metadata for richer loading-state rendering in the Overlay
 - TranslateGemma-specific request formatting, AppKit capture protection, shared RGBA styling input, and the inertial-scroll debounce fix are in code
 - the bundled `test-corpus/` PNG files are real screenshots and form a fully verified golden regression suite
 

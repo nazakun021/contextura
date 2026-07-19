@@ -9,23 +9,17 @@ use crossbeam_channel::{Receiver, Sender};
 use tauri::{Emitter, Manager};
 
 use crate::ipc::{
-    TranslationErrorPayload, TranslationPayload, TranslationStartedPayload, WizardStatusPayload,
+    TranslationErrorPayload, TranslationPayload, WizardStatusPayload,
 };
 use crate::models::ModelManifest;
-use crate::motion::DebounceEvent;
 use crate::path_resolver::find_available_local_port;
+use crate::runtime_coordinator::RuntimeCoordinator;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PipelineCommand {
     ForceScan,
     ReloadRuntime { reason: String },
     Shutdown,
-}
-
-#[derive(Debug, Clone)]
-struct RuntimeState {
-    settings: crate::settings::Settings,
-    active_model: crate::models::ModelStatus,
 }
 
 pub fn emit_runtime_notice<
@@ -62,25 +56,9 @@ async fn run_pipeline_frame<R: tauri::Runtime>(
     invalidation_rx: &Receiver<crate::context::InvalidationReason>,
     pipeline_tx: &Sender<PipelineCommand>,
 ) -> Option<TranslationPayload> {
-    let _ = app_handle.emit(
-        "translation-started",
-        TranslationStartedPayload {
-            display_id: frame.display_id,
-        },
-    );
-
     processor
         .handle_frame(app_handle, frame, is_forced, invalidation_rx, pipeline_tx)
         .await
-}
-
-fn load_runtime_state(app_dir: &std::path::Path) -> anyhow::Result<RuntimeState> {
-    let loaded_settings = crate::settings::Settings::load(app_dir)?;
-    let active_model = crate::models::active_model_status(app_dir, &loaded_settings)?;
-    Ok(RuntimeState {
-        settings: loaded_settings,
-        active_model,
-    })
 }
 
 pub fn open_models_folder(models_dir: &std::path::Path) -> Result<(), String> {
@@ -181,14 +159,9 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
 
             let app_dir = crate::settings::Settings::dir().expect("Failed to get app directory");
 
-            let mut failure_count = 0u32;
-            let mut sidecar_started = false;
-            let mut warned_missing_model = false;
-            let mut active_model_id = String::new();
-            let mut last_thermal_check = Instant::now().checked_sub(Duration::from_secs(31)).unwrap_or_else(Instant::now);
-            let mut runtime_state: Option<RuntimeState> = None;
-            let mut runtime_reload_requested = true;
-            let mut thermal_monitor = crate::thermal::ThermalMonitor::new();
+            let mut loop_state = crate::runtime_coordinator::RuntimeLoopState::new();
+            let runtime_coordinator = crate::runtime_coordinator::DefaultRuntimeCoordinator;
+            let runtime_executor = crate::runtime_executor::RuntimeExecutor;
             let mut processor = crate::pipeline::PipelineProcessor::new(
                 0,
                 0,
@@ -199,32 +172,22 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
             );
 
             loop {
-                let idle_sleep_duration = if thermal_monitor.on_battery {
-                    Duration::from_secs(5)
-                } else {
-                    Duration::from_secs(2)
-                };
-                let should_refresh_runtime = runtime_reload_requested || runtime_state.is_none();
+                let idle_sleep_duration = crate::runtime_executor::RuntimeExecutor::idle_sleep_duration(
+                    loop_state.thermal_monitor.on_battery,
+                );
+                let should_refresh_runtime = loop_state.should_refresh_runtime();
 
                 if should_refresh_runtime {
-                    match load_runtime_state(&app_dir) {
+                    match runtime_coordinator.load_runtime_state(&app_dir) {
                         Ok(state) => {
-                            if runtime_state.as_ref().is_none_or(|current| {
-                                current.active_model.entry.id != state.active_model.entry.id
-                            }) {
-                                sidecar_started = false;
-                            }
-                             processor.update_settings(
-                                 if thermal_monitor.on_battery { 1200 } else { state.settings.debounce_ms },
-                                 state.settings.motion_threshold,
-                                 state.settings.pixel_diff_threshold,
-                                 state.settings.edge_inset_percent,
-                             );
-                            runtime_state = Some(state);
-                            runtime_reload_requested = false;
+                            loop_state.apply_loaded_runtime_state(
+                                &runtime_coordinator,
+                                state,
+                                &mut processor,
+                            );
                         }
                         Err(error) => {
-                            if !warned_missing_model {
+                            if !loop_state.warned_missing_model {
                                 emit_runtime_notice(
                                     &app_handle_sidecar,
                                     "No Model Available",
@@ -233,19 +196,19 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                     "warning",
                                     6000,
                                 );
-                                warned_missing_model = true;
+                                loop_state.note_missing_model_warning();
                             }
                             sleep(Duration::from_secs(5)).await;
-                            if last_thermal_check.elapsed() > Duration::from_secs(30) {
-                                thermal_monitor.update();
-                                last_thermal_check = Instant::now();
+                            if loop_state.last_thermal_check.elapsed() > Duration::from_secs(30) {
+                                loop_state.thermal_monitor.update();
+                                loop_state.last_thermal_check = Instant::now();
                             }
                             continue;
                         }
                     }
                 }
 
-                let Some(state) = runtime_state.as_ref() else {
+                let Some(state) = loop_state.runtime_state.as_ref() else {
                     sleep(Duration::from_secs(1)).await;
                     continue;
                 };
@@ -258,7 +221,7 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                 ).await;
 
                 if !active_model.installed {
-                    if !warned_missing_model {
+                    if !loop_state.warned_missing_model {
                         emit_runtime_notice(
                             &app_handle_sidecar,
                             "Model Missing",
@@ -270,107 +233,88 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                             "warning",
                             6000,
                         );
-                        warned_missing_model = true;
+                        loop_state.note_missing_model_warning();
                     }
                     sleep(Duration::from_secs(5)).await;
-                    if last_thermal_check.elapsed() > Duration::from_secs(30) {
-                        thermal_monitor.update();
-                        last_thermal_check = Instant::now();
+                    if loop_state.last_thermal_check.elapsed() > Duration::from_secs(30) {
+                        loop_state.thermal_monitor.update();
+                        loop_state.last_thermal_check = Instant::now();
                     }
                     continue;
                 }
-                warned_missing_model = false;
+                loop_state.note_model_ready(&active_model.entry.id);
 
-                if active_model_id != active_model.entry.id {
-                    sidecar_started = false;
-                    active_model_id = active_model.entry.id.clone();
-                }
-
-                if !sidecar_started {
-                    log::info!("[Pipeline] Starting sidecar on port {sidecar_port}");
-                    match client_clone
-                        .lock()
-                        .await
-                        .start_sidecar(
-                            &app_handle_sidecar,
-                            &active_model.path,
-                            &active_model.entry.id,
-                            active_model.entry.strategy.as_deref(),
-                        )
-                    {
-                        Ok(()) => {
-                            log::info!(
-                                "[Pipeline] Sidecar started with model {}",
-                                active_model.path.display()
-                            );
-                            sidecar_started = true;
-                        }
-                        Err(error) => {
-                            failure_count += 1;
-                            log::error!("[Pipeline] Failed to start sidecar (attempt {failure_count}): {error}");
-                            emit_runtime_notice(
-                                &app_handle_sidecar,
-                                "Translation Engine Startup Failed",
-                                format!("Attempt {failure_count}/5 to start the translation engine failed."),
-                                error.to_string(),
-                                "error",
-                                3000,
-                            );
-                            if failure_count > 5 {
-                                emit_runtime_notice(
-                                    &app_handle_sidecar,
-                                    "Translation Engine Unavailable",
-                                    "The sidecar failed to start. Verify the active model file and click Retry.",
-                                    error.to_string(),
-                                    "error",
-                                    0, // Persistent
-                                );
-                                if handle_startup_halt(&config.pipeline_rx, &mut failure_count, &mut runtime_reload_requested, &mut sidecar_started).await {
-                                    return;
-                                }
-                                continue;
-                            }
-                            sleep(idle_sleep_duration).await;
-                            continue;
-                        }
+                match runtime_executor
+                    .ensure_sidecar_ready(crate::sidecar_runtime_adapter::SidecarEnsureRequest {
+                        app_handle: &app_handle_sidecar,
+                        client: &client_clone,
+                        runtime_coordinator: &runtime_coordinator,
+                        loop_state: &mut loop_state,
+                        model_path: &active_model.path,
+                        model_id: &active_model.entry.id,
+                        strategy: active_model.entry.strategy.as_deref(),
+                    })
+                    .await
+                {
+                    crate::sidecar_runtime_adapter::SidecarEnsureResult::Ready => {
+                        log::info!(
+                            "[Pipeline] Translation sidecar is ready (active: {})",
+                            loop_state.sidecar_started
+                        );
                     }
-                }
-
-                let ready_result = if failure_count == 0 {
-                    client_clone.lock().await.wait_for_ready().await
-                } else {
-                    client_clone.lock().await.wait_for_ready_retry().await
-                };
-
-                match ready_result {
-                    Ok(()) => {
-                        failure_count = 0;
-                        log::info!("[Pipeline] Translation sidecar is ready (active: {sidecar_started})");
-                    }
-                    Err(error) => {
-                        failure_count += 1;
-                        sidecar_started = false;
+                    crate::sidecar_runtime_adapter::SidecarEnsureResult::StartFailed { error } => {
                         log::error!(
-                            "[Pipeline] Sidecar not ready (attempt {failure_count}): {error}"
+                            "[Pipeline] Failed to start sidecar (attempt {}): {error}",
+                            loop_state.failure_count
                         );
                         emit_runtime_notice(
                             &app_handle_sidecar,
                             "Translation Engine Startup Failed",
-                            format!("Attempt {failure_count}/5 to start the translation engine failed."),
-                            error.to_string(),
+                            format!("Attempt {}/5 to start the translation engine failed.", loop_state.failure_count),
+                            error,
                             "error",
                             3000,
                         );
-                        if failure_count > 5 {
+                        if runtime_coordinator.should_halt_startup(loop_state.failure_count) {
+                            emit_runtime_notice(
+                                &app_handle_sidecar,
+                                "Translation Engine Unavailable",
+                                "The sidecar failed to start. Verify the active model file and click Retry.",
+                                active_model.path.display().to_string(),
+                                "error",
+                                0,
+                            );
+                            if handle_startup_halt(&config.pipeline_rx, &mut loop_state.failure_count, &mut loop_state.runtime_reload_requested, &mut loop_state.sidecar_started).await {
+                                return;
+                            }
+                            continue;
+                        }
+                        sleep(idle_sleep_duration).await;
+                        continue;
+                    }
+                    crate::sidecar_runtime_adapter::SidecarEnsureResult::ReadyFailed { error } => {
+                        log::error!(
+                            "[Pipeline] Sidecar not ready (attempt {}): {error}",
+                            loop_state.failure_count
+                        );
+                        emit_runtime_notice(
+                            &app_handle_sidecar,
+                            "Translation Engine Startup Failed",
+                            format!("Attempt {}/5 to start the translation engine failed.", loop_state.failure_count),
+                            error,
+                            "error",
+                            3000,
+                        );
+                        if runtime_coordinator.should_halt_startup(loop_state.failure_count) {
                             emit_runtime_notice(
                                 &app_handle_sidecar,
                                 "Translation Engine Unavailable",
                                 "The sidecar never became ready. Verify the active model file and click Retry.",
-                                error.to_string(),
+                                active_model.path.display().to_string(),
                                 "error",
-                                0, // Persistent
+                                0,
                             );
-                            if handle_startup_halt(&config.pipeline_rx, &mut failure_count, &mut runtime_reload_requested, &mut sidecar_started).await {
+                            if handle_startup_halt(&config.pipeline_rx, &mut loop_state.failure_count, &mut loop_state.runtime_reload_requested, &mut loop_state.sidecar_started).await {
                                 return;
                             }
                             continue;
@@ -386,29 +330,16 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                     &[config.app_config.process_id],
                     &[&config.app_config.name_hint],
                 );
-                let mut pending_force_scan = false;
-                let mut latest_frame: Option<crate::capture::CaptureFrame> = None;
-                let mut last_frame_at = Instant::now();
+                let mut capture_loop_state = crate::capture_loop_driver::CaptureLoopState::new();
 
-                let (pipeline_tokio_tx, mut pipeline_tokio_rx) = tokio::sync::mpsc::channel(16);
-                let pipeline_rx_sync = config.pipeline_rx.clone();
-                tokio::task::spawn_blocking(move || {
-                    while let Ok(msg) = pipeline_rx_sync.recv() {
-                        if pipeline_tokio_tx.blocking_send(msg).is_err() {
-                            break;
-                        }
-                    }
-                });
+                let mut pipeline_tokio_rx =
+                    crate::capture_loop_driver::CaptureLoopDriver::bridge_receiver(
+                        config.pipeline_rx.clone(),
+                        16,
+                    );
 
-                let (frame_tokio_tx, mut frame_tokio_rx) = tokio::sync::mpsc::channel(2);
-                let frame_rx_sync = frame_rx.clone();
-                tokio::task::spawn_blocking(move || {
-                    while let Ok(frame) = frame_rx_sync.recv() {
-                        if frame_tokio_tx.blocking_send(frame).is_err() {
-                            break;
-                        }
-                    }
-                });
+                let mut frame_tokio_rx =
+                    crate::capture_loop_driver::CaptureLoopDriver::bridge_receiver(frame_rx, 2);
 
                 log::info!("[Pipeline] Entering capture loop");
 
@@ -419,9 +350,16 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                     tokio::select! {
                         cmd_opt = pipeline_tokio_rx.recv() => {
                             let Some(command) = cmd_opt else { break 'capture; };
-                            match command {
-                                PipelineCommand::ForceScan => {
-                                    if let Some(frame) = latest_frame.clone() {
+                            match crate::capture_loop_driver::CaptureLoopDriver::handle_command_event(
+                                &mut capture_loop_state,
+                                command,
+                            ) {
+                                crate::capture_loop_driver::CommandLoopAction::RunForcedScan { has_cached_frame } => {
+                                    if has_cached_frame {
+                                        let frame = capture_loop_state
+                                            .latest_frame
+                                            .clone()
+                                            .expect("cached frame should exist when command seam reports it");
                                         log::info!(
                                             "[Pipeline] Force scan requested on cached frame"
                                         );
@@ -434,21 +372,19 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                             &config.pipeline_tx,
                                         )
                                         .await;
-                                        pending_force_scan = false;
                                     } else {
                                         log::info!(
                                             "[Pipeline] Force scan queued until the first frame arrives"
                                         );
-                                        pending_force_scan = true;
                                     }
                                 }
-                                PipelineCommand::ReloadRuntime { reason } => {
+                                crate::capture_loop_driver::CommandLoopAction::ReloadRuntime { reason } => {
                                     log::info!("[Pipeline] Reload requested: {reason}");
-                                    runtime_reload_requested = true;
-                                    sidecar_started = false;
+                                    loop_state.runtime_reload_requested = true;
+                                    loop_state.sidecar_started = false;
                                     break 'capture;
                                 }
-                                PipelineCommand::Shutdown => {
+                                crate::capture_loop_driver::CommandLoopAction::Shutdown => {
                                     log::info!("[Pipeline] Shutdown requested");
                                     config.display_manager.stop();
                                     translation_manager.shutdown().await;
@@ -462,27 +398,22 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                         }
                         frame_opt = frame_tokio_rx.recv() => {
                             let Some(frame) = frame_opt else {
-                                if last_frame_at.elapsed() > Duration::from_secs(60) {
+                                if capture_loop_state.note_stream_idle(Duration::from_secs(60)) {
                                     log::warn!("[Pipeline] Frame stream silent for 60s - checking health");
-                                    last_frame_at = Instant::now();
                                 }
                                 continue;
                             };
-                            last_frame_at = Instant::now();
-                            latest_frame = Some(frame.clone());
+                            let (frame, action) = crate::capture_loop_driver::CaptureLoopDriver::handle_frame_event(
+                                &mut processor,
+                                &mut capture_loop_state,
+                                frame,
+                            );
 
-                            let is_forced = std::mem::take(&mut pending_force_scan);
-                            let debounce_event = processor.process_motion(&frame, is_forced);
-
-                            match debounce_event {
-                                DebounceEvent::MotionDetected => {
-                                    if !processor.was_scrolling {
-                                        let _ = app_handle_sidecar.emit("translation-clear", ());
-                                        processor.was_scrolling = true;
-                                    }
+                            match action {
+                                crate::capture_loop_driver::FrameLoopAction::ClearForMotion => {
+                                    let _ = app_handle_sidecar.emit("translation-clear", ());
                                 }
-                                DebounceEvent::Triggered => {
-                                    processor.was_scrolling = false;
+                                crate::capture_loop_driver::FrameLoopAction::RunPipeline { is_forced } => {
                                     let _ = run_pipeline_frame(
                                         &app_handle_sidecar,
                                         &mut processor,
@@ -493,44 +424,49 @@ pub fn start_scheduler(mut config: SchedulerConfig) {
                                     )
                                     .await;
                                 }
-                                DebounceEvent::None => {
-                                    if !matches!(processor.debounce.state, crate::motion::DebounceState::Scrolling) {
-                                        processor.was_scrolling = false;
-                                    }
-                                }
+                                crate::capture_loop_driver::FrameLoopAction::Noop => {}
                             }
                         }
                         () = &mut debounce_sleep => {
                             let debounce_event = processor.debounce.update(0.0);
-                            if matches!(debounce_event, DebounceEvent::Triggered) && let Some(frame) = latest_frame.as_ref() {
-                                log::info!("[Pipeline] Debounce triggered on static screen");
-                                processor.was_scrolling = false;
-                                let _ = run_pipeline_frame(
-                                    &app_handle_sidecar,
-                                    &mut processor,
-                                    frame,
-                                    false,
-                                    &config.invalidation_rx,
-                                    &config.pipeline_tx,
-                                )
-                                .await;
+                            match crate::capture_loop_driver::CaptureLoopDriver::handle_debounce_event(
+                                &mut processor,
+                                &capture_loop_state,
+                                debounce_event,
+                            ) {
+                                crate::capture_loop_driver::DebounceLoopAction::RunPipeline => {
+                                    let frame = capture_loop_state
+                                        .latest_frame
+                                        .as_ref()
+                                        .expect("latest frame should exist when debounce seam reports RunPipeline");
+                                    log::info!("[Pipeline] Debounce triggered on static screen");
+                                    let _ = run_pipeline_frame(
+                                        &app_handle_sidecar,
+                                        &mut processor,
+                                        frame,
+                                        false,
+                                        &config.invalidation_rx,
+                                        &config.pipeline_tx,
+                                    )
+                                    .await;
+                                }
+                                crate::capture_loop_driver::DebounceLoopAction::Noop => {}
                             }
                         }
                     }
 
-                    if last_thermal_check.elapsed() > Duration::from_secs(30) {
-                        thermal_monitor.update();
-                        last_thermal_check = Instant::now();
-                        if let Some(state) = &runtime_state {
-                            processor.update_settings(
-                                if thermal_monitor.on_battery { 1200 } else { state.settings.debounce_ms },
-                                state.settings.motion_threshold,
-                                state.settings.pixel_diff_threshold,
-                                state.settings.edge_inset_percent,
+                    if loop_state.last_thermal_check.elapsed() > Duration::from_secs(30) {
+                        loop_state.thermal_monitor.update();
+                        loop_state.last_thermal_check = Instant::now();
+                        if let Some(state) = &loop_state.runtime_state {
+                            runtime_coordinator.apply_runtime_settings(
+                                &mut processor,
+                                &state.settings,
+                                loop_state.thermal_monitor.on_battery,
                             );
                         }
                     }
-                    if thermal_monitor.should_throttle() {
+                    if loop_state.thermal_monitor.should_throttle() {
                         sleep(Duration::from_millis(500)).await;
                     }
                 }
@@ -557,32 +493,37 @@ async fn handle_startup_halt(
     sidecar_started: &mut bool,
 ) -> bool {
     log::info!("[Pipeline] Halted due to startup failure. Waiting for manual retry...");
+    let runtime_coordinator = crate::runtime_coordinator::DefaultRuntimeCoordinator;
     let pipeline_rx_sync = pipeline_rx.clone();
     let result = tokio::task::spawn_blocking(move || {
         while let Ok(command) = pipeline_rx_sync.recv() {
-            match command {
-                PipelineCommand::ReloadRuntime { reason } => {
-                    return Some(reason);
-                }
-                PipelineCommand::Shutdown => {
-                    return None;
-                }
-                PipelineCommand::ForceScan => {}
+            if !matches!(command, PipelineCommand::ForceScan) {
+                return command;
             }
         }
-        None
+        PipelineCommand::Shutdown
     })
     .await;
 
-    if let Ok(Some(reason)) = result {
+    let Ok(command) = result else {
+        log::info!("[Pipeline] Shutdown requested while halted");
+        return true;
+    };
+
+    if let PipelineCommand::ReloadRuntime { reason } = &command {
         log::info!("[Pipeline] Manual retry triggered: {reason}");
-        *failure_count = 0;
-        *runtime_reload_requested = true;
-        *sidecar_started = false;
-        false
-    } else {
+    }
+
+    if runtime_coordinator.handle_halt_command(
+        command,
+        failure_count,
+        runtime_reload_requested,
+        sidecar_started,
+    ) {
         log::info!("[Pipeline] Shutdown requested while halted");
         true
+    } else {
+        false
     }
 }
 
@@ -620,7 +561,10 @@ mod tests {
         let model_filename = "translategemma-4b-it.Q4_K_M.gguf";
         fs::write(app_dir.join("models").join(model_filename), b"model-bytes").unwrap();
 
-        let state = load_runtime_state(&app_dir).expect("should load initial state");
+        let runtime_coordinator = crate::runtime_coordinator::DefaultRuntimeCoordinator;
+        let state = runtime_coordinator
+            .load_runtime_state(&app_dir)
+            .expect("should load initial state");
         assert_eq!(state.settings.debounce_ms, 200);
 
         // Update settings on disk
@@ -629,7 +573,9 @@ mod tests {
         updated_settings.save(&app_dir).unwrap();
 
         // Reload state
-        let reloaded_state = load_runtime_state(&app_dir).expect("should reload state");
+        let reloaded_state = runtime_coordinator
+            .load_runtime_state(&app_dir)
+            .expect("should reload state");
         assert_eq!(reloaded_state.settings.debounce_ms, 400);
     }
 
