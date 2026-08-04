@@ -1,7 +1,7 @@
 # SPEC.md — Contextura
 
 **Version:** 2.3.0  
-**Last Updated:** 2026-07-19  
+**Last Updated:** 2026-08-05
 **Target:** macOS 13+ on Apple Silicon
 
 ## Summary
@@ -16,11 +16,11 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 ## Current Implementation Status
 
-### Verified in this workspace
+### Verified current status
 
-- `cargo test --manifest-path src-tauri/Cargo.toml` passes
-- `cargo check --manifest-path src-tauri/Cargo.toml` passes
-- `./scripts/smoke-wire-to-wire.sh --quick` passes
+- On 2026-08-05, `./scripts/smoke-wire-to-wire.sh --quick --static-only` passed: 136 unit tests, 2 CLI integration tests, and 9 corpus fixture pairs.
+- The runtime settings tests explicitly cover configured AC debounce and the `1200ms` battery override.
+- Live-model smoke, signed updater validation, and manual GUI verification still require external model, release-secret, or Screen Recording setup.
 - Standalone `vision-helper` now fails fast on empty/corrupt input instead of returning a misleading empty result
 
 ### Code-integrated features
@@ -52,24 +52,24 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Overlay capture exclusion         | ✅     | Excludes own windows from capture; overlay marked `NSWindowSharingType::None`                                                           |
 | Wizard screens 1–4                | ✅     | Setup flow covers permissions, model, controls, ready state                                                                             |
 | Real CLI OCR/translation path     | ✅     | Code path is live and end-to-end verified using local LLM sidecar                                                                       |
-| Golden-file integration runner    | ✅     | `--test-suite` flag runs corpus assertions; `evaluate_corpus_case` unit-tested; Rust test suite currently reports 135 passing tests     |
+| Golden-file integration runner    | ✅     | `--validate-corpus-fixtures` validates fixture structure without a model; `--test-suite` runs model-backed corpus assertions            |
 | Capture restart handling          | ✅     | Stalled capture stream triggers rebuild                                                                                                 |
 | Thermal + battery awareness       | ✅     | Thermal API + `pmset -g batt`                                                                                                           |
 | Optional Sentry                   | ✅     | Enabled only with `CONTEXTURA_SENTRY_DSN`                                                                                               |
-| Updater signing pubkey support    | ⚠️     | Updater endpoints are configured, but `plugins.updater.pubkey` is currently empty in `tauri.conf.json`                                  |
+| Updater signing pubkey support    | ⚠️     | Release workflow injects the public key from GitHub environment secrets; staged updater validation remains required                     |
 | Quality-tier policy + model cycle | ✅     | Model switching and tier categorization (Standard/Quality/Custom) are fully implemented in `models.rs`                                  |
 | Single-display capture            | ✅     | Core display capture and targeting is fully implemented and verified                                                                    |
 | ocr_boxes golden tests            | ✅     | Integration testing framework supports coordinate checking; `test-corpus` fixtures are active in the `--test-suite` path                |
 | Runtime latency instrumentation   | ✅     | Pipeline and translation stages emit `[Latency]` debug logs for OCR, concurrent stage, and chat completion timing                       |
-| Wire-to-wire smoke harness        | ✅     | `scripts/smoke-wire-to-wire.sh` automates compile/test gates and `--debug-cli` OCR→translation verification against `test-corpus`       |
+| Wire-to-wire smoke harness        | ✅     | `--static-only` validates portable gates; default mode adds model-backed OCR→translation verification against `test-corpus`             |
 
 ### Still pending
 
-| Area                                 | Status | Notes                                                              |
-| ------------------------------------ | ------ | ------------------------------------------------------------------ |
-| Manual end-to-end smoke verification | [-]    | Required with a valid local model and real Japanese screen content |
-| Updater signing key injection        | [-]    | Set `plugins.updater.pubkey` before production release             |
-| Frontend CSP hardening               | [-]    | `app.security.csp` is currently null in Tauri config               |
+| Area                                 | Status | Notes                                                                  |
+| ------------------------------------ | ------ | ---------------------------------------------------------------------- |
+| Manual end-to-end smoke verification | [-]    | Required with a valid local model and real Japanese screen content     |
+| Staged updater validation            | [-]    | Set release secrets and test a signed update from a staged channel     |
+| Packaged CSP verification            | [-]    | Run the packaged app and confirm all Wizard and Overlay resources load |
 
 ## Non-Negotiable Model Constraint
 
@@ -106,7 +106,7 @@ Unsupported in this architecture:
 - Compare active region only, excluding edge inset
 - Feed motion ratio into `DebounceStateMachine`
 - Trigger OCR only when the screen has settled past the configured debounce duration
-- Default debounce is `200ms`
+- Default debounce is `150ms`; battery mode currently raises it to `1200ms`
 - Settling ignores low-level residual motion unless it exceeds `motion_threshold * 3.0`
 
 ### Snapshotting
@@ -177,4 +177,4 @@ Rust verification is necessary but not sufficient. A feature is only operational
 2. A valid local decoder-only GGUF model present
 3. A successful live translation pass over real Japanese content
 
-The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The Rust suite currently reports 135 passing tests across core subsystems. Manual end-to-end smoke verification with a live model remains the next required validation step.
+The Daily-Driver Hardening PRD (issue #1) is complete. All 10 sub-issues (#2–#11) are closed. The portable suite is green; model-backed, staged updater, and manual GUI validation remain required. See `docs/IMPROVEMENT-AUDIT.md` for implementation status and completion criteria.

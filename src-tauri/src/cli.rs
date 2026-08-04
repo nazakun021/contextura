@@ -34,6 +34,15 @@ pub struct CliArgs {
     #[arg(long, value_name = "DIR", requires = "debug_cli")]
     pub test_suite: Option<PathBuf>,
 
+    /// Validate corpus PNG/expectation fixture pairs without OCR or a local model
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "debug_cli",
+        conflicts_with_all = ["input", "test_suite"]
+    )]
+    pub validate_corpus_fixtures: Option<PathBuf>,
+
     /// Print manifest table and exit
     #[arg(long)]
     pub list_models: bool,
@@ -239,8 +248,7 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
-async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
+fn corpus_png_entries(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut entries = std::fs::read_dir(dir)?
         .flatten()
         .map(|entry| entry.path())
@@ -260,6 +268,37 @@ async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
     if entries.is_empty() {
         anyhow::bail!("No PNG files were found in {}", dir.display());
     }
+
+    Ok(entries)
+}
+
+fn validate_corpus_fixtures(dir: &Path) -> anyhow::Result<usize> {
+    let entries = corpus_png_entries(dir)?;
+
+    for png in &entries {
+        let expected_path = png.with_extension("expected.json");
+        let expected_json = std::fs::read_to_string(&expected_path).map_err(|error| {
+            anyhow::anyhow!(
+                "Missing or unreadable expectation for {} at {}: {error}",
+                png.display(),
+                expected_path.display()
+            )
+        })?;
+        serde_json::from_str::<CorpusExpectation>(&expected_json).map_err(|error| {
+            anyhow::anyhow!(
+                "Invalid expectation JSON for {} at {}: {error}",
+                png.display(),
+                expected_path.display()
+            )
+        })?;
+    }
+
+    Ok(entries.len())
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_test_suite(dir: &Path) -> anyhow::Result<()> {
+    let entries = corpus_png_entries(dir)?;
 
     let (settings, active_model) = resolve_active_model_for_cli()?;
     if !active_model.installed {
@@ -494,6 +533,17 @@ pub fn run_cli(args: &CliArgs) {
     }
 
     let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime should initialize for CLI");
+
+    if let Some(dir) = args.validate_corpus_fixtures.as_deref() {
+        match validate_corpus_fixtures(dir) {
+            Ok(count) => println!("Validated {count} corpus fixture pair(s)."),
+            Err(error) => {
+                eprintln!("Corpus fixture validation failed: {error:#}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
     if let Some(dir) = args.test_suite.as_deref() {
         match runtime.block_on(run_test_suite(dir)) {

@@ -1,0 +1,31 @@
+name: Model-Backed Smoke
+
+"on":
+  workflow_dispatch:
+    inputs:
+      contextura_data_dir:
+        description: Absolute path to the provisioned Contextura data directory on the self-hosted runner
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: OCR and Translation Smoke
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      CONTEXTURA_DATA_DIR: ${{ inputs.contextura_data_dir }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify provisioned model state
+        run: |
+          test -d "$CONTEXTURA_DATA_DIR"
+          test -f "$CONTEXTURA_DATA_DIR/settings.json"
+          test -d "$CONTEXTURA_DATA_DIR/models"
+
+      - name: Run model-backed smoke
+        run: ./scripts/smoke-wire-to-wire.sh --quick

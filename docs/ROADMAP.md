@@ -38,7 +38,8 @@ Scale the application and prepare for a public beta.
 
 Close remaining production-readiness gaps.
 
+- **Runtime Settings Coverage** [✅]: AC and battery debounce behavior are explicitly tested; the portable suite is green.
+- **Frontend CSP Hardening** [🟡]: Restrictive CSP and same-origin Wizard script are implemented; validate the packaged app manually.
+- **Portable CI Smoke** [✅]: Standard CI runs fixture validation without a local model; a provisioned self-hosted workflow covers model-backed smoke.
+- **Signed Updater Release** [🟡]: Release workflow injects updater signing material from GitHub environment secrets; staged update validation remains required.
 - **Manual End-to-End Smoke Verification** [🟡]: Required live pass with a valid local model and real Japanese content.
-- **Automated Wire-To-Wire Smoke Harness** [✅]: `scripts/smoke-wire-to-wire.sh` now validates compile/test gates plus OCR→translation CLI probes against `test-corpus`.
-- **Updater Signing Public Key** [🟡]: Configure `plugins.updater.pubkey` before production release.
-- **Frontend CSP Hardening** [🟡]: Replace null CSP with restrictive policy for packaged app windows.

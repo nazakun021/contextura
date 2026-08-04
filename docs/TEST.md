@@ -1,6 +1,6 @@
 # TEST.md — Verification Guide
 
-**Last Updated:** 2026-07-19
+**Last Updated:** 2026-08-05
 
 Use this file when you want the shortest path to verify that Contextura still works after code or model changes.
 
@@ -13,7 +13,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Current workspace status at last verification: Rust test suite reports 135 passing tests, and `./scripts/smoke-wire-to-wire.sh --quick` passed.
+Current review status: `./scripts/smoke-wire-to-wire.sh --quick --static-only` passed on 2026-08-05 with 136 unit tests, 2 CLI integration tests, and 9 corpus fixture pairs. The runtime settings tests explicitly select AC and battery power modes, eliminating the previous host-power-dependent failure.
 
 ## Local Pre-Push Lint Automation
 
@@ -46,6 +46,12 @@ Quick mode (skips clippy, still runs build checks + single PNG probe + full corp
 ./scripts/smoke-wire-to-wire.sh --quick
 ```
 
+Portable mode (no local model required):
+
+```bash
+./scripts/smoke-wire-to-wire.sh --quick --static-only
+```
+
 What this verifies automatically:
 
 1. Rust compile/test gates.
@@ -53,7 +59,9 @@ What this verifies automatically:
 3. Full `test-corpus` OCR + translation suite through `--debug-cli --test-suite`.
 4. Rich `translation-started` and `translation-update` phase contract remains compatible with the runtime pipeline.
 
-Most recent local verification in this workspace used `--quick` mode successfully after the Sidecar lifecycle, OCR split, and IPC started-phase refactors.
+The default smoke harness performs real translation requests and requires a compatible local model. `--static-only` is the portable CI path; it validates the Rust gates and all PNG/expectation fixture pairs without running OCR or translation.
+
+For a provisioned headless runner, set `CONTEXTURA_DATA_DIR` to an absolute directory containing `settings.json` and a `models/` directory. This isolates model state from the runner user's Application Support directory.
 
 This is the recommended default smoke pass before any manual GUI validation.
 
@@ -124,6 +132,14 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
   --test-suite test-corpus
 ```
 
+To validate fixture structure without a local model:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- \
+  --debug-cli \
+  --validate-corpus-fixtures test-corpus
+```
+
 ## Manual Smoke Pass
 
 Use a real screen containing Japanese text and confirm:
@@ -137,7 +153,7 @@ Use a real screen containing Japanese text and confirm:
 7. `Cmd+Shift+M` clears translation memory and visible overlay state.
 8. The overlay window does not show up inside the captured debug frame.
 9. **App Switching**: Verify switching apps clears overlay content and resets translation context as expected.
-10. **Debounce Settle**: Verify the debounce behavior feels closer to the intended `200ms` settle time and no longer resets during active scrolling.
+10. **Debounce Settle**: Verify the default `150ms` settle behavior (or the `1200ms` battery override) and confirm it no longer resets during active scrolling.
 11. **Tray Controls**: Verify tray actions (toggle overlay, translate now, clear context) behave correctly.
 12. **Watchdog Recovery**: Simulate a sidecar failure (e.g., run `pkill llama-server`) and confirm the watchdog restart notice is visible in the overlay and recovery completes successfully.
 

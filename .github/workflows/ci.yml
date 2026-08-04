@@ -1,6 +1,6 @@
 name: Rust CI
 
-on:
+"on":
   push:
   pull_request:
     branches: [main]
@@ -83,6 +83,25 @@ jobs:
         # Verifies that the production build (release profile) compiles correctly
         run: cargo check --release --all-targets --all-features
         working-directory: src-tauri
+
+  static-smoke:
+    name: Portable Smoke
+    runs-on: macos-14
+    needs: test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Validate portable smoke path
+        run: ./scripts/smoke-wire-to-wire.sh --quick --static-only
 
   security-audit:
     name: Security Audit

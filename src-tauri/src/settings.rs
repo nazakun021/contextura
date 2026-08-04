@@ -76,9 +76,21 @@ impl Settings {
     /// Helper to get the standard application support directory.
     /// Note: In Tauri v2, prefer using `app.path().app_data_dir()` or similar.
     pub fn dir() -> anyhow::Result<PathBuf> {
-        let mut path =
-            dirs::data_local_dir().ok_or_else(|| anyhow::anyhow!("No data local dir"))?;
-        path.push("contextura");
+        let path = match std::env::var_os("CONTEXTURA_DATA_DIR") {
+            Some(value) if !value.is_empty() => {
+                let path = PathBuf::from(value);
+                if !path.is_absolute() {
+                    anyhow::bail!("CONTEXTURA_DATA_DIR must be an absolute path");
+                }
+                path
+            }
+            _ => {
+                let mut path =
+                    dirs::data_local_dir().ok_or_else(|| anyhow::anyhow!("No data local dir"))?;
+                path.push("contextura");
+                path
+            }
+        };
         if !path.exists() {
             fs::create_dir_all(&path)?;
         }

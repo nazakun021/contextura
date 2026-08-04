@@ -18,7 +18,7 @@ graph TD
 
 1. **Stream Capture**: `capture.rs` starts an `SCStream` for the display. Frames are copied out of the pixel buffer as BGRA bytes.
 2. **Motion Detection**: `motion.rs` downsamples frames to `160x90` grayscale and computes the motion ratio.
-3. **Debounce Gate**: `DebounceStateMachine` decides whether to clear overlays, wait, or trigger a scan based on screen settling (200ms default).
+3. **Debounce Gate**: `DebounceStateMachine` decides whether to clear overlays, wait, or trigger a scan based on screen settling (`150ms` default; `1200ms` while on battery).
 4. **Snapshot Encoding**: On trigger or manual force-scan, the orchestrator (`lib.rs`) converts BGRA to RGBA once. `ocr.rs` encodes that frame to PNG bytes in memory.
 5. **OCR Subprocess**: `ocr_backend.rs` invokes `vision-helper --stdin`, streams PNG bytes through stdin, handles timeouts, and returns raw observations to `ocr_post_processor.rs` for coordinate conversion and filtering.
 6. **Sidecar Translation**: `translation.rs` formats request payloads depending on active model: sequential completions for `TranslateGemma` or numbered batched completions for Qwen.
@@ -41,7 +41,7 @@ graph TD
 - **Deduplication Strategy**: OCR post-processing sorts detections into stable reading order and only deduplicates near-identical boxes, preserving distinct overlapping text.
 - **Debounce Resilience**: Settling requires larger motion than the active scrolling threshold before debounce is cancelled, reducing inertial-scroll resets.
 - **In-Memory OCR Handoff**: Runtime OCR no longer depends on per-frame temp-frame file roundtrips in the hot path; PNG payloads are streamed directly to the helper.
-- **Content Security Policy**: CSP hardening is planned; current Tauri config sets `app.security.csp` to null and should be tightened before production release.
+- **Content Security Policy**: Tauri configuration restricts resources to same-origin content and disallows inline scripts. The Wizard behavior is loaded from `wizard.js`; packaged-app verification remains required.
 
 ---
 

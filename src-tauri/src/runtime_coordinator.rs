@@ -253,6 +253,7 @@ mod tests {
     fn loop_state_marks_refresh_complete_and_updates_processor_settings() {
         let coordinator = DefaultRuntimeCoordinator;
         let mut loop_state = RuntimeLoopState::new();
+        loop_state.thermal_monitor.on_battery = false;
         let mut processor = dummy_processor();
 
         let state = fake_runtime_state("model-a", 275);
@@ -263,6 +264,22 @@ mod tests {
         assert_eq!(
             processor.debounce.debounce_duration,
             Duration::from_millis(275)
+        );
+    }
+
+    #[test]
+    fn loop_state_uses_battery_debounce_override() {
+        let coordinator = DefaultRuntimeCoordinator;
+        let mut loop_state = RuntimeLoopState::new();
+        loop_state.thermal_monitor.on_battery = true;
+        let mut processor = dummy_processor();
+
+        let state = fake_runtime_state("model-a", 275);
+        loop_state.apply_loaded_runtime_state(&coordinator, state, &mut processor);
+
+        assert_eq!(
+            processor.debounce.debounce_duration,
+            Duration::from_millis(1_200)
         );
     }
 

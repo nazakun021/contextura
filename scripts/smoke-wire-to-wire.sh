@@ -7,6 +7,7 @@ CORPUS_DIR="$ROOT_DIR/test-corpus"
 PROBE_IMAGE="$CORPUS_DIR/case1-dialog.png"
 PROBE_JSON="$ROOT_DIR/.smoke-probe-output.json"
 RUN_CLIPPY=1
+RUN_MODEL_SMOKE=1
 
 print_step() {
   printf "\n==> %s\n" "$1"
@@ -21,6 +22,9 @@ for arg in "$@"; do
   case "$arg" in
     --quick)
       RUN_CLIPPY=0
+      ;;
+    --static-only)
+      RUN_MODEL_SMOKE=0
       ;;
     *)
       fail "Unknown argument: $arg"
@@ -44,6 +48,17 @@ if [[ "$RUN_CLIPPY" -eq 1 ]]; then
   cargo clippy --manifest-path "$MANIFEST_PATH" --all-targets --all-features -- -D warnings
 else
   print_step "Skipping clippy (--quick)"
+fi
+
+print_step "Portable corpus fixture validation"
+cargo run --manifest-path "$MANIFEST_PATH" -- \
+  --debug-cli \
+  --validate-corpus-fixtures "$CORPUS_DIR"
+
+if [[ "$RUN_MODEL_SMOKE" -eq 0 ]]; then
+  print_step "Skipping model-backed OCR and translation checks (--static-only)"
+  printf "[SMOKE PASS] Static verification succeeded.\n"
+  exit 0
 fi
 
 print_step "Wire-to-wire probe: single PNG OCR + translation"

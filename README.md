@@ -147,6 +147,10 @@ Optional telemetry/crash reporting:
 
 - `CONTEXTURA_SENTRY_DSN` (unset by default)
 
+Headless model state override:
+
+- `CONTEXTURA_DATA_DIR` (absolute path to a Contextura data directory containing `settings.json` and `models/`; useful for provisioned CI runners)
+
 If unset, Sentry remains disabled.
 
 ## How to Run
@@ -196,6 +200,12 @@ Quick smoke mode (skips clippy):
 
 ```bash
 ./scripts/smoke-wire-to-wire.sh --quick
+```
+
+Portable smoke mode (validates Rust and corpus fixtures without a model):
+
+```bash
+./scripts/smoke-wire-to-wire.sh --quick --static-only
 ```
 
 Install local pre-push hooks:
@@ -315,13 +325,16 @@ Deployment:
 
 CI/CD:
 
-- No fully documented remote CI pipeline in this repository yet.
+- GitHub Actions runs formatting, clippy, unit tests, release `cargo check`, and dependency audit on pushes and pull requests; see `.github/workflows/ci.yml`.
+- CI also runs the portable static smoke path. Model-backed smoke runs only on a manually dispatched, provisioned self-hosted Apple Silicon runner; see `.github/workflows/model-smoke.yml`.
+- The manually dispatched release workflow injects updater signing material from a GitHub `release` environment and builds a signed macOS bundle; create that environment and configure its secrets before dispatching `.github/workflows/release-build.yml`.
 - Local quality gates are enforced via `scripts/install-git-hooks.sh` and smoke scripts.
+- Packaged-app smoke validation still requires a manual run.
 
 Release hardening notes:
 
-- Updater endpoints are configured, but `plugins.updater.pubkey` is currently empty in `src-tauri/tauri.conf.json`.
-- `app.security.csp` is currently `null` and should be hardened before production release.
+- Updater public-key and signing-key material is supplied by GitHub release-environment secrets; a staged update must still be exercised before production release.
+- The app uses a restrictive CSP that permits same-origin scripts and styles; packaged Wizard and Overlay validation is still required.
 
 ## Limitations
 
@@ -336,7 +349,7 @@ Release hardening notes:
 - Add repeatable translation-quality benchmark datasets and aggregate metrics.
 - Document and automate a remote CI pipeline for pull requests.
 - Complete downloader UX wiring for fully in-app model onboarding.
-- Harden CSP and configure updater signing key for production.
+- Validate the CSP in a packaged app and exercise a staged signed updater release.
 - Expand corpus coverage for edge-case script mixes and UI-heavy layouts.
 
 ## Troubleshooting
@@ -378,6 +391,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - `docs/TECH-STACK.md`
 - `docs/MISSION.md`
 - `docs/ROADMAP.md`
+- `docs/IMPROVEMENT-AUDIT.md`
 - `docs/adr/`
 
 ## License

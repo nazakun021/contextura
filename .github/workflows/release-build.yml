@@ -1,0 +1,43 @@
+name: Signed Release Build
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Signed macOS Bundle
+    runs-on: macos-14
+    environment: release
+    env:
+      CONTEXTURA_UPDATER_PUBKEY: ${{ secrets.CONTEXTURA_UPDATER_PUBKEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Build with injected updater public key
+        run: |
+          test -n "$CONTEXTURA_UPDATER_PUBKEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          python3 - "$RUNNER_TEMP/tauri.release.conf.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open("src-tauri/tauri.conf.json", encoding="utf-8") as source:
+              config = json.load(source)
+          config["plugins"]["updater"]["pubkey"] = os.environ["CONTEXTURA_UPDATER_PUBKEY"]
+          with open(sys.argv[1], "w", encoding="utf-8") as destination:
+              json.dump(config, destination)
+          PY
+          cargo tauri build --config "$RUNNER_TEMP/tauri.release.conf.json"
