@@ -1,4 +1,4 @@
-const { resolveCollisions } = require('./overlay.js');
+const { resolveCollisions, resolveOverlayBoxes } = require('./overlay.js');
 
 function assert(condition, message) {
   if (!condition) {
@@ -69,5 +69,48 @@ try {
   console.log("✓ Passed: Non-Overlapping Columns");
 } catch (e) {
   console.error("   Failed: Non-Overlapping Columns", e.message);
+  process.exitCode = 1;
+}
+
+// 5. Above Placement
+try {
+  global.window = { innerHeight: 500 };
+  const [box] = resolveOverlayBoxes(
+    [{ x: 10, y: 100, width: 80, height: 20 }],
+    'above'
+  );
+  assert(box.adjustedY === 74, `Box should be placed above at 74, got ${box?.adjustedY}`);
+  console.log("✓ Passed: Above Placement");
+} catch (e) {
+  console.error("   Failed: Above Placement", e.message);
+  process.exitCode = 1;
+}
+
+// 6. Below Placement
+try {
+  global.window = { innerHeight: 120 };
+  const [box] = resolveOverlayBoxes(
+    [{ x: 10, y: 100, width: 80, height: 30 }],
+    'below'
+  );
+  assert(box.adjustedY === 90, `Box should be placed below at 90, got ${box?.adjustedY}`);
+  console.log("✓ Passed: Below Placement");
+} catch (e) {
+  console.error("   Failed: Below Placement", e.message);
+  process.exitCode = 1;
+}
+
+// 7. Cover Placement
+try {
+  const boxes = [
+    { x: 10, y: 40, width: 100, height: 50 },
+    { x: 15, y: 55, width: 100, height: 50 }
+  ];
+  const output = resolveOverlayBoxes(boxes, 'cover');
+  assert(output[0].adjustedY === 40, `First cover box should remain at 40, got ${output[0]?.adjustedY}`);
+  assert(output[1].adjustedY === 55, `Second cover box should remain at 55, got ${output[1]?.adjustedY}`);
+  console.log("✓ Passed: Cover Placement Preserves OCR Coordinates");
+} catch (e) {
+  console.error("   Failed: Cover Placement Preserves OCR Coordinates", e.message);
   process.exitCode = 1;
 }

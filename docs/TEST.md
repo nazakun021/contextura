@@ -13,7 +13,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Current review status: `./scripts/smoke-wire-to-wire.sh --quick --static-only` passed on 2026-08-05 with 136 unit tests, 2 CLI integration tests, and 9 corpus fixture pairs. The runtime settings tests explicitly select AC and battery power modes, eliminating the previous host-power-dependent failure.
+Current review status: `./scripts/smoke-wire-to-wire.sh` passed on 2026-08-05 with 139 unit tests, 3 integration tests, and 9 corpus fixture pairs using the installed local model. The integration coverage includes CLI fixtures and the packaged app-icon contract. The runtime settings tests explicitly select AC and battery power modes, eliminating the previous host-power-dependent failure.
 
 ## Local Pre-Push Lint Automation
 
@@ -148,13 +148,13 @@ Use a real screen containing Japanese text and confirm:
 2. Screen Recording permission is granted.
 3. A translation cycle runs successfully after a capture trigger (`Cmd+Shift+R` is the quickest probe).
 4. `Cmd+Shift+R` forces an immediate scan on the cached frame.
-5. Overlay text appears aligned over the original CJK content.
+5. With `Translation placement > Cover original text`, overlay text appears at the exact original CJK coordinates, even when Styled Boxes overlap.
 6. Loading/skeleton state appears before final translated boxes on a real translation cycle.
 7. `Cmd+Shift+M` clears translation memory and visible overlay state.
 8. The overlay window does not show up inside the captured debug frame.
 9. **App Switching**: Verify switching apps clears overlay content and resets translation context as expected.
 10. **Debounce Settle**: Verify the default `150ms` settle behavior (or the `1200ms` battery override) and confirm it no longer resets during active scrolling.
-11. **Tray Controls**: Verify tray actions (toggle overlay, translate now, clear context) behave correctly.
+11. **Tray Controls**: Verify tray actions (toggle overlay, translate now, clear context) behave correctly. Confirm the `Model` submenu lists installed GGUF files, selecting one restarts the runtime, and `Translation placement` persists Cover, Above, or Below.
 12. **Watchdog Recovery**: Simulate a sidecar failure (e.g., run `pkill llama-server`) and confirm the watchdog restart notice is visible in the overlay and recovery completes successfully.
 
 Do not mark the app as verified if only the Rust checks passed. End-to-end confirmation still requires a live GUI run with a valid local model.

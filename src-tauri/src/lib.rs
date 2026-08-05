@@ -39,7 +39,7 @@ use crossbeam_channel::Sender;
 use objc2_app_kit::{NSWindow, NSWindowSharingType};
 use std::sync::Arc;
 
-use crate::ipc::WizardStatusPayload;
+use crate::ipc::{OverlaySettingsPayload, WizardStatusPayload};
 use clap::Parser;
 use cli::CliArgs;
 
@@ -83,6 +83,22 @@ fn reload_runtime(pipeline_tx: tauri::State<'_, Sender<PipelineCommand>>) {
 #[tauri::command]
 fn wizard_status() -> Result<WizardStatusPayload, String> {
     scheduler::load_wizard_status()
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn overlay_settings(
+    app: tauri::AppHandle,
+    app_config: tauri::State<'_, crate::path_resolver::AppConfig>,
+) -> Result<OverlaySettingsPayload, String> {
+    let app_dir = app_config
+        .path_resolver
+        .settings_dir(Some(&app))
+        .map_err(|e| e.to_string())?;
+    let settings = crate::settings::Settings::load(&app_dir).map_err(|e| e.to_string())?;
+    Ok(OverlaySettingsPayload {
+        placement: settings.overlay_placement,
+    })
 }
 
 #[tauri::command]
@@ -133,6 +149,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             complete_wizard,
             wizard_status,
+            overlay_settings,
             open_models_folder_command,
             open_screen_recording_settings,
             reload_runtime

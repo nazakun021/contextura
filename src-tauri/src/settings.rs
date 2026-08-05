@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayPlacement {
+    #[default]
+    Cover,
+    Above,
+    Below,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub debounce_ms: u64,
@@ -15,6 +24,8 @@ pub struct Settings {
     pub show_original_text: bool,
     pub context_memory_size: usize,
     pub active_model: String,
+    #[serde(default)]
+    pub overlay_placement: OverlayPlacement,
     #[serde(default)]
     pub wizard_completed: bool,
 }
@@ -31,6 +42,7 @@ impl Default for Settings {
             show_original_text: false,
             context_memory_size: 6,
             active_model: "translategemma-4b-it.Q4_K_M".to_string(),
+            overlay_placement: OverlayPlacement::Cover,
             wizard_completed: false,
         }
     }
@@ -95,5 +107,44 @@ impl Settings {
             fs::create_dir_all(&path)?;
         }
         Ok(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OverlayPlacement, Settings};
+
+    #[test]
+    fn missing_overlay_placement_defaults_to_cover() {
+        let settings = serde_json::from_str::<Settings>(
+            r#"{
+                "debounce_ms": 150,
+                "motion_threshold": 0.01,
+                "pixel_diff_threshold": 15,
+                "capture_fps": 30,
+                "edge_inset_percent": 5,
+                "furigana_suppression": true,
+                "show_original_text": false,
+                "context_memory_size": 6,
+                "active_model": "example"
+            }"#,
+        )
+        .expect("legacy settings should deserialize");
+
+        assert_eq!(settings.overlay_placement, OverlayPlacement::Cover);
+    }
+
+    #[test]
+    fn overlay_placement_round_trips_through_settings_json() {
+        let settings = Settings {
+            overlay_placement: OverlayPlacement::Below,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).expect("settings should serialize");
+        let restored =
+            serde_json::from_str::<Settings>(&json).expect("settings should deserialize");
+
+        assert!(json.contains(r#""overlay_placement":"below""#));
+        assert_eq!(restored.overlay_placement, OverlayPlacement::Below);
     }
 }

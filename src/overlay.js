@@ -10,6 +10,19 @@ if (typeof document !== 'undefined') {
   const errorDetail = document.getElementById('error-detail');
   let errorTimeout = null;
   let spinnerTimeout = null;
+  let overlayPlacement = 'cover';
+
+  if (invoke) {
+    invoke('overlay_settings')
+      .then((settings) => {
+        overlayPlacement = settings.placement || 'cover';
+      })
+      .catch((error) => console.error('Unable to load overlay settings', error));
+  }
+
+  listen('overlay-settings-update', (event) => {
+    overlayPlacement = event.payload?.placement || 'cover';
+  });
 
   listen('translation-update', (event) => {
     const payload = event.payload;
@@ -28,15 +41,7 @@ if (typeof document !== 'undefined') {
         container.innerHTML = '';
 
         // Apply collision avoidance to all boxes before rendering
-        const resolved = resolveCollisions(
-          payload.boxes.map((b) => ({
-            x: b.x,
-            y: b.y,
-            width: b.width,
-            height: b.height,
-            _data: b,
-          }))
-        );
+        const resolved = resolveOverlayBoxes(payload.boxes, overlayPlacement);
 
         for (const resolved_box of resolved) {
           const box = resolved_box._data;
@@ -91,9 +96,7 @@ if (typeof document !== 'undefined') {
     const payload = event?.payload;
     if (payload && Array.isArray(payload.boxes) && payload.boxes.length > 0) {
       container.innerHTML = '';
-      const resolved = resolveCollisions(
-        payload.boxes.map((b) => ({ x: b.x, y: b.y, width: b.width, height: b.height, _data: b }))
-      );
+      const resolved = resolveOverlayBoxes(payload.boxes, overlayPlacement);
       for (const resolved_box of resolved) {
         const box = resolved_box._data;
         const skel = document.createElement('div');
@@ -182,7 +185,33 @@ function resolveCollisions(boxes) {
   });
 }
 
+function resolveOverlayBoxes(boxes, placement) {
+  const padding = 6;
+  if (placement === 'cover') {
+    return boxes.map((box) => ({
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      adjustedY: box.y,
+      _data: box,
+    }));
+  }
+
+  return resolveCollisions(
+    boxes.map((box) => {
+      let y = box.y;
+      if (placement === 'above') {
+        y = Math.max(0, box.y - box.height - padding);
+      } else if (placement === 'below') {
+        y = Math.min(window.innerHeight - box.height, box.y + box.height + padding);
+      }
+      return { x: box.x, y, width: box.width, height: box.height, _data: box };
+    })
+  );
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { resolveCollisions };
+  module.exports = { resolveCollisions, resolveOverlayBoxes };
 }
 

@@ -242,6 +242,36 @@ pub fn cycle_active_model(
     Ok(ModelSwitchResult { previous, current })
 }
 
+pub fn select_active_model(
+    app_dir: &Path,
+    settings: &mut Settings,
+    model_id: &str,
+) -> anyhow::Result<ModelSwitchResult> {
+    let mut manifest = ModelManifest::load(app_dir, settings)?;
+    let statuses = manifest.statuses(app_dir);
+    let previous = manifest
+        .active_status(app_dir)
+        .ok_or_else(|| anyhow::anyhow!("No active model is configured"))?;
+    let current = statuses
+        .into_iter()
+        .find(|status| status.entry.id == model_id && status.installed)
+        .ok_or_else(|| anyhow::anyhow!("The selected model is not installed"))?;
+
+    if previous.entry.id == current.entry.id {
+        return Ok(ModelSwitchResult { previous, current });
+    }
+
+    for model in &mut manifest.models {
+        model.active = model.id == current.entry.id;
+    }
+    manifest.save(app_dir)?;
+
+    settings.active_model.clone_from(&current.entry.id);
+    settings.save(app_dir)?;
+
+    Ok(ModelSwitchResult { previous, current })
+}
+
 #[must_use]
 pub fn manifest_path(app_dir: &Path) -> PathBuf {
     models_dir(app_dir).join("manifest.json")
@@ -307,7 +337,7 @@ fn infer_tier(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_MODEL_FILENAME, ModelManifest, cycle_active_model};
+    use super::{DEFAULT_MODEL_FILENAME, ModelManifest, cycle_active_model, select_active_model};
     use crate::settings::Settings;
     use std::fs;
     use std::path::PathBuf;
@@ -414,6 +444,37 @@ mod tests {
         assert_eq!(result.previous.entry.id, "translategemma-4b-it.Q4_K_M");
         assert_eq!(result.current.entry.id, "qwen3-4b-q4");
         assert_eq!(settings.active_model, "qwen3-4b-q4");
+    }
+
+    #[test]
+    fn select_active_model_persists_the_named_installed_model() {
+        let app_dir = temp_app_dir("manifest-select");
+        let mut settings = Settings::default();
+        fs::write(
+            app_dir.join("models").join(DEFAULT_MODEL_FILENAME),
+            b"standard-model",
+        )
+        .expect("standard model file should be written");
+        fs::write(
+            app_dir.join("models").join("qwen3-4b-q4.gguf"),
+            b"quality-model",
+        )
+        .expect("selected model file should be written");
+
+        let result = select_active_model(&app_dir, &mut settings, "qwen3-4b-q4")
+            .expect("installed named model should be selectable");
+        let persisted_settings = Settings::load(&app_dir).expect("settings should reload");
+        let persisted_manifest = ModelManifest::load(&app_dir, &persisted_settings)
+            .expect("model manifest should reload");
+
+        assert_eq!(result.current.entry.id, "qwen3-4b-q4");
+        assert_eq!(persisted_settings.active_model, "qwen3-4b-q4");
+        assert!(
+            persisted_manifest
+                .models
+                .iter()
+                .any(|model| model.id == "qwen3-4b-q4" && model.active)
+        );
     }
 
     #[test]

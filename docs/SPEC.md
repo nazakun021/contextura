@@ -39,7 +39,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Dynamic styling                   | ✅     | WCAG-based foreground/background selection from RGBA pixels                                                                             |
 | IPC to overlay                    | ✅     | `translation-started`, `translation-update`, `translation-clear`, `translation-error`; started-phase payload now includes pending boxes |
 | Fail-loud error UI                | ✅     | Persistent error card rendered in overlay on `translation-error`; prompts manual retry                                                  |
-| Smart overlay presentation        | ✅     | CSS fade-in/out transitions, skeleton loaders, horizontal/vertical collision avoidance                                                  |
+| Smart overlay presentation        | ✅     | CSS fade-in/out transitions, skeleton loaders, placement modes, and horizontal/vertical collision avoidance                             |
 | Event-driven capture loop         | ✅     | `tokio::select!` over frame channel, command channel, and async debounce timer                                                          |
 | Deterministic settings reload     | ✅     | 60-second timer removed; settings reload immediately on pipeline commands                                                               |
 | Overlay toggle hotkey             | ✅     | `Cmd+Shift+T`                                                                                                                           |
@@ -164,7 +164,7 @@ Unsupported in this architecture:
 | `src-tauri/src/context.rs`                 | App-switch invalidation                                                                          |
 | `src-tauri/src/thermal.rs`                 | Thermal and battery throttling signals                                                           |
 | `src-tauri/src/hotkeys.rs`                 | Global shortcuts                                                                                 |
-| `src-tauri/src/tray.rs`                    | Tray menu behavior                                                                               |
+| `src-tauri/src/tray.rs`                    | Tray menu behavior, model selection, and overlay placement controls                              |
 | `src-tauri/src/path_resolver.rs`           | Binary path resolution, available-port discovery                                                 |
 | `src-tauri/src/cli.rs`                     | Debug-CLI and `--test-suite` golden-file runner                                                  |
 | `src/overlay.js`                           | Frontend event handling, collision avoidance, fade transitions, skeleton loaders, error card     |

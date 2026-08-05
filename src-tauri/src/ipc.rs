@@ -72,3 +72,8 @@ pub struct WizardStatusPayload {
     pub active_model_tier: String,
     pub models_dir: String,
 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct OverlaySettingsPayload {
+    pub placement: crate::settings::OverlayPlacement,
+}
