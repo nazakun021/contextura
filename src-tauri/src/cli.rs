@@ -26,9 +26,13 @@ pub struct CliArgs {
     #[arg(long, requires = "debug_cli")]
     pub once: bool,
 
-    /// PNG input for debug-cli OCR/translation runs
-    #[arg(long, value_name = "PNG", requires = "debug_cli")]
+    /// Image input for debug-cli OCR/translation runs
+    #[arg(long, value_name = "IMAGE", requires = "debug_cli")]
     pub input: Option<PathBuf>,
+
+    /// Run OCR and post-processing without starting the translation sidecar
+    #[arg(long, requires_all = ["debug_cli", "input"])]
+    pub ocr_only: bool,
 
     /// Run E2E test suite against directory of PNGs + expected JSON
     #[arg(long, value_name = "DIR", requires = "debug_cli")]
@@ -200,26 +204,11 @@ fn resolve_active_model_for_cli() -> anyhow::Result<(Settings, ModelStatus)> {
 }
 
 async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> {
-    let (settings, active_model) = resolve_active_model_for_cli()?;
-    if !active_model.installed {
-        anyhow::bail!(
-            "Active model {} is missing at {}",
-            active_model.entry.display_label(),
-            active_model.path.display()
-        );
-    }
-
-    let sidecar_port = find_available_local_port()?;
+    let settings_dir = Settings::dir()?;
+    let settings = Settings::load(&settings_dir)?;
     let path_resolver = PathResolver::new(true, None);
     let vision_helper_path = path_resolver.resolve_binary("vision-helper", None)?;
     let ocr_engine = OcrEngine::new(settings.furigana_suppression, vision_helper_path);
-    let mut translation_client = TranslationClient::new(settings.context_memory_size, sidecar_port);
-    translation_client.start_sidecar_headless(
-        &active_model.path,
-        &active_model.entry.id,
-        active_model.entry.strategy.as_deref(),
-    )?;
-    translation_client.wait_for_ready().await?;
 
     let img = image::open(input)?.to_rgba8();
     let (width, height) = img.dimensions();
@@ -230,7 +219,31 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
         .iter()
         .map(|result| result.text.clone())
         .collect::<Vec<_>>();
-    let translations = translation_client.translate_batch(&texts).await?;
+    let translations = if args.ocr_only {
+        Vec::new()
+    } else {
+        let (_, active_model) = resolve_active_model_for_cli()?;
+        if !active_model.installed {
+            anyhow::bail!(
+                "Active model {} is missing at {}",
+                active_model.entry.display_label(),
+                active_model.path.display()
+            );
+        }
+
+        let sidecar_port = find_available_local_port()?;
+        let mut translation_client =
+            TranslationClient::new(settings.context_memory_size, sidecar_port);
+        translation_client.start_sidecar_headless(
+            &active_model.path,
+            &active_model.entry.id,
+            active_model.entry.strategy.as_deref(),
+        )?;
+        translation_client.wait_for_ready().await?;
+        let translations = translation_client.translate_batch(&texts).await?;
+        translation_client.shutdown_sidecar();
+        translations
+    };
     let output = CliDebugOutput {
         input: input.display().to_string(),
         ocr: texts,
@@ -242,8 +255,6 @@ async fn run_debug_cli_once(args: &CliArgs, input: &Path) -> anyhow::Result<()> 
         serde_json::to_string(&output)?
     };
     println!("{json}");
-
-    translation_client.shutdown_sidecar();
 
     Ok(())
 }
@@ -575,10 +586,11 @@ pub fn run_cli(args: &CliArgs) {
 #[cfg(test)]
 mod tests {
     use super::{
-        CaseResult, CorpusExpectation, ExpectedOcrBox, OCR_COORD_TOLERANCE, evaluate_corpus_case,
-        ocr_boxes_match,
+        CaseResult, CliArgs, CorpusExpectation, ExpectedOcrBox, OCR_COORD_TOLERANCE,
+        evaluate_corpus_case, ocr_boxes_match,
     };
     use crate::ocr::{OcrResult, Rect};
+    use clap::Parser;
 
     fn make_result(text: &str, x: f32, y: f32, width: f32, height: f32) -> OcrResult {
         OcrResult {
@@ -599,6 +611,25 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn debug_cli_accepts_ocr_only_input() {
+        let args = CliArgs::try_parse_from([
+            "contextura",
+            "--debug-cli",
+            "--ocr-only",
+            "--input",
+            "sample.png",
+        ])
+        .expect("OCR-only benchmark arguments should parse");
+
+        assert!(args.debug_cli);
+        assert!(args.ocr_only);
+        assert_eq!(
+            args.input.as_deref(),
+            Some(std::path::Path::new("sample.png"))
+        );
     }
 
     #[test]

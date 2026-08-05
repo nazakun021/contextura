@@ -13,7 +13,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Current review status: `./scripts/smoke-wire-to-wire.sh` passed on 2026-08-05 with 139 unit tests, 3 integration tests, and 9 corpus fixture pairs using the installed local model. The integration coverage includes CLI fixtures and the packaged app-icon contract. The runtime settings tests explicitly select AC and battery power modes, eliminating the previous host-power-dependent failure.
+Current review status: `./scripts/smoke-wire-to-wire.sh` passed on 2026-08-05 with 140 unit tests, 3 integration tests, and 9 corpus fixture pairs using the installed local model. The integration coverage includes CLI fixtures and the packaged app-icon contract. The runtime settings tests explicitly select AC and battery power modes, eliminating the previous host-power-dependent failure.
 
 ## Local Pre-Push Lint Automation
 
@@ -115,7 +115,8 @@ lsof -ti:8765 | xargs kill -9 2>/dev/null
 
 ## OCR And CLI Probe
 
-Verify the OCR/translation path on a chosen PNG file (runtime OCR now streams in-memory PNG bytes to `vision-helper --stdin`):
+Verify the OCR/translation path on a chosen image file such as PNG or JPEG
+(runtime OCR streams in-memory PNG bytes to `vision-helper --stdin`):
 
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml -- \
@@ -123,6 +124,21 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
   --input /absolute/path/to/sample.png \
   --pretty
 ```
+
+To benchmark production OCR and post-processing without loading a translation
+model, add `--ocr-only`. The output contains OCR strings and an empty
+`translations` array:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- \
+  --debug-cli \
+  --ocr-only \
+  --input /absolute/path/to/sample.png \
+  --pretty
+```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for recorded Japanese OCR sample results and
+the evaluation method.
 
 To run the golden-file regression test suite against the live fixtures:
 

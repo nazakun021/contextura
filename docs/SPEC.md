@@ -51,7 +51,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 | Watchdog                          | ✅     | Restarts sidecar after 3 consecutive health failures                                                                                    |
 | Overlay capture exclusion         | ✅     | Excludes own windows from capture; overlay marked `NSWindowSharingType::None`                                                           |
 | Wizard screens 1–4                | ✅     | Setup flow covers permissions, model, controls, ready state                                                                             |
-| Real CLI OCR/translation path     | ✅     | Code path is live and end-to-end verified using local LLM sidecar                                                                       |
+| Real CLI OCR/translation path     | ✅     | `--debug-cli` supports full OCR→translation and OCR-only runs for production-path evaluation                                            |
 | Golden-file integration runner    | ✅     | `--validate-corpus-fixtures` validates fixture structure without a model; `--test-suite` runs model-backed corpus assertions            |
 | Capture restart handling          | ✅     | Stalled capture stream triggers rebuild                                                                                                 |
 | Thermal + battery awareness       | ✅     | Thermal API + `pmset -g batt`                                                                                                           |
