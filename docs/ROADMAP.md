@@ -33,6 +33,7 @@ Scale the application and prepare for a public beta.
 - **Sidecar Lifecycle Deepening** [✅]: Startup, readiness, runtime health, and recovery now route through dedicated lifecycle seams instead of scheduler-owned inline logic.
 - **OCR Backend/Post-Processor Split** [✅]: OCR acquisition and OCR filtering now live behind separate modules while preserving the existing facade.
 - **Phase-Aware Started Payload** [✅]: `translation-started` now carries pending box geometry and source text metadata for richer Overlay loading-state behavior.
+- **OCR Benchmark Baselines** [🟡]: Reproducible public Japanese OCR samples are recorded; an access-approved manga/UI-text benchmark remains needed for workload-representative quality measurement.
 
 ## Phase 4: Release Hardening (In Progress)
 

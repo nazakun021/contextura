@@ -18,7 +18,7 @@ Contextura is a local-only screen translation overlay for Japanese text on macOS
 
 ### Verified current status
 
-- On 2026-08-05, `./scripts/smoke-wire-to-wire.sh --quick --static-only` passed: 136 unit tests, 2 CLI integration tests, and 9 corpus fixture pairs.
+- On 2026-08-05, the Rust validation suite passed: 140 unit tests, 3 integration tests, and 9 corpus fixture pairs. A model-backed wire-to-wire smoke pass and preliminary OCR benchmark samples are documented in `docs/TEST.md` and `docs/BENCHMARKS.md`.
 - The runtime settings tests explicitly cover configured AC debounce and the `1200ms` battery override.
 - Live-model smoke, signed updater validation, and manual GUI verification still require external model, release-secret, or Screen Recording setup.
 - Standalone `vision-helper` now fails fast on empty/corrupt input instead of returning a misleading empty result
@@ -166,7 +166,7 @@ Unsupported in this architecture:
 | `src-tauri/src/hotkeys.rs`                 | Global shortcuts                                                                                 |
 | `src-tauri/src/tray.rs`                    | Tray menu behavior, model selection, and overlay placement controls                              |
 | `src-tauri/src/path_resolver.rs`           | Binary path resolution, available-port discovery                                                 |
-| `src-tauri/src/cli.rs`                     | Debug-CLI and `--test-suite` golden-file runner                                                  |
+| `src-tauri/src/cli.rs`                     | Debug CLI, OCR-only evaluation, and `--test-suite` golden-file runner                            |
 | `src/overlay.js`                           | Frontend event handling, collision avoidance, fade transitions, skeleton loaders, error card     |
 
 ## Verification Expectations

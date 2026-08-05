@@ -170,6 +170,19 @@ cargo run --manifest-path src-tauri/Cargo.toml -- \
   --pretty
 ```
 
+### Headless OCR-only evaluation
+
+Run Contextura's production OCR and post-processing without starting the local
+translation model:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml -- \
+  --debug-cli \
+  --ocr-only \
+  --input /absolute/path/to/sample.jpg \
+  --pretty
+```
+
 ### Headless corpus run
 
 ```bash
@@ -218,13 +231,17 @@ This enforces formatting/lint checks before `git push`.
 
 ## Evaluation Evidence
 
-Contextura currently provides strong functional regression evidence through golden fixtures, but does not yet publish benchmark-style quality metrics like BLEU/COMET.
+Contextura provides strong functional regression evidence through golden
+fixtures and has published preliminary Japanese OCR sample measurements. See
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) for methodology, results, and the
+important domain limitations of those samples.
 
 What is covered today:
 
 - End-to-end OCR + translation assertions through `test-corpus/` expected JSON fixtures.
 - Coordinate-aware OCR checks (`ocr_boxes`) in corpus expectations.
 - CLI corpus runner for repeatable local verification.
+- OCR-only evaluation through the production `OcrEngine` and post-processor.
 
 What is not yet covered:
 
@@ -340,7 +357,7 @@ Release hardening notes:
 
 - macOS-only (13+) and Apple Silicon-focused.
 - No public web demo or hosted installer flow documented in this repo.
-- No formal benchmark dashboard for translation quality yet.
+- No full-corpus or translation-quality benchmark dashboard yet.
 - Real-world quality depends on local model quality and machine resources.
 - Manual GUI smoke verification is still required for true end-to-end confidence.
 
@@ -371,7 +388,7 @@ curl http://127.0.0.1:8765/health
 
 3. Debug CLI fails
 
-- Ensure `--debug-cli` is paired with `--input <PNG>` or `--test-suite <DIR>`.
+- Ensure `--debug-cli` is paired with `--input <IMAGE>` or `--test-suite <DIR>`.
 
 4. Lint/test failures before push
 
