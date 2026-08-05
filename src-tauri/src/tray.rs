@@ -2,8 +2,7 @@
 
 use crossbeam_channel::Sender;
 use tauri::{
-    App, Manager,
-    Emitter,
+    App, Emitter, Manager,
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
     tray::TrayIconBuilder,
 };
@@ -94,11 +93,20 @@ fn build_placement_menu<R: tauri::Runtime>(
         placement == OverlayPlacement::Below,
         None::<&str>,
     )?;
-    Submenu::with_items(app, "Translation placement", true, &[&cover_i, &above_i, &below_i])
-        .map_err(Into::into)
+    Submenu::with_items(
+        app,
+        "Translation placement",
+        true,
+        &[&cover_i, &above_i, &below_i],
+    )
+    .map_err(Into::into)
 }
 
-fn select_model(app_handle: &tauri::AppHandle, pipeline_tx: &Sender<PipelineCommand>, model_id: &str) {
+fn select_model(
+    app_handle: &tauri::AppHandle,
+    pipeline_tx: &Sender<PipelineCommand>,
+    model_id: &str,
+) {
     let result = (|| -> anyhow::Result<()> {
         let app_dir = Settings::dir()?;
         let mut settings = Settings::load(&app_dir)?;
@@ -222,7 +230,9 @@ fn handle_menu_event(
             }
         }
         "quit" => app_handle.exit(0),
-        id if id.starts_with("model:") => select_model(app_handle, pipeline_tx, id.trim_start_matches("model:")),
+        id if id.starts_with("model:") => {
+            select_model(app_handle, pipeline_tx, id.trim_start_matches("model:"));
+        }
         _ => {}
     }
 }
